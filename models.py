@@ -1,0 +1,111 @@
+"""
+数据模型
+"""
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Float, JSON, text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
+from config import Config
+
+Base = declarative_base()
+
+class Resume(Base):
+    """简历数据模型"""
+    __tablename__ = 'resumes'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    file_name = Column(String(255), nullable=False)
+    file_path = Column(String(500), nullable=False)
+    upload_time = Column(DateTime, default=datetime.now)
+    
+    # 基本信息
+    name = Column(String(100))
+    gender = Column(String(10))
+    birth_year = Column(Integer)
+    age = Column(Integer)
+    phone = Column(String(50))
+    email = Column(String(100))
+    earliest_work_year = Column(Integer)
+    work_experience_years = Column(Integer)
+    
+    # 教育信息
+    highest_education = Column(String(50))
+    school = Column(String(200))
+    school_original = Column(String(200))  # 原始学校名称
+    school_code = Column(String(100))  # 学校代码
+    school_match_status = Column(String(50))  # 匹配状态：完全匹配/多项选择/匹配失败/未校验
+    school_confidence = Column(Float)  # 置信度
+    
+    major = Column(String(200))
+    major_original = Column(String(200))  # 原始专业名称
+    major_code = Column(String(100))  # 专业代码
+    major_match_status = Column(String(50))
+    major_confidence = Column(Float)
+
+    applied_position = Column(String(200))
+    
+    # 工作经历（JSON格式存储）
+    work_experience = Column(JSON)
+    
+    # 解析状态
+    parse_status = Column(String(50), default='pending')  # pending/success/failed
+    parse_time = Column(DateTime)
+    error_message = Column(Text)
+    
+    # 原始文本内容
+    raw_text = Column(Text)
+    
+    def to_dict(self):
+        """转换为字典"""
+        return {
+            'id': self.id,
+            'file_name': self.file_name,
+            'upload_time': self.upload_time.isoformat() if self.upload_time else None,
+            'name': self.name,
+            'gender': self.gender,
+            'birth_year': self.birth_year,
+            'age': self.age,
+            'phone': self.phone,
+            'email': self.email,
+            'earliest_work_year': self.earliest_work_year,
+            'work_experience_years': self.work_experience_years,
+            'highest_education': self.highest_education,
+            'school': self.school,
+            'school_original': self.school_original,
+            'school_code': self.school_code,
+            'school_match_status': self.school_match_status,
+            'school_confidence': self.school_confidence,
+            'major': self.major,
+            'major_original': self.major_original,
+            'major_code': self.major_code,
+            'major_match_status': self.major_match_status,
+            'major_confidence': self.major_confidence,
+            'applied_position': self.applied_position,
+            'work_experience': self.work_experience,
+            'parse_status': self.parse_status,
+            'parse_time': self.parse_time.isoformat() if self.parse_time else None,
+            'error_message': self.error_message,
+            'raw_text': self.raw_text
+        }
+
+# 数据库初始化
+engine = create_engine(f'sqlite:///{Config.DATABASE_PATH}', echo=False)
+Base.metadata.create_all(engine)
+
+# 简单的列更新，确保新增字段存在
+with engine.connect() as conn:
+    result = conn.execute(text("PRAGMA table_info(resumes)"))
+    columns = {row[1] for row in result}
+    if 'phone' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
+    if 'email' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
+    if 'applied_position' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
+    conn.commit()
+Session = sessionmaker(bind=engine)
+
+def get_db_session():
+    """获取数据库会话"""
+    return Session()
+

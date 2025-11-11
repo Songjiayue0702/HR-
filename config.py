@@ -1,0 +1,33 @@
+"""
+配置文件
+"""
+import os
+
+# 基础配置
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+DATABASE_PATH = os.path.join(BASE_DIR, 'database.db')
+EXPORT_FOLDER = os.path.join(BASE_DIR, 'exports')
+
+# 确保目录存在
+for folder in [UPLOAD_FOLDER, EXPORT_FOLDER]:
+    os.makedirs(folder, exist_ok=True)
+
+# Flask配置
+class Config:
+    SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
+    MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10MB
+    UPLOAD_FOLDER = UPLOAD_FOLDER
+    DATABASE_PATH = DATABASE_PATH
+    EXPORT_FOLDER = EXPORT_FOLDER
+    
+    # 允许的文件扩展名
+    ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx'}
+    
+    # 外部API配置（需要替换为实际API密钥）
+    QICHACHA_API_KEY = os.environ.get('QICHACHA_API_KEY') or ''
+    QICHACHA_API_URL = 'https://api.qichacha.com/ECIV4/GetBasicDetailsByName'
+    
+    SCHOOL_API_URL = os.environ.get('SCHOOL_API_URL') or ''
+    MAJOR_API_URL = os.environ.get('MAJOR_API_URL') or ''
+
