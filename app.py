@@ -48,9 +48,6 @@ def process_resume_async(resume_id, file_path):
         resume.age = info.get('age')
         resume.phone = info.get('phone')
         resume.email = info.get('email')
-        resume.earliest_work_year = info.get('earliest_work_year')
-        resume.work_experience_years = info.get('work_experience_years')
-        resume.highest_education = info.get('highest_education')
         resume.raw_text = text
         resume.error_message = None
         
@@ -247,14 +244,6 @@ def update_resume(resume_id):
         resume.birth_year = data['birth_year']
         if resume.birth_year:
             resume.age = datetime.now().year - resume.birth_year
-    if 'highest_education' in data:
-        resume.highest_education = data['highest_education']
-    if 'phone' in data:
-        resume.phone = data['phone']
-    if 'email' in data:
-        resume.email = data['email']
-    if 'applied_position' in data:
-        resume.applied_position = data['applied_position']
     if 'school' in data:
         resume.school = data['school']
     if 'school_original' in data:
@@ -265,14 +254,19 @@ def update_resume(resume_id):
         resume.major_original = data['major_original']
     if 'work_experience' in data:
         resume.work_experience = data['work_experience']
-    if 'earliest_work_year' in data:
-        resume.earliest_work_year = data['earliest_work_year']
-    if 'work_experience_years' in data:
-        resume.work_experience_years = data['work_experience_years']
-    if 'parse_status' in data:
-        resume.parse_status = data['parse_status']
+    if 'highest_education' in data:
+        resume.highest_education = data['highest_education']
+    if 'phone' in data:
+        resume.phone = data['phone']
+    if 'email' in data:
+        resume.email = data['email']
+    if 'applied_position' in data:
+        resume.applied_position = data['applied_position']
     if 'error_message' in data:
         resume.error_message = data['error_message']
+
+    extractor = InfoExtractor()
+    resume.earliest_work_year = extractor.extract_earliest_work_year(resume.raw_text or '', [])
     
     db.commit()
     db.close()

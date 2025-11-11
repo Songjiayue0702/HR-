@@ -73,7 +73,6 @@
                             <th onclick="sortTable('age')">年龄 ↕</th>
                             <th onclick="sortTable('phone')">手机号 ↕</th>
                             <th>邮箱</th>
-                            <th onclick="sortTable('work_experience_years')">工龄 ↕</th>
                             <th onclick="sortTable('highest_education')">学历 ↕</th>
                             <th>学校</th>
                             <th>专业</th>
@@ -82,7 +81,7 @@
                     </thead>
                     <tbody id="resumeTableBody">
                         <tr>
-                            <td colspan="12" class="loading">加载中...</td>
+                            <td colspan="11" class="loading">加载中...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -146,14 +145,6 @@
                     <label>
                         专业
                         <input type="text" id="editMajor">
-                    </label>
-                    <label>
-                        最早工作年份
-                        <input type="number" id="editEarliestWorkYear" min="1980" max="2030">
-                    </label>
-                    <label>
-                        工龄（年）
-                        <input type="number" id="editWorkYears" min="0" max="60">
                     </label>
                 </div>
                 <label class="textarea-label">

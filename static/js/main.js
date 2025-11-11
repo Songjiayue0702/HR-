@@ -139,7 +139,7 @@ function loadResumes(page = 1) {
         .catch(error => {
             console.error('Error:', error);
             document.getElementById('resumeTableBody').innerHTML = 
-                '<tr><td colspan="12" class="loading">加载失败，请刷新重试</td></tr>';
+                '<tr><td colspan="10" class="loading">加载失败，请刷新重试</td></tr>';
         });
 }
 
@@ -148,7 +148,7 @@ function displayResumes(resumes) {
     const tbody = document.getElementById('resumeTableBody');
     
     if (resumes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="loading">暂无数据</td></tr>';
         return;
     }
     
@@ -163,7 +163,6 @@ function displayResumes(resumes) {
             <td>${resume.age || '-'}</td>
             <td>${escapeHtml(resume.phone) || '-'}</td>
             <td>${escapeHtml(resume.email) || '-'}</td>
-            <td>${resume.work_experience_years || '-'}</td>
             <td>${escapeHtml(resume.highest_education) || '-'}</td>
             <td>
                 ${escapeHtml(resume.school) || '-'}
@@ -310,6 +309,9 @@ function displayDetail(resume) {
             <label>解析时间
                 <input type="text" value="${escapeHtml(resume.parse_time || '')}" disabled>
             </label>
+            <label>应聘岗位
+                <input id="editAppliedPosition" type="text" value="${escapeHtml(resume.applied_position || '')}">
+            </label>
         </div>
         <div class="form-grid">
             <label>姓名
@@ -329,9 +331,6 @@ function displayDetail(resume) {
             <label>邮箱
                 <input id="editEmail" type="email" value="${escapeHtml(resume.email || '')}">
             </label>
-            <label>应聘岗位
-                <input id="editAppliedPosition" type="text" value="${escapeHtml(resume.applied_position || '')}">
-            </label>
             <label>最高学历
                 <select id="editEducation">
                     ${educationOptions}
@@ -348,12 +347,6 @@ function displayDetail(resume) {
             </label>
             <label>专业（原始）
                 <input id="editMajorOriginal" type="text" value="${escapeHtml(resume.major_original || '')}">
-            </label>
-            <label>最早工作年份
-                <input id="editEarliestWorkYear" type="number" value="${resume.earliest_work_year || ''}">
-            </label>
-            <label>工龄
-                <input id="editWorkYears" type="number" value="${resume.work_experience_years || ''}">
             </label>
         </div>
         <div class="form-grid">
@@ -445,8 +438,6 @@ function saveResume() {
         school_original: document.getElementById('editSchoolOriginal').value.trim() || null,
         major: document.getElementById('editMajor').value.trim() || null,
         major_original: document.getElementById('editMajorOriginal').value.trim() || null,
-        earliest_work_year: parseIntegerInput('editEarliestWorkYear'),
-        work_experience_years: parseIntegerInput('editWorkYears'),
         error_message: document.getElementById('editErrorMessage').value.trim() || null,
     };
 

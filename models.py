@@ -25,8 +25,6 @@ class Resume(Base):
     age = Column(Integer)
     phone = Column(String(50))
     email = Column(String(100))
-    earliest_work_year = Column(Integer)
-    work_experience_years = Column(Integer)
     
     # 教育信息
     highest_education = Column(String(50))
@@ -67,8 +65,6 @@ class Resume(Base):
             'age': self.age,
             'phone': self.phone,
             'email': self.email,
-            'earliest_work_year': self.earliest_work_year,
-            'work_experience_years': self.work_experience_years,
             'highest_education': self.highest_education,
             'school': self.school,
             'school_original': self.school_original,

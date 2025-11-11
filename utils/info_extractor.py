@@ -21,6 +21,15 @@ class InfoExtractor:
             '职高': 2, '中专': 2,
             '初中': 1
         }
+        alias_map = {
+            '博士': '博士', '博士后': '博士', 'phd': '博士', 'doctor': '博士',
+            '硕士': '硕士', '研究生': '硕士', 'master': '硕士', 'mba': '硕士', 'mpa': '硕士',
+            '本科': '本科', '学士': '本科', 'bachelor': '本科', '统招本科': '本科', '普通本科': '本科', '大学本科': '本科',
+            '专科': '专科', '大专': '专科', 'college': '专科', 'associate': '专科', 'diploma': '专科', 'junior college': '专科',
+            '高中': '高中', '中专': '中专', '职高': '职高', '高职': '职高', 'technical secondary': '中专', 'technical school': '中专'
+        }
+        self.education_aliases = {alias.lower(): level for alias, level in alias_map.items()}
+        self.education_priority = sorted(self.education_levels.items(), key=lambda item: item[1], reverse=True)
         self.key_tokens = [
             '姓名', '性别', '年龄',
             '出生年份', '出生年月', '出生日期',
@@ -63,6 +72,29 @@ class InfoExtractor:
         text = re.sub(r'[ \t]+', ' ', text)
         text = re.sub(r'\n+', '\n', text)
         return text.strip()
+
+    def normalize_education_level(self, value: str | None) -> str | None:
+        if not value:
+            return None
+        text = value.strip().lower()
+        for alias, level in self.education_aliases.items():
+            if alias in text:
+                return level
+        return None
+
+    def detect_highest_level_in_text(self, text: str) -> str | None:
+        if not text:
+            return None
+        lowered = text.lower()
+        best_level = None
+        best_score = -1
+        for alias, level in self.education_aliases.items():
+            if alias in lowered:
+                score = self.education_levels.get(level, 0)
+                if score > best_score:
+                    best_level = level
+                    best_score = score
+        return best_level
 
     def parse_key_values(self, text: str) -> dict:
         """解析带有键值对格式的字段，如：姓名：张三"""
@@ -538,17 +570,25 @@ class InfoExtractor:
             return min(years)
 
         fallback_years = []
+        keywords = ['工作', '经历', '任职', '项目', '公司', '职业', '岗位', '职位', '职务', '实习', '就业']
+        skip_words = ['出生', '生日', '年龄']
         for line in text.split('\n'):
-            if not any(keyword in line for keyword in ['工作', '经历', '任职', '项目', '公司']):
+            if not any(keyword in line for keyword in keywords):
                 continue
-            if any(keyword in line for keyword in ['出生', '生日', '年龄']):
+            if any(keyword in line for keyword in skip_words):
                 continue
             for year_str in re.findall(r'(?:19|20)\d{2}', line):
                 year = int(year_str)
                 if 1980 <= year <= self.current_year:
                     fallback_years.append(year)
 
-        return min(fallback_years) if fallback_years else None
+        if fallback_years:
+            return min(fallback_years)
+
+        # 兜底：直接从全文提取所有合理年份
+        all_years = [int(year_str) for year_str in re.findall(r'(?:19|20)\d{2}', text)
+                     if 1980 <= int(year_str) <= self.current_year]
+        return min(all_years) if all_years else None
 
     def extract_education(self, text: str, kv_pairs: dict) -> dict:
         """提取教育信息"""
@@ -561,13 +601,17 @@ class InfoExtractor:
         # 直接解析键值对
         edu_value = kv_pairs.get('最高学历') or kv_pairs.get('学历')
         if edu_value:
-            highest_level = 0
-            for level, score in self.education_levels.items():
-                if level in edu_value and score > highest_level:
-                    highest_level = score
-                    education_info['highest_education'] = level
-            if not education_info['highest_education']:
-                education_info['highest_education'] = edu_value.strip()
+            normalized = self.normalize_education_level(edu_value)
+            if normalized:
+                education_info['highest_education'] = normalized
+            else:
+                highest_level = 0
+                for level, score in self.education_levels.items():
+                    if level in edu_value and score > highest_level:
+                        highest_level = score
+                        education_info['highest_education'] = level
+                if not education_info['highest_education']:
+                    education_info['highest_education'] = edu_value.strip()
 
         school_value = (
             kv_pairs.get('毕业院校') or
@@ -591,11 +635,15 @@ class InfoExtractor:
                 edu_text = edu_match.group(2)
 
                 if not education_info['highest_education']:
-                    highest_level = 0
-                    for level, value in self.education_levels.items():
-                        if level in edu_text and value > highest_level:
-                            highest_level = value
-                            education_info['highest_education'] = level
+                    detected = self.detect_highest_level_in_text(edu_text)
+                    if detected:
+                        education_info['highest_education'] = detected
+                    else:
+                        highest_level = 0
+                        for level, value in self.education_levels.items():
+                            if level in edu_text and value > highest_level:
+                                highest_level = value
+                                education_info['highest_education'] = level
 
                 if not education_info['school']:
                     school_pattern = r'(?:[\u4e00-\u9fa5]{2,20}(?:大学|学院|学校|专科学校|职业技术学院))'
@@ -692,9 +740,6 @@ class InfoExtractor:
 
         work_experiences = self.extract_work_experience(cleaned_text)
         earliest_work_year = self.extract_earliest_work_year(cleaned_text, work_experiences)
-        work_experience_years = (
-            self.current_year - earliest_work_year if earliest_work_year else None
-        )
 
         education = self.extract_education(cleaned_text, kv_pairs)
 
@@ -706,7 +751,6 @@ class InfoExtractor:
             'phone': phone,
             'email': email,
             'earliest_work_year': earliest_work_year,
-            'work_experience_years': work_experience_years,
             'work_experience': work_experiences,
             'highest_education': education['highest_education'],
             'school': education['school'],
