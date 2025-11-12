@@ -25,7 +25,7 @@ def reparse_all(batch_size: int = 50) -> None:
                 except Exception as err:
                     resume.parse_status = 'failed'
                     resume.error_message = str(err)
-                    continue
+                continue
 
             info = extractor.extract_all(text)
             resume.name = info.get('name')
