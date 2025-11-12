@@ -68,7 +68,6 @@ def export_resume_to_excel(resume):
         ['性别', resume.gender or ''],
         ['出生年份', resume.birth_year or ''],
         ['年龄', resume.age or ''],
-        ['工龄', ''],
         ['工作经历一 - 公司', exp1['company']],
         ['工作经历一 - 岗位', exp1['position']],
         ['工作经历一 - 时间', exp1['time']],

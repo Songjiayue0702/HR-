@@ -139,7 +139,7 @@ function loadResumes(page = 1) {
         .catch(error => {
             console.error('Error:', error);
             document.getElementById('resumeTableBody').innerHTML = 
-                '<tr><td colspan="10" class="loading">加载失败，请刷新重试</td></tr>';
+                '<tr><td colspan="11" class="loading">加载失败，请刷新重试</td></tr>';
         });
 }
 
@@ -148,7 +148,7 @@ function displayResumes(resumes) {
     const tbody = document.getElementById('resumeTableBody');
     
     if (resumes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="10" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="loading">暂无数据</td></tr>';
         return;
     }
     
@@ -388,6 +388,39 @@ function displayDetail(resume) {
                 `).join('');
             })()}
         </div>
+        <div class="detail-item">
+            <div class="detail-label">全部工作经历</div>
+            ${(() => {
+                const allExps = resume.work_experience || [];
+                if (!allExps.length) {
+                    return '<div class="work-experience-item">暂无数据</div>';
+                }
+                return `
+                    <table class="experience-table">
+                        <thead>
+                            <tr>
+                                <th>序号</th>
+                                <th>公司</th>
+                                <th>岗位</th>
+                                <th>开始年份</th>
+                                <th>结束年份</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${allExps.map((exp, idx) => `
+                                <tr>
+                                    <td>${idx + 1}</td>
+                                    <td>${escapeHtml(exp.company || '-')}</td>
+                                    <td>${escapeHtml(exp.position || '-')}</td>
+                                    <td>${exp.start_year || '-'}</td>
+                                    <td>${exp.end_year || '至今'}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            })()}
+        </div>
         <label class="textarea-label">当前错误信息
             <textarea id="editErrorMessage" rows="3" placeholder="可选">${escapeHtml(errorMessage)}</textarea>
         </label>
@@ -441,7 +474,7 @@ function saveResume() {
         error_message: document.getElementById('editErrorMessage').value.trim() || null,
     };
 
-    const experiences = [];
+    const updatedExperiences = (currentResumeData.work_experience || []).slice();
     for (let i = 0; i < 2; i++) {
         const company = document.getElementById(`expCompany${i}`).value.trim();
         const position = document.getElementById(`expPosition${i}`).value.trim();
@@ -449,17 +482,23 @@ function saveResume() {
         const endInput = document.getElementById(`expEnd${i}`).value;
         const startYear = startInput ? parseInt(startInput, 10) : null;
         const endYear = endInput ? parseInt(endInput, 10) : null;
-        if (!company && !position && startYear === null && endYear === null) {
-            continue;
+
+        const hasValue = company || position || startYear !== null || endYear !== null;
+
+        if (hasValue) {
+            updatedExperiences[i] = {
+                company: company || null,
+                position: position || null,
+                start_year: startYear,
+                end_year: endYear,
+            };
+        } else if (updatedExperiences[i]) {
+            updatedExperiences.splice(i, 1);
+            i--;
         }
-        experiences.push({
-            company: company || null,
-            position: position || null,
-            start_year: startYear,
-            end_year: endYear,
-        });
     }
-    payload.work_experience = experiences;
+
+    payload.work_experience = updatedExperiences;
 
     fetch(`/api/resumes/${currentResumeData.id}`, {
         method: 'PUT',

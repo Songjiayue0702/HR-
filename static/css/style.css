@@ -357,11 +357,31 @@ header h1 {
 }
 
 .work-experience-item {
-    margin-bottom: 15px;
-    padding: 15px;
+    margin-bottom: 12px;
+    padding: 12px;
     background: #f8f9fa;
     border-left: 4px solid #667eea;
     border-radius: 4px;
+    font-size: 13px;
+}
+
+.experience-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.experience-table th,
+.experience-table td {
+    padding: 6px 8px;
+    border: 1px solid #e0e0e0;
+    text-align: left;
+}
+
+.experience-table th {
+    background: #f0f2ff;
+    font-weight: 600;
 }
 
 .form-grid {

@@ -30,6 +30,12 @@ class InfoExtractor:
         }
         self.education_aliases = {alias.lower(): level for alias, level in alias_map.items()}
         self.education_priority = sorted(self.education_levels.items(), key=lambda item: item[1], reverse=True)
+
+        self.company_regex = re.compile(
+            r'([\u4e00-\u9fa5A-Za-z0-9（）()&·\s]{2,50}?'
+            r'(?:公司|集团|企业|中心|研究院|研究所|事务所|工作室|银行|医院|学院|学校|大学|事务部|事业部|总公司|分公司|控股|科技|工程|建设|咨询|管理|网络|传媒|股份有限公司|有限责任公司|有限公司))'
+        )
+        self.position_markers = ['岗位', '职位', '职务', '角色', '任职', '担任', '负责', '工作']
         self.key_tokens = [
             '姓名', '性别', '年龄',
             '出生年份', '出生年月', '出生日期',
@@ -63,6 +69,9 @@ class InfoExtractor:
             return ''
         text = text.replace('\r\n', '\n').replace('\r', '\n')
         text = text.replace('\xa0', ' ').replace('\u3000', ' ')
+        text = re.sub(r'(\d{4})\s*\n\s*[-~至到]\s*\n\s*((?:19|20)\d{2}|至今|现在)', r'\1-\2', text)
+        text = re.sub(r'(\d{4})(?:/|\\)\n(\d{1,2})', r'\1/\2', text)
+        text = re.sub(r'([\u4e00-\u9fa5]{2,})\n(公司|集团|企业)', r'\1\2', text)
         # 去除冗余长字符串（常见的加密文件标识）
         text = re.sub(r'\b[a-zA-Z0-9]{18,}\b', ' ', text)
         # 在常见段落标题前补换行，便于分段
@@ -95,6 +104,41 @@ class InfoExtractor:
                     best_level = level
                     best_score = score
         return best_level
+
+    def _split_company_position(self, text: str) -> tuple[str | None, str | None]:
+        if not text:
+            return None, None
+        candidate = re.sub(r'^[0-9]+[.、)]\s*', '', text.strip())
+        match = None
+        last_end = None
+        for match in self.company_regex.finditer(candidate):
+            last_match = match
+            last_end = match.end()
+        if match:
+            company = candidate[last_match.start():last_match.end()].strip(' ,-|，;；')
+            remainder = candidate[last_end:].strip(' ,-|，;；')
+        else:
+            company = candidate if self._is_valid_company(candidate) else None
+            remainder = '' if company else candidate
+
+        position = None
+        if remainder:
+            for marker in self.position_markers:
+                if marker in remainder:
+                    parts = remainder.split(marker, 1)
+                    if len(parts) == 2:
+                        position = parts[1].lstrip('：:，,\s')
+                        break
+            if not position and len(remainder) <= 20:
+                position = remainder
+
+        if position:
+            position = re.sub(r'^(岗位|职位|职务|角色|任职|担任|负责)[：:，,\s]*', '', position).strip()
+
+        if company and not self._is_valid_company(company):
+            company = None
+
+        return company, (position or None)
 
     def parse_key_values(self, text: str) -> dict:
         """解析带有键值对格式的字段，如：姓名：张三"""
@@ -173,33 +217,32 @@ class InfoExtractor:
                     cleaned = re.sub(r'^[0-9]+[.、)]\s*', '', value.strip())
                     return cleaned or None
 
-                if after_time:
-                    candidate = clean_candidate(after_time)
-                    if candidate:
-                        company = candidate
-                        if not role:
-                            role_keywords = re.compile(r'(经理|主管|总监|顾问|工程师|设计师|教师|老师|专员|分析师|运营|销售|客服|助理|顾问|职务|岗位|职位|角色)')
-                            role_match = role_keywords.search(after_time)
-                            if role_match:
-                                role = after_time[role_match.start():].strip()
-                                company = after_time[:role_match.start()].strip()
+                search_texts = [after_time, before_time]
+                for context in search_texts:
+                    if company:
+                        break
+                    candidate = clean_candidate(context)
+                    if not candidate:
+                        continue
+                    comp, pos = self._split_company_position(candidate)
+                    if comp:
+                        company = comp
+                        if pos:
+                            role = pos
+                        else:
+                            remainder = candidate.replace(comp, '').strip(' ,-|，;；')
+                            if remainder and not any(k in remainder for k in ['工作经验', '教育', '薪资', '城市', '期望', '优势']):
+                                for marker in self.position_markers:
+                                    if marker in remainder:
+                                        role = remainder.split(marker, 1)[1].lstrip('：:，,\s')
+                                        break
+                                else:
+                                    if len(remainder) <= 20:
+                                        role = remainder
                 if not company and company_match:
                     company = clean_candidate(company_match.group(1))
-                    trailing = line[company_match.end():time_match.start()].strip()
-                    trailing = clean_candidate(trailing)
-                    if trailing and not any(k in trailing for k in ['工作经验', '教育', '薪资', '城市', '期望', '优势']):
-                        role = trailing
                 if not company and last_company:
                     company = clean_candidate(last_company)
-                if not company and before_time:
-                    candidate = clean_candidate(before_time)
-                    if candidate:
-                        parts = candidate.split()
-                        if len(parts) >= 2:
-                            company = parts[0]
-                            role = ' '.join(parts[1:])
-                        else:
-                            company = candidate
 
                 position = role if role and len(role) <= 40 else None
                 current_exp = {
@@ -557,7 +600,7 @@ class InfoExtractor:
                         exp['position'] = ' '.join(parts[1:])
 
         cleaned.sort(key=exp_sort_key, reverse=True)
-        return cleaned[:2]
+        return cleaned
 
     def extract_earliest_work_year(self, text: str, work_experiences) -> int | None:
         """从工作经历或文本中推断最早工作年份"""
