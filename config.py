@@ -36,4 +36,9 @@ class Config:
     AI_API_KEY = os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or ''
     AI_API_BASE = os.environ.get('OPENAI_API_BASE') or 'https://api.openai.com/v1'
     AI_MODEL = os.environ.get('AI_MODEL') or 'gpt-3.5-turbo'  # 可选: gpt-3.5-turbo, gpt-4, gpt-4-turbo等
+    
+    # OCR配置（用于图片PDF识别）
+    OCR_ENABLED = os.environ.get('OCR_ENABLED', 'true').lower() == 'true'  # 是否启用OCR
+    OCR_ENGINE = os.environ.get('OCR_ENGINE', 'easyocr')  # 可选: 'paddleocr' 或 'easyocr'（当前使用easyocr）
+    OCR_USE_GPU = os.environ.get('OCR_USE_GPU', 'false').lower() == 'true'  # 是否使用GPU加速
 

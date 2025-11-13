@@ -20,6 +20,15 @@ app = Flask(__name__,
             static_folder='static')
 app.config.from_object(Config)
 
+# 初始化OCR引擎（如果启用）
+if app.config.get('OCR_ENABLED', True):
+    from utils.file_parser import init_ocr_engine
+    init_ocr_engine(
+        ocr_enabled=app.config.get('OCR_ENABLED', True),
+        engine=app.config.get('OCR_ENGINE', 'paddleocr'),
+        use_gpu=app.config.get('OCR_USE_GPU', False)
+    )
+
 def allowed_file(filename):
     """检查文件扩展名是否允许"""
     return '.' in filename and \

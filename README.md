@@ -16,7 +16,7 @@
 
 - **后端**: Python Flask
 - **数据库**: SQLite
-- **文件解析**: PyPDF2, python-docx, pytesseract (OCR)
+- **文件解析**: PyPDF2, python-docx, PaddleOCR/EasyOCR (OCR), PyMuPDF
 - **数据导出**: openpyxl
 - **前端**: HTML5, CSS3, JavaScript (原生)
 
@@ -30,21 +30,25 @@ pip install -r requirements.txt
 
 ### 2. 安装OCR依赖（可选，用于图片PDF识别）
 
-**Windows:**
-- 下载并安装 [Tesseract OCR](https://github.com/UB-Mannheim/tesseract/wiki)
-- 安装时选择中文语言包
+**推荐使用 PaddleOCR（无需系统级依赖）：**
 
-**Linux:**
 ```bash
-sudo apt-get install tesseract-ocr
-sudo apt-get install tesseract-ocr-chi-sim
+# 安装 PaddlePaddle（CPU版本）
+pip install paddlepaddle
+
+# 安装 PaddleOCR
+pip install paddleocr
 ```
 
-**macOS:**
+**备选方案：使用 EasyOCR**
+
 ```bash
-brew install tesseract
-brew install tesseract-lang
+pip install easyocr
 ```
+
+**详细安装说明请参考：** [OCR安装说明.md](OCR安装说明.md)
+
+> **注意**：首次运行OCR时会自动下载模型文件，请确保网络畅通。
 
 ### 3. 配置外部API（可选）
 
