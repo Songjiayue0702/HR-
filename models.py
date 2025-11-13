@@ -22,6 +22,7 @@ class Resume(Base):
     name = Column(String(100))
     gender = Column(String(10))
     birth_year = Column(Integer)
+    earliest_work_year = Column(Integer)  # 最早工作年份
     age = Column(Integer)
     phone = Column(String(50))
     email = Column(String(100))
@@ -62,6 +63,7 @@ class Resume(Base):
             'name': self.name,
             'gender': self.gender,
             'birth_year': self.birth_year,
+            'earliest_work_year': self.earliest_work_year,
             'age': self.age,
             'phone': self.phone,
             'email': self.email,
@@ -98,6 +100,8 @@ with engine.connect() as conn:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
     if 'applied_position' not in columns:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
+    if 'earliest_work_year' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
     conn.commit()
 Session = sessionmaker(bind=engine)
 

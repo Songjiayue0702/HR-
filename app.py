@@ -107,10 +107,16 @@ def process_resume_async(resume_id, file_path):
             resume.major_code = code
             resume.major_match_status = status
             resume.major_confidence = confidence
-        
-        resume.parse_status = 'success'
-        resume.parse_time = datetime.now()
-        db.commit()
+            
+            # 计算并保存最早工作年份
+            if work_experiences:
+                work_years = [exp.get('start_year') for exp in work_experiences if exp.get('start_year')]
+                if work_years:
+                    resume.earliest_work_year = min(work_years)
+            
+            resume.parse_status = 'success'
+            resume.parse_time = datetime.now()
+            db.commit()
         
     except Exception as e:
         resume.parse_status = 'failed'
@@ -263,6 +269,8 @@ def update_resume(resume_id):
         resume.birth_year = data['birth_year']
         if resume.birth_year:
             resume.age = datetime.now().year - resume.birth_year
+    if 'earliest_work_year' in data:
+        resume.earliest_work_year = data['earliest_work_year']
     if 'school' in data:
         resume.school = data['school']
     if 'school_original' in data:
@@ -273,6 +281,11 @@ def update_resume(resume_id):
         resume.major_original = data['major_original']
     if 'work_experience' in data:
         resume.work_experience = data['work_experience']
+        # 工作经历更新时，如果用户没有手动设置earliest_work_year，自动从工作经历中计算
+        if 'earliest_work_year' not in data and resume.work_experience:
+            work_years = [exp.get('start_year') for exp in resume.work_experience if exp.get('start_year')]
+            if work_years:
+                resume.earliest_work_year = min(work_years)
     if 'highest_education' in data:
         resume.highest_education = data['highest_education']
     if 'phone' in data:
@@ -283,9 +296,10 @@ def update_resume(resume_id):
         resume.applied_position = data['applied_position']
     if 'error_message' in data:
         resume.error_message = data['error_message']
-
-    extractor = InfoExtractor()
-    resume.earliest_work_year = extractor.extract_earliest_work_year(resume.raw_text or '', [])
+    
+    # 如果用户手动设置了earliest_work_year，使用用户设置的值
+    if 'earliest_work_year' in data:
+        resume.earliest_work_year = data['earliest_work_year']
     
     db.commit()
     db.close()

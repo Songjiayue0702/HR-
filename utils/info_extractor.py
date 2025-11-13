@@ -964,7 +964,9 @@ class InfoExtractor:
         patterns = [
             r'出生[年月日]*[：:]\s*(\d{4})',
             r'生日[：:]\s*(\d{4})',
+            r'出生[年月日]*[：:]\s*(\d{4})[年\-/]',  # 支持"出生日期：1985-01-01"格式
             r'(\d{4})年\d{1,2}月\d{0,2}日?',
+            r'(\d{4})[年\-/]\d{1,2}[月\-/]\d{1,2}',  # 支持"1985-01-01"或"1985/01/01"格式
             r'(\d{4})\.\d{1,2}\.\d{1,2}',
         ]
         for pattern in patterns:
@@ -974,12 +976,8 @@ class InfoExtractor:
                 if 1950 <= year <= self.current_year:
                     return year
 
-        # 根据“X岁”推算出生年份
-        age_match = re.search(r'(\d{1,2})\s*岁', text)
-        if age_match:
-            age = int(age_match.group(1))
-            if 16 <= age <= 70:
-                return self.current_year - age
+        # 不再根据"X岁"推算出生年份，因为用户要求：如简历中没有具体出生日期，则"出生年份"为空
+        # 只有明确提取到出生日期时才返回年份，否则返回None
 
         return None
 

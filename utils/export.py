@@ -62,12 +62,27 @@ def export_resume_to_excel(resume):
     top_exps = prepare_work_experiences(resume.work_experience)
     exp1, exp2 = top_exps
 
+    # 计算工龄
+    current_year = datetime.now().year
+    earliest_year = resume.earliest_work_year
+    # 如果earliest_work_year为空，从工作经历中计算
+    if not earliest_year and resume.work_experience:
+        work_years_list = [exp.get('start_year') for exp in resume.work_experience if exp.get('start_year')]
+        if work_years_list:
+            earliest_year = min(work_years_list)
+    work_years = None
+    if earliest_year:
+        work_years = current_year - earliest_year
+        if work_years < 0:
+            work_years = None
+    
     data = [
         ['应聘岗位', resume.applied_position or ''],
         ['姓名', resume.name or ''],
         ['性别', resume.gender or ''],
         ['出生年份', resume.birth_year or ''],
         ['年龄', resume.age or ''],
+        ['工龄', work_years if work_years is not None else ''],
         ['工作经历一 - 公司', exp1['company']],
         ['工作经历一 - 岗位', exp1['position']],
         ['工作经历一 - 时间', exp1['time']],
@@ -166,7 +181,7 @@ def export_resumes_to_excel(resumes):
     
     # 表头
     headers = [
-        'ID', '应聘岗位', '姓名', '性别', '年龄', '手机号',
+        'ID', '应聘岗位', '姓名', '性别', '年龄', '工龄', '手机号',
         '工作经历一（公司）', '工作经历一（岗位）', '工作经历一（时间）',
         '工作经历二（公司）', '工作经历二（岗位）', '工作经历二（时间）',
         '邮箱', '最高学历',
@@ -183,12 +198,26 @@ def export_resumes_to_excel(resumes):
         cell.alignment = Alignment(horizontal='center')
     
     # 数据
+    current_year = datetime.now().year
     for row_idx, resume in enumerate(resumes, 2):
         ws.cell(row=row_idx, column=1, value=resume.id)
         ws.cell(row=row_idx, column=2, value=resume.applied_position or '')
         ws.cell(row=row_idx, column=3, value=resume.name or '')
         ws.cell(row=row_idx, column=4, value=resume.gender or '')
         ws.cell(row=row_idx, column=5, value=resume.age or '')
+        # 计算工龄：今年-最早工作年份
+        earliest_year = resume.earliest_work_year
+        # 如果earliest_work_year为空，从工作经历中计算
+        if not earliest_year and resume.work_experience:
+            work_years_list = [exp.get('start_year') for exp in resume.work_experience if exp.get('start_year')]
+            if work_years_list:
+                earliest_year = min(work_years_list)
+        work_years = None
+        if earliest_year:
+            work_years = current_year - earliest_year
+            if work_years < 0:
+                work_years = None
+        ws.cell(row=row_idx, column=6, value=work_years if work_years is not None else '')
 
         exp1, exp2 = prepare_work_experiences(resume.work_experience)
         ws.cell(row=row_idx, column=7, value=exp1['company'])
@@ -210,12 +239,12 @@ def export_resumes_to_excel(resumes):
         ws.cell(row=row_idx, column=22, value=resume.parse_time.strftime('%Y-%m-%d %H:%M:%S') if resume.parse_time else '')
  
     widths = {
-        1: 8, 2: 18, 3: 15, 4: 8, 5: 10, 6: 15,
-        7: 22, 8: 18, 9: 18,
-        10: 22, 11: 18, 12: 18,
-        13: 22, 14: 12, 15: 18, 16: 18,
-        17: 12, 18: 18, 19: 18,
-        20: 12, 21: 19, 22: 19
+        1: 8, 2: 18, 3: 15, 4: 8, 5: 10, 6: 10, 7: 15,
+        8: 22, 9: 18, 10: 18,
+        11: 22, 12: 18, 13: 18,
+        14: 22, 15: 12, 16: 18, 17: 18,
+        18: 12, 19: 18, 20: 18,
+        21: 12, 22: 19, 23: 19
     }
     for col in range(1, len(headers) + 1):
         width = widths.get(col, 15)

@@ -148,12 +148,31 @@ function displayResumes(resumes) {
     const tbody = document.getElementById('resumeTableBody');
     
     if (resumes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="11" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="loading">暂无数据</td></tr>';
         return;
     }
     
     tbody.innerHTML = resumes.map(resume => {
         const isSelected = selectedResumes.has(resume.id);
+        // 计算工龄：今年-最早工作年份
+        const currentYear = new Date().getFullYear();
+        let earliestYear = resume.earliest_work_year;
+        
+        // 如果earliest_work_year为空，从工作经历中计算
+        if (!earliestYear && resume.work_experience && resume.work_experience.length > 0) {
+            const workYears = resume.work_experience
+                .map(exp => exp.start_year)
+                .filter(year => year !== null && year !== undefined);
+            if (workYears.length > 0) {
+                earliestYear = Math.min(...workYears);
+            }
+        }
+        
+        const workYears = earliestYear 
+            ? (currentYear - earliestYear) 
+            : null;
+        const workYearsDisplay = workYears !== null && workYears >= 0 ? workYears : '-';
+        
         return `
         <tr class="${isSelected ? 'selected' : ''}">
             <td><input type="checkbox" value="${resume.id}" ${isSelected ? 'checked' : ''} onchange="toggleResume(${resume.id}, this)"></td>
@@ -161,6 +180,7 @@ function displayResumes(resumes) {
             <td>${escapeHtml(resume.name) || '-'}</td>
             <td>${escapeHtml(resume.gender) || '-'}</td>
             <td>${resume.age || '-'}</td>
+            <td>${workYearsDisplay}</td>
             <td>${escapeHtml(resume.phone) || '-'}</td>
             <td>${escapeHtml(resume.email) || '-'}</td>
             <td>${escapeHtml(resume.highest_education) || '-'}</td>
@@ -324,6 +344,24 @@ function displayDetail(resume) {
             </label>
             <label>出生年份
                 <input id="editBirthYear" type="number" value="${resume.birth_year || ''}">
+            </label>
+            <label>最早工作年份
+                <input id="editEarliestWorkYear" type="number" value="${(() => {
+                    // 如果数据库中有值，使用数据库的值；否则从工作经历中计算
+                    if (resume.earliest_work_year) {
+                        return resume.earliest_work_year;
+                    }
+                    const workExps = resume.work_experience || [];
+                    if (workExps.length > 0) {
+                        const years = workExps
+                            .map(exp => exp.start_year)
+                            .filter(year => year !== null && year !== undefined);
+                        if (years.length > 0) {
+                            return Math.min(...years);
+                        }
+                    }
+                    return '';
+                })()}">
             </label>
             <label>手机号
                 <input id="editPhone" type="text" value="${escapeHtml(resume.phone || '')}">
@@ -531,6 +569,7 @@ function saveResume() {
         name: document.getElementById('editName').value.trim() || null,
         gender: document.getElementById('editGender').value || null,
         birth_year: parseIntegerInput('editBirthYear'),
+        earliest_work_year: parseIntegerInput('editEarliestWorkYear'),
         phone: document.getElementById('editPhone').value.trim() || null,
         email: document.getElementById('editEmail').value.trim() || null,
         applied_position: document.getElementById('editAppliedPosition').value.trim() || null,
