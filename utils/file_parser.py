@@ -29,17 +29,19 @@ def extract_text_from_pdf(file_path):
             pdf_reader = PyPDF2.PdfReader(file)
             for page in pdf_reader.pages:
                 page_text = page.extract_text()
-                if page_text.strip():
+                if page_text and isinstance(page_text, str) and page_text.strip():
                     text += page_text + "\n"
         
         # 如果提取的文本太少，可能是图片PDF，使用OCR（如果可用）
-        if len(text.strip()) < 100 and OCR_AVAILABLE:
+        if text and len(text.strip()) < 100 and OCR_AVAILABLE:
             try:
                 images = convert_from_path(file_path, dpi=200)
                 ocr_text = ""
                 for image in images:
-                    ocr_text += pytesseract.image_to_string(image, lang='chi_sim+eng') + "\n"
-                if len(ocr_text.strip()) > len(text.strip()):
+                    ocr_result = pytesseract.image_to_string(image, lang='chi_sim+eng')
+                    if ocr_result and isinstance(ocr_result, str):
+                        ocr_text += ocr_result + "\n"
+                if ocr_text and len(ocr_text.strip()) > len(text.strip()):
                     text = ocr_text
             except Exception as e:
                 print(f"OCR处理失败: {e}")
@@ -48,7 +50,7 @@ def extract_text_from_pdf(file_path):
     except Exception as e:
         raise Exception(f"PDF解析失败: {str(e)}")
     
-    return text
+    return text if text else ""
 
 def extract_text_from_word(file_path):
     """

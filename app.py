@@ -37,6 +37,8 @@ def process_resume_async(resume_id, file_path):
         
         # 提取文本
         text = extract_text(file_path)
+        if not text:
+            raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
         
         # 规则提取
         extractor = InfoExtractor()
@@ -63,7 +65,15 @@ def process_resume_async(resume_id, file_path):
         resume.name = info.get('name')
         resume.gender = info.get('gender')
         resume.birth_year = info.get('birth_year')
-        resume.age = info.get('age')
+        # 如果从简历中提取到了年龄，保存到age_from_resume
+        extracted_age = info.get('age')
+        if extracted_age:
+            resume.age_from_resume = extracted_age
+            resume.age = extracted_age
+        else:
+            # 如果没有提取到年龄，但有出生年份，计算年龄
+            if resume.birth_year:
+                resume.age = datetime.now().year - resume.birth_year
         resume.phone = info.get('phone')
         resume.email = info.get('email')
         resume.highest_education = info.get('highest_education')
@@ -107,16 +117,16 @@ def process_resume_async(resume_id, file_path):
             resume.major_code = code
             resume.major_match_status = status
             resume.major_confidence = confidence
-            
-            # 计算并保存最早工作年份
-            if work_experiences:
-                work_years = [exp.get('start_year') for exp in work_experiences if exp.get('start_year')]
-                if work_years:
-                    resume.earliest_work_year = min(work_years)
-            
-            resume.parse_status = 'success'
-            resume.parse_time = datetime.now()
-            db.commit()
+        
+        # 计算并保存最早工作年份
+        if work_experiences:
+            work_years = [exp.get('start_year') for exp in work_experiences if exp.get('start_year')]
+            if work_years:
+                resume.earliest_work_year = min(work_years)
+        
+        resume.parse_status = 'success'
+        resume.parse_time = datetime.now()
+        db.commit()
         
     except Exception as e:
         resume.parse_status = 'failed'
@@ -267,7 +277,11 @@ def update_resume(resume_id):
         resume.gender = data['gender']
     if 'birth_year' in data:
         resume.birth_year = data['birth_year']
-        if resume.birth_year:
+        # 如果简历中提取到了年龄，优先使用简历中的年龄
+        if resume.age_from_resume:
+            resume.age = resume.age_from_resume
+        elif resume.birth_year:
+            # 如果没有从简历提取到年龄，根据出生年份计算
             resume.age = datetime.now().year - resume.birth_year
     if 'earliest_work_year' in data:
         resume.earliest_work_year = data['earliest_work_year']
