@@ -254,6 +254,73 @@ header h1 {
     background: #6c757d;
 }
 
+/* 解析状态文本样式 */
+.status-pending {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: #fff3cd;
+    color: #856404;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-processing {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: #cfe2ff;
+    color: #084298;
+    font-size: 12px;
+    font-weight: 500;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-success {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: #d1e7dd;
+    color: #0f5132;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-failed {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: #f8d7da;
+    color: #842029;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-unknown {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background-color: #e2e3e5;
+    color: #41464b;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+.btn-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
 .btn-small {
     padding: 6px 12px;
     font-size: 12px;

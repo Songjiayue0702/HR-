@@ -8,15 +8,18 @@ from datetime import datetime
 from config import Config
 
 
-def prepare_work_experiences(work_experience):
-    """获取最多两段工作经历并格式化"""
+def prepare_work_experiences(work_experience, max_count=None):
+    """获取工作经历并格式化（默认不限制数量）"""
     experiences = work_experience or []
-    top_two = experiences[:2]
-    while len(top_two) < 2:
-        top_two.append({})
+    
+    # 如果指定了最大数量，只取前N段（用于兼容旧代码）
+    if max_count is not None:
+        experiences = experiences[:max_count]
+        while len(experiences) < max_count:
+            experiences.append({})
 
     prepared = []
-    for exp in top_two:
+    for exp in experiences:
         start_year = exp.get('start_year') if exp else None
         end_year = exp.get('end_year') if exp else None
         if start_year and end_year:
@@ -59,8 +62,11 @@ def export_resume_to_excel(resume):
     ws[f'A{row}'].font = Font(bold=True)
     row += 1
     
-    top_exps = prepare_work_experiences(resume.work_experience)
-    exp1, exp2 = top_exps
+    # 为了兼容Excel格式，仍然只显示前两段工作经历在基本信息中
+    # 但完整的工作经历会在下面的"工作经历"部分显示
+    top_exps = prepare_work_experiences(resume.work_experience, max_count=2)
+    exp1 = top_exps[0] if len(top_exps) > 0 else {}
+    exp2 = top_exps[1] if len(top_exps) > 1 else {}
 
     # 计算工龄
     current_year = datetime.now().year
@@ -235,7 +241,11 @@ def export_resumes_to_excel(resumes):
         # 手机号（第9列）
         ws.cell(row=row_idx, column=9, value=resume.phone or '')
 
-        exp1, exp2 = prepare_work_experiences(resume.work_experience)
+        # 为了兼容Excel格式，仍然只显示前两段工作经历
+        # 完整的工作经历可以通过单个导出功能查看
+        top_exps = prepare_work_experiences(resume.work_experience, max_count=2)
+        exp1 = top_exps[0] if len(top_exps) > 0 else {}
+        exp2 = top_exps[1] if len(top_exps) > 1 else {}
         # 工作经历一（第10-12列）
         ws.cell(row=row_idx, column=10, value=exp1['company'])
         ws.cell(row=row_idx, column=11, value=exp1['position'])

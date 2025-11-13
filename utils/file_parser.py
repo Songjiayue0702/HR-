@@ -317,13 +317,18 @@ def extract_text_from_word(file_path):
         doc = Document(abs_path)
         text = ""
         
-        # 提取段落文本
+        # 提取段落文本（保持原有顺序和结构）
+        paragraph_count = 0
         for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                text += paragraph.text + "\n"
+            para_text = paragraph.text.strip()
+            if para_text:
+                text += para_text + "\n"
+                paragraph_count += 1
         
-        # 提取表格中的文本
+        # 提取表格中的文本（保持表格结构，便于后续解析）
+        table_count = 0
         for table in doc.tables:
+            table_count += 1
             for row in table.rows:
                 row_text = []
                 for cell in row.cells:
@@ -331,7 +336,29 @@ def extract_text_from_word(file_path):
                     if cell_text:
                         row_text.append(cell_text)
                 if row_text:
-                    text += " | ".join(row_text) + "\n"
+                    # 使用空格分隔，保持表格内容的可读性
+                    text += " ".join(row_text) + "\n"
+        
+        # 尝试提取页眉和页脚（可能包含重要信息）
+        try:
+            for section in doc.sections:
+                # 提取页眉
+                if section.header:
+                    for paragraph in section.header.paragraphs:
+                        header_text = paragraph.text.strip()
+                        if header_text and len(header_text) > 1:
+                            # 页眉信息放在文本开头
+                            text = header_text + "\n" + text
+                # 提取页脚
+                if section.footer:
+                    for paragraph in section.footer.paragraphs:
+                        footer_text = paragraph.text.strip()
+                        if footer_text and len(footer_text) > 1:
+                            # 页脚信息放在文本末尾
+                            text += "\n" + footer_text
+        except Exception as e:
+            # 页眉页脚提取失败不影响主流程
+            pass
         
         # 如果没有提取到任何文本，可能是文件格式问题
         if not text.strip():

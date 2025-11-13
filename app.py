@@ -253,8 +253,12 @@ def get_resumes():
         else:
             query = query.order_by(getattr(Resume, sort_by).asc())
     
-    # 只返回解析成功的
-    query = query.filter(Resume.parse_status == 'success')
+    # 允许显示所有状态的简历（pending/processing/success/failed）
+    # 用户可以通过状态筛选来查看特定状态的简历
+    status_filter = request.args.get('status', '')
+    if status_filter:
+        query = query.filter(Resume.parse_status == status_filter)
+    # 如果没有指定状态筛选，默认显示所有状态的简历
     
     total = query.count()
     resumes = query.offset((page - 1) * per_page).limit(per_page).all()

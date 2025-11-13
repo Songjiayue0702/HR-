@@ -82,9 +82,11 @@ function uploadFiles(files) {
         if (data.success) {
             progressFill.style.width = '100%';
             progressText.textContent = '上传成功，正在解析...';
+            // 立即刷新列表，显示新上传的简历
+            loadResumes();
+            // 2秒后隐藏进度条，但继续自动刷新直到解析完成
             setTimeout(() => {
                 progressDiv.style.display = 'none';
-                loadResumes();
             }, 2000);
         } else {
             alert('上传失败: ' + data.message);
@@ -148,8 +150,26 @@ function displayResumes(resumes) {
     const tbody = document.getElementById('resumeTableBody');
     
     if (resumes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="14" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="15" class="loading">暂无数据</td></tr>';
         return;
+    }
+    
+    // 检查是否有正在处理的简历，如果有则设置自动刷新
+    const hasProcessing = resumes.some(r => r.parse_status === 'pending' || r.parse_status === 'processing');
+    if (hasProcessing) {
+        // 如果有正在处理的简历，3秒后自动刷新
+        if (window.refreshTimer) {
+            clearTimeout(window.refreshTimer);
+        }
+        window.refreshTimer = setTimeout(() => {
+            loadResumes(currentPage);
+        }, 3000);
+    } else {
+        // 如果没有正在处理的简历，清除定时器
+        if (window.refreshTimer) {
+            clearTimeout(window.refreshTimer);
+            window.refreshTimer = null;
+        }
     }
     
     tbody.innerHTML = resumes.map(resume => {
@@ -190,9 +210,28 @@ function displayResumes(resumes) {
             duplicateDisplay = '<span class="duplicate-warning">重复简历</span>';
         }
         
+        // 解析状态显示
+        let statusDisplay = '';
+        const parseStatus = resume.parse_status || 'pending';
+        if (parseStatus === 'pending') {
+            statusDisplay = '<span class="status-pending">待处理</span>';
+        } else if (parseStatus === 'processing') {
+            statusDisplay = '<span class="status-processing">处理中</span>';
+        } else if (parseStatus === 'success') {
+            statusDisplay = '<span class="status-success">已完成</span>';
+        } else if (parseStatus === 'failed') {
+            statusDisplay = '<span class="status-failed">失败</span>';
+        } else {
+            statusDisplay = '<span class="status-unknown">未知</span>';
+        }
+        
+        // 如果状态不是success，禁用查看/编辑按钮
+        const viewButtonDisabled = parseStatus !== 'success' ? 'disabled' : '';
+        const viewButtonClass = parseStatus !== 'success' ? 'btn btn-small btn-view btn-disabled' : 'btn btn-small btn-view';
+        
         return `
         <tr class="${isSelected ? 'selected' : ''}">
-            <td><input type="checkbox" value="${resume.id}" ${isSelected ? 'checked' : ''} onchange="toggleResume(${resume.id}, this)"></td>
+            <td><input type="checkbox" value="${resume.id}" ${isSelected ? 'checked' : ''} ${parseStatus !== 'success' ? 'disabled' : ''} onchange="toggleResume(${resume.id}, this)"></td>
             <td>${escapeHtml(resume.applied_position) || '-'}</td>
             <td>${identityCode}</td>
             <td>${duplicateDisplay}</td>
@@ -211,8 +250,9 @@ function displayResumes(resumes) {
                 ${escapeHtml(resume.major) || '-'}
                 ${getStatusIcon(resume.major_match_status)}
             </td>
+            <td>${statusDisplay}</td>
             <td>
-                <button class="btn btn-small btn-view" onclick="viewDetail(${resume.id})">查看/编辑</button>
+                <button class="${viewButtonClass}" ${viewButtonDisabled} onclick="viewDetail(${resume.id})">查看/编辑</button>
             </td>
         </tr>
     `;
@@ -421,9 +461,13 @@ function displayDetail(resume) {
             </label>
         </div>
         <div class="detail-item">
-            <div class="detail-label">最新工作经历（最多两段，只读，自动同步）</div>
+            <div class="detail-label">最新工作经历（仅显示前2段，只读，自动同步）</div>
             ${(() => {
                 const experiences = (resume.work_experience || []).slice(0, 2);
+                if (!experiences.length) {
+                    return '<div class="work-experience-item">暂无数据</div>';
+                }
+                // 确保显示2段（如果不足2段，用空数据填充）
                 while (experiences.length < 2) {
                     experiences.push({ company: '', position: '', start_year: '', end_year: '' });
                 }
@@ -447,10 +491,13 @@ function displayDetail(resume) {
         </div>
         <div class="detail-item">
             <div class="detail-label">全部工作经历（可编辑，修改后自动同步至最新工作经历）</div>
+            <div style="margin-bottom: 10px;">
+                <button class="btn btn-primary" onclick="addWorkExperience()" style="padding: 5px 15px; font-size: 14px;">+ 增加工作经历</button>
+            </div>
             ${(() => {
                 const allExps = resume.work_experience || [];
                 if (!allExps.length) {
-                    return '<div class="work-experience-item">暂无数据</div>';
+                    return '<div class="work-experience-item">暂无数据，点击上方按钮添加</div>';
                 }
                 return `
                     <table class="experience-table">
@@ -461,16 +508,18 @@ function displayDetail(resume) {
                                 <th>岗位</th>
                                 <th>开始年份</th>
                                 <th>结束年份</th>
+                                <th>操作</th>
                             </tr>
                         </thead>
                         <tbody id="allWorkExperienceTable">
                             ${allExps.map((exp, idx) => `
-                                <tr>
+                                <tr data-row-index="${idx}">
                                     <td>${idx + 1}</td>
                                     <td><input type="text" class="exp-company-input" data-index="${idx}" value="${escapeHtml(exp.company || '')}" placeholder="公司名称"></td>
                                     <td><input type="text" class="exp-position-input" data-index="${idx}" value="${escapeHtml(exp.position || '')}" placeholder="岗位名称"></td>
                                     <td><input type="number" class="exp-start-input" data-index="${idx}" value="${exp.start_year || ''}" placeholder="开始年份"></td>
                                     <td><input type="number" class="exp-end-input" data-index="${idx}" value="${exp.end_year || ''}" placeholder="结束年份（空为至今）"></td>
+                                    <td><button class="btn btn-danger" onclick="removeWorkExperience(${idx})" style="padding: 3px 10px; font-size: 12px;">删除</button></td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -495,6 +544,121 @@ function displayDetail(resume) {
     
     // 添加全部工作经历表格的编辑事件监听
     setupWorkExperienceEditListeners();
+}
+
+// 增加工作经历
+function addWorkExperience() {
+    const table = document.getElementById('allWorkExperienceTable');
+    if (!table) {
+        // 如果表格不存在，先创建表格
+        const detailItems = document.querySelectorAll('.detail-item');
+        let detailItem = null;
+        for (const item of detailItems) {
+            const label = item.querySelector('.detail-label');
+            if (label && label.textContent.includes('全部工作经历')) {
+                detailItem = item;
+                break;
+            }
+        }
+        if (detailItem) {
+            const container = detailItem.querySelector('.work-experience-item');
+            if (container) {
+                container.remove();
+            }
+            const tableHtml = `
+                <table class="experience-table">
+                    <thead>
+                        <tr>
+                            <th>序号</th>
+                            <th>公司</th>
+                            <th>岗位</th>
+                            <th>开始年份</th>
+                            <th>结束年份</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="allWorkExperienceTable">
+                    </tbody>
+                </table>
+            `;
+            detailItem.insertAdjacentHTML('beforeend', tableHtml);
+        }
+    }
+    
+    const tbody = document.getElementById('allWorkExperienceTable');
+    if (!tbody) return;
+    
+    // 获取当前行数
+    const currentRows = tbody.querySelectorAll('tr');
+    const newIndex = currentRows.length;
+    
+    // 创建新行
+    const newRow = document.createElement('tr');
+    newRow.setAttribute('data-row-index', newIndex);
+    newRow.innerHTML = `
+        <td>${newIndex + 1}</td>
+        <td><input type="text" class="exp-company-input" data-index="${newIndex}" value="" placeholder="公司名称"></td>
+        <td><input type="text" class="exp-position-input" data-index="${newIndex}" value="" placeholder="岗位名称"></td>
+        <td><input type="number" class="exp-start-input" data-index="${newIndex}" value="" placeholder="开始年份"></td>
+        <td><input type="number" class="exp-end-input" data-index="${newIndex}" value="" placeholder="结束年份（空为至今）"></td>
+        <td><button class="btn btn-danger" onclick="removeWorkExperience(${newIndex})" style="padding: 3px 10px; font-size: 12px;">删除</button></td>
+    `;
+    
+    tbody.appendChild(newRow);
+    
+    // 更新所有行的序号和data-index
+    updateWorkExperienceIndices();
+    
+    // 重新设置事件监听
+    setupWorkExperienceEditListeners();
+}
+
+// 删除工作经历
+function removeWorkExperience(index) {
+    const table = document.getElementById('allWorkExperienceTable');
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('tr');
+    const rowToRemove = Array.from(rows).find(row => {
+        const rowIndex = row.getAttribute('data-row-index');
+        return rowIndex && parseInt(rowIndex) === index;
+    });
+    
+    if (rowToRemove) {
+        rowToRemove.remove();
+        // 更新所有行的序号和data-index
+        updateWorkExperienceIndices();
+        // 同步到最新工作经历
+        syncToLatestWorkExperience();
+    }
+}
+
+// 更新工作经历表格的序号和索引
+function updateWorkExperienceIndices() {
+    const table = document.getElementById('allWorkExperienceTable');
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('tr');
+    rows.forEach((row, idx) => {
+        // 更新序号
+        const firstCell = row.querySelector('td:first-child');
+        if (firstCell) {
+            firstCell.textContent = idx + 1;
+        }
+        
+        // 更新data-index和data-row-index
+        row.setAttribute('data-row-index', idx);
+        const inputs = row.querySelectorAll('input[data-index]');
+        inputs.forEach(input => {
+            input.setAttribute('data-index', idx);
+        });
+        
+        // 更新删除按钮的onclick
+        const deleteBtn = row.querySelector('button.btn-danger');
+        if (deleteBtn) {
+            deleteBtn.setAttribute('onclick', `removeWorkExperience(${idx})`);
+        }
+    });
 }
 
 // 设置工作经历编辑监听器
@@ -546,19 +710,50 @@ function syncToLatestWorkExperience() {
         }
     });
     
-    // 更新最新工作经历（最多两条）
-    const latestExperiences = allExperiences.slice(0, 2);
-    for (let i = 0; i < 2; i++) {
-        const exp = latestExperiences[i] || { company: '', position: '', start_year: '', end_year: '' };
-        const companyInput = document.getElementById(`expCompany${i}`);
-        const positionInput = document.getElementById(`expPosition${i}`);
-        const startInput = document.getElementById(`expStart${i}`);
-        const endInput = document.getElementById(`expEnd${i}`);
+    // 更新最新工作经历（仅显示前2段）
+    // 查找"最新工作经历"的容器
+    const detailItems = document.querySelectorAll('.detail-item');
+    let latestExpContainer = null;
+    for (const item of detailItems) {
+        const label = item.querySelector('.detail-label');
+        if (label && label.textContent.includes('最新工作经历')) {
+            latestExpContainer = item;
+            break;
+        }
+    }
+    
+    if (latestExpContainer) {
+        // 只取前2段工作经历
+        const latestExperiences = allExperiences.slice(0, 2);
+        // 确保有2段（如果不足，用空数据填充）
+        while (latestExperiences.length < 2) {
+            latestExperiences.push({ company: '', position: '', start_year: '', end_year: '' });
+        }
         
-        if (companyInput) companyInput.value = exp.company || '';
-        if (positionInput) positionInput.value = exp.position || '';
-        if (startInput) startInput.value = exp.start_year || '';
-        if (endInput) endInput.value = exp.end_year || '';
+        // 先移除所有现有的只读输入框（保留标题）
+        const existingItems = latestExpContainer.querySelectorAll('.work-experience-item');
+        existingItems.forEach(item => item.remove());
+        
+        // 重新创建前2段工作经历的只读显示
+        latestExperiences.forEach((exp, idx) => {
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'work-experience-item';
+            itemDiv.innerHTML = `
+                <label>公司
+                    <input type="text" id="expCompany${idx}" value="${escapeHtml(exp.company || '')}" readonly>
+                </label>
+                <label>岗位
+                    <input type="text" id="expPosition${idx}" value="${escapeHtml(exp.position || '')}" readonly>
+                </label>
+                <label>开始年份
+                    <input type="number" id="expStart${idx}" value="${exp.start_year || ''}" readonly>
+                </label>
+                <label>结束年份
+                    <input type="number" id="expEnd${idx}" value="${exp.end_year || ''}" readonly>
+                </label>
+            `;
+            latestExpContainer.appendChild(itemDiv);
+        });
     }
 }
 
@@ -631,13 +826,23 @@ function saveResume() {
         });
     } else {
         // 如果表格不存在，回退到原来的逻辑（从最新工作经历读取）
-        for (let i = 0; i < 2; i++) {
-            const company = document.getElementById(`expCompany${i}`).value.trim();
-            const position = document.getElementById(`expPosition${i}`).value.trim();
-            const startInput = document.getElementById(`expStart${i}`).value;
-            const endInput = document.getElementById(`expEnd${i}`).value;
-            const startYear = startInput ? parseInt(startInput, 10) : null;
-            const endYear = endInput ? parseInt(endInput, 10) : null;
+        // 动态读取所有工作经历输入框（不再限制为2段）
+        let i = 0;
+        while (true) {
+            const companyInput = document.getElementById(`expCompany${i}`);
+            const positionInput = document.getElementById(`expPosition${i}`);
+            const startInput = document.getElementById(`expStart${i}`);
+            const endInput = document.getElementById(`expEnd${i}`);
+            
+            // 如果所有输入框都不存在，说明已经读取完所有工作经历
+            if (!companyInput && !positionInput && !startInput && !endInput) {
+                break;
+            }
+            
+            const company = companyInput ? companyInput.value.trim() : '';
+            const position = positionInput ? positionInput.value.trim() : '';
+            const startYear = startInput && startInput.value ? parseInt(startInput.value, 10) : null;
+            const endYear = endInput && endInput.value ? parseInt(endInput.value, 10) : null;
 
             const hasValue = company || position || startYear !== null || endYear !== null;
 
@@ -646,9 +851,10 @@ function saveResume() {
                     company: company || null,
                     position: position || null,
                     start_year: startYear,
-                    end_year: endYear,
+                    end_year: endYear
                 });
             }
+            i++; // 继续读取下一段工作经历
         }
     }
 
