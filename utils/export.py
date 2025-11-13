@@ -181,7 +181,7 @@ def export_resumes_to_excel(resumes):
     
     # 表头
     headers = [
-        'ID', '应聘岗位', '姓名', '性别', '年龄', '工龄', '手机号',
+        'ID', '应聘岗位', '身份验证码', '查重', '姓名', '性别', '年龄', '工龄', '手机号',
         '工作经历一（公司）', '工作经历一（岗位）', '工作经历一（时间）',
         '工作经历二（公司）', '工作经历二（岗位）', '工作经历二（时间）',
         '邮箱', '最高学历',
@@ -202,9 +202,23 @@ def export_resumes_to_excel(resumes):
     for row_idx, resume in enumerate(resumes, 2):
         ws.cell(row=row_idx, column=1, value=resume.id)
         ws.cell(row=row_idx, column=2, value=resume.applied_position or '')
-        ws.cell(row=row_idx, column=3, value=resume.name or '')
-        ws.cell(row=row_idx, column=4, value=resume.gender or '')
-        ws.cell(row=row_idx, column=5, value=resume.age or '')
+        # 身份验证码：姓名+手机号后四位
+        identity_code = ''
+        if resume.name:
+            phone = resume.phone or ''
+            if phone and len(phone) >= 4:
+                identity_code = resume.name + phone[-4:]
+            else:
+                identity_code = resume.name
+        ws.cell(row=row_idx, column=3, value=identity_code)
+        # 查重（第4列）
+        duplicate_text = ''
+        if resume.duplicate_status == '重复简历' and resume.duplicate_similarity and resume.duplicate_similarity >= 80:
+            duplicate_text = '重复简历'
+        ws.cell(row=row_idx, column=4, value=duplicate_text)
+        ws.cell(row=row_idx, column=5, value=resume.name or '')
+        ws.cell(row=row_idx, column=6, value=resume.gender or '')
+        ws.cell(row=row_idx, column=7, value=resume.age or '')
         # 计算工龄：今年-最早工作年份
         earliest_year = resume.earliest_work_year
         # 如果earliest_work_year为空，从工作经历中计算
@@ -217,44 +231,44 @@ def export_resumes_to_excel(resumes):
             work_years = current_year - earliest_year
             if work_years < 0:
                 work_years = None
-        ws.cell(row=row_idx, column=6, value=work_years if work_years is not None else '')
-        # 手机号（第7列）
-        ws.cell(row=row_idx, column=7, value=resume.phone or '')
+        ws.cell(row=row_idx, column=8, value=work_years if work_years is not None else '')
+        # 手机号（第9列）
+        ws.cell(row=row_idx, column=9, value=resume.phone or '')
 
         exp1, exp2 = prepare_work_experiences(resume.work_experience)
-        # 工作经历一（第8-10列）
-        ws.cell(row=row_idx, column=8, value=exp1['company'])
-        ws.cell(row=row_idx, column=9, value=exp1['position'])
-        ws.cell(row=row_idx, column=10, value=exp1['time'])
-        # 工作经历二（第11-13列）
-        ws.cell(row=row_idx, column=11, value=exp2['company'])
-        ws.cell(row=row_idx, column=12, value=exp2['position'])
-        ws.cell(row=row_idx, column=13, value=exp2['time'])
+        # 工作经历一（第10-12列）
+        ws.cell(row=row_idx, column=10, value=exp1['company'])
+        ws.cell(row=row_idx, column=11, value=exp1['position'])
+        ws.cell(row=row_idx, column=12, value=exp1['time'])
+        # 工作经历二（第13-15列）
+        ws.cell(row=row_idx, column=13, value=exp2['company'])
+        ws.cell(row=row_idx, column=14, value=exp2['position'])
+        ws.cell(row=row_idx, column=15, value=exp2['time'])
 
-        # 邮箱（第14列）
-        ws.cell(row=row_idx, column=14, value=resume.email or '')
-        # 最高学历（第15列）
-        ws.cell(row=row_idx, column=15, value=resume.highest_education or '')
-        # 学校信息（第16-18列）
-        ws.cell(row=row_idx, column=16, value=resume.school_original or '')
-        ws.cell(row=row_idx, column=17, value=resume.school or '')
-        ws.cell(row=row_idx, column=18, value=resume.school_match_status or '')
-        # 专业信息（第19-21列）
-        ws.cell(row=row_idx, column=19, value=resume.major_original or '')
-        ws.cell(row=row_idx, column=20, value=resume.major or '')
-        ws.cell(row=row_idx, column=21, value=resume.major_match_status or '')
-        # 时间信息（第22-23列）
-        ws.cell(row=row_idx, column=22, value=resume.upload_time.strftime('%Y-%m-%d %H:%M:%S') if resume.upload_time else '')
-        ws.cell(row=row_idx, column=23, value=resume.parse_time.strftime('%Y-%m-%d %H:%M:%S') if resume.parse_time else '')
+        # 邮箱（第16列）
+        ws.cell(row=row_idx, column=16, value=resume.email or '')
+        # 最高学历（第17列）
+        ws.cell(row=row_idx, column=17, value=resume.highest_education or '')
+        # 学校信息（第18-20列）
+        ws.cell(row=row_idx, column=18, value=resume.school_original or '')
+        ws.cell(row=row_idx, column=19, value=resume.school or '')
+        ws.cell(row=row_idx, column=20, value=resume.school_match_status or '')
+        # 专业信息（第21-23列）
+        ws.cell(row=row_idx, column=21, value=resume.major_original or '')
+        ws.cell(row=row_idx, column=22, value=resume.major or '')
+        ws.cell(row=row_idx, column=23, value=resume.major_match_status or '')
+        # 时间信息（第24-25列）
+        ws.cell(row=row_idx, column=24, value=resume.upload_time.strftime('%Y-%m-%d %H:%M:%S') if resume.upload_time else '')
+        ws.cell(row=row_idx, column=25, value=resume.parse_time.strftime('%Y-%m-%d %H:%M:%S') if resume.parse_time else '')
  
     widths = {
-        1: 8, 2: 18, 3: 15, 4: 8, 5: 10, 6: 10, 7: 15,  # ID到手机号
-        8: 22, 9: 18, 10: 18,  # 工作经历一
-        11: 22, 12: 18, 13: 18,  # 工作经历二
-        14: 22, 15: 12,  # 邮箱、最高学历
-        16: 18, 17: 18, 18: 12,  # 学校信息
-        19: 18, 20: 18, 21: 12,  # 专业信息
-        22: 19, 23: 19  # 上传时间、解析时间
+        1: 8, 2: 18, 3: 18, 4: 12, 5: 15, 6: 8, 7: 10, 8: 10, 9: 15,  # ID到手机号（新增身份验证码、查重）
+        10: 22, 11: 18, 12: 18,  # 工作经历一
+        13: 22, 14: 18, 15: 18,  # 工作经历二
+        16: 22, 17: 12,  # 邮箱、最高学历
+        18: 18, 19: 18, 20: 12,  # 学校信息
+        21: 18, 22: 18, 23: 12,  # 专业信息
+        24: 19, 25: 19  # 上传时间、解析时间
     }
     for col in range(1, len(headers) + 1):
         width = widths.get(col, 15)

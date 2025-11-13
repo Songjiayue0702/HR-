@@ -12,6 +12,7 @@ from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.api_integration import APIIntegration
 from utils.ai_extractor import AIExtractor
+from utils.duplicate_checker import check_duplicate
 import threading
 
 app = Flask(__name__, 
@@ -124,6 +125,22 @@ def process_resume_async(resume_id, file_path):
             if work_years:
                 resume.earliest_work_year = min(work_years)
         
+        # 查重检测
+        existing_resumes = db.query(Resume).filter(
+            Resume.parse_status == 'success',
+            Resume.id != resume.id
+        ).all()
+        duplicate_id, similarity = check_duplicate(resume, existing_resumes)
+        
+        if similarity >= 80.0:
+            resume.duplicate_status = '重复简历'
+            resume.duplicate_similarity = similarity
+            resume.duplicate_resume_id = duplicate_id
+        else:
+            resume.duplicate_status = None
+            resume.duplicate_similarity = similarity if similarity > 0 else None
+            resume.duplicate_resume_id = None
+        
         resume.parse_status = 'success'
         resume.parse_time = datetime.now()
         db.commit()
@@ -232,6 +249,9 @@ def get_resumes():
     
     total = query.count()
     resumes = query.offset((page - 1) * per_page).limit(per_page).all()
+    
+    # 注意：查重检测在简历解析时完成，这里不需要重复检测
+    # 如果需要对旧简历进行查重，可以单独运行查重脚本
     
     db.close()
     

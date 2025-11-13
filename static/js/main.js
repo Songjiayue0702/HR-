@@ -148,7 +148,7 @@ function displayResumes(resumes) {
     const tbody = document.getElementById('resumeTableBody');
     
     if (resumes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="14" class="loading">暂无数据</td></tr>';
         return;
     }
     
@@ -173,10 +173,29 @@ function displayResumes(resumes) {
             : null;
         const workYearsDisplay = workYears !== null && workYears >= 0 ? workYears : '-';
         
+        // 计算身份验证码：姓名+手机号后四位
+        let identityCode = '-';
+        if (resume.name) {
+            const phone = resume.phone || '';
+            if (phone && phone.length >= 4) {
+                identityCode = escapeHtml(resume.name) + phone.slice(-4);
+            } else {
+                identityCode = escapeHtml(resume.name);
+            }
+        }
+        
+        // 查重显示
+        let duplicateDisplay = '';
+        if (resume.duplicate_status === '重复简历' && resume.duplicate_similarity && resume.duplicate_similarity >= 80) {
+            duplicateDisplay = '<span class="duplicate-warning">重复简历</span>';
+        }
+        
         return `
         <tr class="${isSelected ? 'selected' : ''}">
             <td><input type="checkbox" value="${resume.id}" ${isSelected ? 'checked' : ''} onchange="toggleResume(${resume.id}, this)"></td>
             <td>${escapeHtml(resume.applied_position) || '-'}</td>
+            <td>${identityCode}</td>
+            <td>${duplicateDisplay}</td>
             <td>${escapeHtml(resume.name) || '-'}</td>
             <td>${escapeHtml(resume.gender) || '-'}</td>
             <td>${resume.age || '-'}</td>

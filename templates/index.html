@@ -68,6 +68,8 @@
                         <tr>
                             <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
                             <th onclick="sortTable('applied_position')">应聘岗位 ↕</th>
+                            <th>身份验证码</th>
+                            <th>查重</th>
                             <th onclick="sortTable('name')">姓名 ↕</th>
                             <th onclick="sortTable('gender')">性别 ↕</th>
                             <th onclick="sortTable('age')">年龄 ↕</th>
@@ -82,7 +84,7 @@
                     </thead>
                     <tbody id="resumeTableBody">
                         <tr>
-                            <td colspan="12" class="loading">加载中...</td>
+                            <td colspan="14" class="loading">加载中...</td>
                         </tr>
                     </tbody>
                 </table>

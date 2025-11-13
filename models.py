@@ -52,6 +52,11 @@ class Resume(Base):
     parse_time = Column(DateTime)
     error_message = Column(Text)
     
+    # 查重信息
+    duplicate_status = Column(String(50))  # 重复状态：None/重复简历
+    duplicate_similarity = Column(Float)  # 重合度（0-100）
+    duplicate_resume_id = Column(Integer)  # 匹配到的重复简历ID
+    
     # 原始文本内容
     raw_text = Column(Text)
     
@@ -85,6 +90,9 @@ class Resume(Base):
             'parse_status': self.parse_status,
             'parse_time': self.parse_time.isoformat() if self.parse_time else None,
             'error_message': self.error_message,
+            'duplicate_status': self.duplicate_status,
+            'duplicate_similarity': self.duplicate_similarity,
+            'duplicate_resume_id': self.duplicate_resume_id,
             'raw_text': self.raw_text
         }
 
@@ -106,6 +114,12 @@ with engine.connect() as conn:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
     if 'age_from_resume' not in columns:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
+    if 'duplicate_status' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
+    if 'duplicate_similarity' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
+    if 'duplicate_resume_id' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
     conn.commit()
 Session = sessionmaker(bind=engine)
 

@@ -201,6 +201,7 @@ header h1 {
     padding: 12px;
     text-align: left;
     font-weight: 600;
+    font-size: 14px;
     cursor: pointer;
     user-select: none;
 }
@@ -212,6 +213,7 @@ header h1 {
 .resume-table td {
     padding: 12px;
     border-bottom: 1px solid #eee;
+    font-size: 14px;
 }
 
 .resume-table tbody tr:hover {
@@ -220,6 +222,12 @@ header h1 {
 
 .resume-table tbody tr.selected {
     background: #e8ebff;
+}
+
+/* 查重提示样式 */
+.duplicate-warning {
+    color: #dc3545;
+    font-weight: bold;
 }
 
 .status-icon {
@@ -410,6 +418,16 @@ input[readonly] {
     cursor: not-allowed;
     color: #666;
     border-color: #e0e0e0 !important;
+}
+
+/* 查重提示样式 */
+.duplicate-warning {
+    color: #dc3545;
+    font-weight: bold;
+    background-color: #ffe6e6;
+    padding: 2px 8px;
+    border-radius: 4px;
+    display: inline-block;
 }
 
 .form-grid {
