@@ -133,3 +133,4 @@ export OCR_USE_GPU=false
 - 改进PDF转图片逻辑，支持PyMuPDF和pdf2image两种方案
 - 添加OCR配置选项，支持灵活配置
 
+

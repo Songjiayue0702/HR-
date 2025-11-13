@@ -87,6 +87,27 @@ class InfoExtractor:
         text = text.replace('姓⺠名', '姓名')
         text = text.replace('姓民名', '姓名')
         text = text.replace('姓氏名', '姓名')
+        
+        # 清理OCR常见错误 - 更彻底的清理
+        # 移除所有不可见字符和OCR错误标记
+        text = re.sub(r'[□¡¿\u200b\u200c\u200d\ufeff]', '', text)  # 移除OCR无法识别的字符标记和零宽字符
+        text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]', '', text)  # 移除控制字符
+        
+        # 移除其他常见的OCR错误字符，但保留必要的标点
+        # 只保留：中文、英文、数字、常见标点、空格、换行
+        # 更宽松的清理：保留更多字符，避免过度清理
+        text = re.sub(r'[^\u4e00-\u9fa5A-Za-z0-9\s\.,;:：，。；、！？()（）【】\[\]《》\-\+*/=@#%&·•~]', ' ', text)
+        
+        # 修复常见的OCR识别错误
+        text = re.sub(r'([\u4e00-\u9fa5])\s+([\u4e00-\u9fa5])', r'\1\2', text)  # 移除中文字符间的空格
+        # 修复邮箱中的常见OCR错误（如"@4q.com"应该是"@qq.com"）
+        text = re.sub(r'@4q\.com', '@qq.com', text, flags=re.IGNORECASE)
+        text = re.sub(r'@(\d+)q\.com', r'@qq.com', text, flags=re.IGNORECASE)
+        
+        # 修复时间格式中的OCR错误：年份中的O应该是0（如"2O25" -> "2025"）
+        text = re.sub(r'([12])O(\d{3})', r'\g<1>0\2', text)  # 修复年份中的O -> 0
+        text = re.sub(r'(\d{4})\.O(\d)', r'\1.0\2', text)  # 修复月份中的O -> 0（如"2025.O3" -> "2025.03"）
+        
         text = re.sub(r'(\d{4})\s*\n\s*[-~至到]\s*\n\s*((?:19|20)\d{2}|至今|现在)', r'\1-\2', text)
         text = re.sub(r'(\d{4})(?:/|\\)\n(\d{1,2})', r'\1/\2', text)
         text = re.sub(r'([\u4e00-\u9fa5]{2,})\n(公司|集团|企业)', r'\1\2', text)
@@ -162,7 +183,30 @@ class InfoExtractor:
                 token = token[len(prefix):].strip()
         if any(char.isdigit() for char in token):
             return None
-        if any(keyword in token for keyword in ['学习', '起点', '学校']):
+        # 排除工作描述相关的关键词，但要保留合法的专业名称
+        # 合法的专业名称通常以"管理"、"运营"等结尾（如"人力资源管理"、"工商管理"）
+        # 工作描述通常包含"管理"+"其他词"的组合（如"管理客户"、"管理项目"）
+        invalid_patterns = [
+            r'学习', r'起点', r'学校', r'分析.*需求', r'需求.*分析', r'客户', r'家长', r'孩子', 
+            r'负责', r'完成', r'工作(?!管理|运营|销售|营销)', r'项目(?!管理|运营|销售|营销)',
+            r'管理(客户|项目|团队|公司|企业|部门)(?!专业|方向|系)',
+            r'运营(客户|项目|团队|公司|企业|部门)(?!专业|方向|系)',
+            r'销售(客户|项目|团队|公司|企业|部门)(?!专业|方向|系)'
+        ]
+        # 检查是否是工作描述（包含多个工作关键词的组合）
+        work_keywords = ['分析', '需求', '客户', '家长', '孩子', '负责', '完成']
+        work_keyword_count = sum(1 for kw in work_keywords if kw in token)
+        if work_keyword_count >= 2:
+            return None
+        # 检查是否是工作描述模式（如"管理客户"、"管理项目"等）
+        if re.search(r'管理(客户|项目|团队|公司|企业|部门|工作|内容|职责)', token):
+            return None
+        if re.search(r'运营(客户|项目|团队|公司|企业|部门|工作|内容|职责)', token):
+            return None
+        if re.search(r'销售(客户|项目|团队|公司|企业|部门|工作|内容|职责)', token):
+            return None
+        # 排除明显是工作描述的长文本
+        if len(token) > 20:
             return None
         for suffix in ['专业', '方向', '系', '学院', '专科', '本科', '硕士', '博士']:
             if token.endswith(suffix) and len(token) > len(suffix):
@@ -382,14 +426,19 @@ class InfoExtractor:
 
     def _fallback_work_experience(self, text: str):
         """在常规规则未命中时，基于时间线解析工作经历"""
+        # 先清理OCR错误字符，避免影响匹配
+        text = re.sub(r'[□¡¿]', ' ', text)  # 将OCR错误字符替换为空格
         lines = [line.strip() for line in text.split('\n') if line.strip()]
         experiences = []
         last_company = None
         current_exp = None
         # 改进的时间模式：支持更多格式，如"2020年9月--2021年2月"
+        # 放宽匹配条件，支持OCR可能导致的格式错误
+        # 支持格式：2019.03-2025.04, 2019.03-2025.0, 2019-2025等
+        # 注意：在提取前已经修复了OCR错误（O -> 0），所以这里匹配正常的数字格式
         time_pattern = re.compile(
-            r'((?:19|20)\d{2}(?:[年./-]\d{1,2})?(?:月)?)\s*[-~至到—]+\s*'
-            r'((?:19|20)\d{2}(?:[年./-]\d{1,2})?(?:月)?|至今|现在)'
+            r'((?:19|20)\d{2}(?:[年./-]?\d{1,2})?(?:月)?)\s*[-~至到—]+\s*'
+            r'((?:19|20)\d{2}(?:[年./-]?\d{0,2})?(?:月)?|至今|现在)'
         )
         position_pattern = re.compile(
             r'(?:担任|职位|岗位|职务|角色|方向)[：:：]?\s*([\u4e00-\u9fa5A-Za-z0-9（）()&·\s]+)'
@@ -406,6 +455,16 @@ class InfoExtractor:
                 continue
             if re.match(r'^(时间|单位|职位|岗位|名称)[\s\u4e00-\u9fa5]*$', line):
                 continue
+            # 跳过明显是工作描述的行（如"内容:"、"负责工作:"等）
+            if re.match(r'^(内容|负责|职责|业绩|获得|担任角色|负责工作|获得业绩)[：:：]?\s*$', line):
+                continue
+            if line.strip() in ['内容:', '负责工作:', '获得业绩:', '业绩:', '担任角色:', '负责工作:']:
+                continue
+            # 跳过以数字开头的工作描述行（如"1.公司主要业务..."）
+            if re.match(r'^\d+[、.。]\s*', line):
+                # 检查是否包含工作描述关键词
+                if any(kw in line for kw in ['负责', '完成', '参与', '配合', '业绩', '客户', '项目', '团队']):
+                    continue
 
             company_match = self.company_keywords_regex.search(line)
             if company_match:
@@ -465,32 +524,120 @@ class InfoExtractor:
                     company = None
                     role = None
                     
-                    # 优先从before_time中提取岗位（时间前的文本通常是岗位）
+                    # 优先从before_time中提取公司名和岗位（时间前的文本通常包含公司名和岗位）
                     if before_time:
-                        # 移除公司名，提取岗位
                         before_cleaned = before_time.strip()
-                        # 如果包含公司关键词，移除公司名部分
-                        if self.company_keywords_regex.search(before_cleaned):
-                            # 找到公司名结束位置
-                            company_match_in_before = self.company_keywords_regex.search(before_cleaned)
-                            if company_match_in_before:
-                                company_end_pos = company_match_in_before.end()
-                                before_cleaned = before_cleaned[company_end_pos:].strip()
-                        # 检查是否包含岗位关键词
-                        if before_cleaned and (self.position_keywords_regex.search(before_cleaned) or any(kw in before_cleaned for kw in ['副总', '总监', '经理', '总裁', '总经理', 'CEO', '助理', '渠道', '销售', '商务', '律师', '工程师', '专员', '主管', '顾问'])):
-                            # 提取岗位（最多30个字符）
-                            if len(before_cleaned) <= 30:
-                                role = before_cleaned.strip()
+                        # 如果before_time很长，可能包含多个公司名，优先提取最后一个（最接近时间的）
+                        # 查找所有公司名匹配
+                        company_matches = list(self.company_keywords_regex.finditer(before_cleaned))
+                        if company_matches:
+                            # 使用最后一个匹配（最接近时间的）
+                            last_match = company_matches[-1]
+                            comp_candidate_full = last_match.group(1).strip()
+                            # 从匹配结果中提取真正的公司名（可能包含前面的业绩描述）
+                            # 尝试从匹配结果中提取最后一个有效的公司名
+                            # 查找"北京"、"上海"等城市名或公司名关键词的位置
+                            city_pattern = r'(北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|天津|重庆|青岛|大连|苏州|无锡|宁波|厦门|福州|济南|郑州|长沙|合肥|石家庄|太原|哈尔滨|长春|沈阳|昆明|贵阳|南宁|海口|乌鲁木齐|拉萨|银川|西宁|呼和浩特)'
+                            city_match = re.search(city_pattern, comp_candidate_full)
+                            if city_match:
+                                # 从城市名开始提取公司名
+                                city_start = city_match.start()
+                                comp_candidate = comp_candidate_full[city_start:].strip()
                             else:
-                                # 如果太长，尝试提取包含岗位关键词的部分
-                                pos_match = self.position_keywords_regex.search(before_cleaned)
-                                if pos_match:
-                                    start = max(0, pos_match.start() - 5)
-                                    end = min(len(before_cleaned), pos_match.end() + 15)
-                                    role = before_cleaned[start:end].strip()
+                                # 如果没有城市名，尝试从"公司"、"集团"等关键词往前查找
+                                # 查找最后一个"公司"、"集团"等关键词
+                                company_end_keywords = ['有限公司', '股份有限公司', '有限责任公司', '公司', '集团', '企业']
+                                best_pos = -1
+                                for keyword in company_end_keywords:
+                                    pos = comp_candidate_full.rfind(keyword)
+                                    if pos > best_pos:
+                                        best_pos = pos
+                                if best_pos > 0:
+                                    # 从位置往前查找，找到公司名的开始（通常是城市名或公司名关键词）
+                                    # 往前查找最多50个字符
+                                    search_start = max(0, best_pos - 50)
+                                    search_text = comp_candidate_full[search_start:best_pos + len(company_end_keywords[0])]
+                                    # 查找城市名或公司名开始位置
+                                    city_match = re.search(city_pattern, search_text)
+                                    if city_match:
+                                        comp_candidate = search_text[city_match.start():].strip()
+                                    else:
+                                        # 如果没有城市名，从"公司"等关键词往前查找，找到合理的公司名开始
+                                        # 通常公司名长度在3-30个字符之间
+                                        comp_candidate = comp_candidate_full[max(0, best_pos - 30):best_pos + len(company_end_keywords[0])].strip()
                                 else:
-                                    # 如果没有匹配到关键词，取前30个字符
-                                    role = before_cleaned[:30].strip()
+                                    comp_candidate = comp_candidate_full
+                            
+                            # 提取公司名后的内容作为职位候选
+                            after_company = before_cleaned[last_match.end():].strip()
+                            # 先尝试使用_split_company_position分离公司名和职位
+                            _, pos_candidate = self._split_company_position(after_company)
+                            if pos_candidate and not role:
+                                role = pos_candidate
+                            elif after_company and len(after_company) <= 30 and not role:
+                                # 如果_split_company_position没有提取到，直接使用after_company作为职位
+                                role = after_company
+                        else:
+                            # 如果没有找到公司关键词，使用_split_company_position
+                            comp_candidate, pos_candidate = self._split_company_position(before_cleaned)
+                            if pos_candidate and not role:
+                                role = pos_candidate
+                        
+                        if comp_candidate:
+                            # 验证公司名，即使验证失败也先保留（后续可能通过清理后验证）
+                            if self._is_valid_company(comp_candidate):
+                                company = comp_candidate
+                            else:
+                                # 尝试清理后再验证
+                                comp_cleaned = re.sub(r'[（(][^）)]+[）)]', '', comp_candidate).strip()
+                                if self._is_valid_company(comp_cleaned):
+                                    company = comp_cleaned
+                                elif not company:
+                                    # 如果清理后仍然无效，但_split_company_position提取到了，先保留（可能是格式问题）
+                                    # 检查是否包含公司关键词
+                                    if self.company_keywords_regex.search(comp_candidate):
+                                        company = comp_candidate
+                                    # 如果包含"有限公司"等后缀，即使验证失败也保留（可能是验证规则太严格）
+                                    elif any(comp_candidate.endswith(suffix) for suffix in ['有限公司', '股份有限公司', '有限责任公司', '公司', '集团', '企业']):
+                                        company = comp_candidate
+                        
+                        # 如果_split_company_position没有提取到，再尝试其他方法
+                        if not company or not role:
+                            # 移除公司名，提取岗位
+                            before_for_pos = before_cleaned
+                            # 如果包含公司关键词，移除公司名部分
+                            if self.company_keywords_regex.search(before_for_pos):
+                                # 找到公司名结束位置
+                                company_match_in_before = self.company_keywords_regex.search(before_for_pos)
+                                if company_match_in_before:
+                                    company_end_pos = company_match_in_before.end()
+                                    before_for_pos = before_for_pos[company_end_pos:].strip()
+                                    # 如果还没有公司名，提取公司名
+                                    if not company:
+                                        comp_from_match = company_match_in_before.group(1).strip()
+                                        if self._is_valid_company(comp_from_match):
+                                            company = comp_from_match
+                                        else:
+                                            # 即使验证失败，如果包含公司关键词也保留
+                                            company = comp_from_match
+                            # 检查是否包含岗位关键词
+                            if before_for_pos and (self.position_keywords_regex.search(before_for_pos) or any(kw in before_for_pos for kw in ['副总', '总监', '经理', '总裁', '总经理', 'CEO', '助理', '渠道', '销售', '商务', '律师', '工程师', '专员', '主管', '顾问'])):
+                                # 提取岗位（最多30个字符）
+                                if len(before_for_pos) <= 30:
+                                    if not role:
+                                        role = before_for_pos.strip()
+                                else:
+                                    # 如果太长，尝试提取包含岗位关键词的部分
+                                    pos_match = self.position_keywords_regex.search(before_for_pos)
+                                    if pos_match:
+                                        start = max(0, pos_match.start() - 5)
+                                        end = min(len(before_for_pos), pos_match.end() + 15)
+                                        if not role:
+                                            role = before_for_pos[start:end].strip()
+                                    else:
+                                        # 如果没有匹配到关键词，取前30个字符
+                                        if not role:
+                                            role = before_for_pos[:30].strip()
 
                     # 检查"在XX公司进行XX工作"格式（支持没有"公司"后缀的情况）
                     # 先清理after_time，移除"初"、"末"等时间修饰词
@@ -629,10 +776,12 @@ class InfoExtractor:
                                                 company = comp
 
                     # 只有在没有通过"在XX进行XX工作"格式匹配到company和role时，才使用其他方式
-                    if not company and company_match:
-                        company = clean_candidate(company_match.group(1))
-                    if not company and last_company:
-                        company = clean_candidate(last_company)
+                    # 但如果已经从before_time中提取到了公司名，优先使用它
+                    if not company:
+                        if company_match:
+                            company = clean_candidate(company_match.group(1))
+                        if not company and last_company:
+                            company = clean_candidate(last_company)
 
                     # 如果通过"在XX进行XX工作"格式匹配到了role，优先使用它
                     position = role if role and len(role) <= 40 else None
@@ -660,10 +809,14 @@ class InfoExtractor:
                     if idx + 1 < len(lines) and not current_exp.get('position'):
                         next_line = lines[idx + 1].strip()
                         # 跳过无效的下一行（如"内容:"、"岗位名称"等）
-                        invalid_next_lines = ['内容:', '岗位名称', '公司名称', '职位名称', '岗位', '职位']
+                        invalid_next_lines = ['内容:', '岗位名称', '公司名称', '职位名称', '岗位', '职位', '负责工作:', '获得业绩:', '担任角色:']
                         if next_line in invalid_next_lines or next_line.endswith(':'):
                             next_line = None
-                        if next_line and not any(keyword in next_line for keyword in ['工作经验', '教育', '薪资', '城市', '期望', '优势', '工作内容', '职责', '配合', '参与', '完成', '公司', '集团']):
+                        # 跳过以数字开头的工作描述行
+                        if next_line and re.match(r'^\d+[、.。]\s*', next_line):
+                            if any(kw in next_line for kw in ['负责', '完成', '参与', '配合', '业绩', '客户', '项目', '团队']):
+                                next_line = None
+                        if next_line and not any(keyword in next_line for keyword in ['工作经验', '教育', '薪资', '城市', '期望', '优势', '工作内容', '职责', '配合', '参与', '完成', '公司', '集团', '负责', '业绩', '获得']):
                             # 如果下一行看起来像职位描述
                             # 先尝试提取职位关键词部分（最多30个字符）
                             pos_match = position_pattern.search(next_line)
@@ -855,12 +1008,52 @@ class InfoExtractor:
                 exp['position'] = position or None
 
             # 过滤无效公司名（包含"活动"、"签约"、"产值"等关键词的可能是描述而非公司名）
-            if company and any(kw in company for kw in ['活动', '签约', '产值', '储备', '完成', '以上', '万', '个', '名', '工作人员', '点位', '核酸', '联动']):
+            # 但如果公司名以"有限公司"等后缀结尾，即使包含这些关键词也保留（可能是公司名的一部分）
+            if company and any(kw in company for kw in ['活动', '签约', '产值', '储备', '完成', '以上', '万', '个', '名', '工作人员', '点位', '核酸', '联动', '负责', '主要', '内容', '业绩', '获得']):
+                # 检查是否是完整的公司名（以"有限公司"等后缀结尾）
+                has_company_suffix = any(company.endswith(suffix) for suffix in ['有限公司', '股份有限公司', '有限责任公司', '公司', '集团', '企业'])
+                if has_company_suffix:
+                    # 如果包含"万"等关键词，可能是业绩描述混入了公司名，尝试提取真正的公司名
+                    # 查找最后一个"公司"、"集团"等关键词的位置
+                    company_end_keywords = ['有限公司', '股份有限公司', '有限责任公司', '公司', '集团', '企业']
+                    best_pos = -1
+                    best_keyword = None
+                    for keyword in company_end_keywords:
+                        pos = company.rfind(keyword)
+                        if pos > best_pos:
+                            best_pos = pos
+                            best_keyword = keyword
+                    if best_pos > 0:
+                        # 从"公司"等关键词往前查找，找到公司名的开始
+                        # 查找城市名
+                        city_pattern = r'(北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|天津|重庆|青岛|大连|苏州|无锡|宁波|厦门|福州|济南|郑州|长沙|合肥|石家庄|太原|哈尔滨|长春|沈阳|昆明|贵阳|南宁|海口|乌鲁木齐|拉萨|银川|西宁|呼和浩特)'
+                        search_start = max(0, best_pos - 50)
+                        search_text = company[search_start:best_pos + len(best_keyword)]
+                        city_match = re.search(city_pattern, search_text)
+                        if city_match:
+                            city_start = search_start + city_match.start()
+                            company = company[city_start:best_pos + len(best_keyword)].strip()
+                        else:
+                            # 如果没有城市名，从"公司"等关键词往前查找最多30个字符
+                            company = company[max(0, best_pos - 30):best_pos + len(best_keyword)].strip()
+                else:
+                    # 如果没有公司后缀，且包含这些关键词，则过滤
+                    company = None
+                    exp['company'] = None
+            # 过滤占位符公司名
+            if company and company in ['公司名称', '主要负责公司', '主要负责', '负责公司']:
                 company = None
                 exp['company'] = None
             
-            if not self._is_valid_company(exp.get('company')) and not (start_year or end_year):
-                continue
+            # 如果公司名验证失败，但有职位和时间信息，仍然保留（可能是验证规则太严格）
+            if not self._is_valid_company(exp.get('company')):
+                # 如果公司名包含"有限公司"等后缀，即使验证失败也保留
+                if exp.get('company') and any(exp['company'].endswith(suffix) for suffix in ['有限公司', '股份有限公司', '有限责任公司', '公司', '集团', '企业']):
+                    # 保留这个工作经历
+                    pass
+                elif not (start_year or end_year):
+                    # 如果没有时间信息，且公司名无效，则跳过
+                    continue
 
             # 如果公司缺少结尾后缀，尝试补全常见"公司"字样
             # 但先检查公司名是否有效，避免给无效公司名补全
@@ -953,7 +1146,10 @@ class InfoExtractor:
         """提取姓名"""
         value = kv_pairs.get('姓名')
         if value:
+            # 清理OCR错误字符
             cleaned = re.sub(r'[^\u4e00-\u9fa5A-Za-z·• ]', '', value).strip()
+            # 移除OCR常见的错误字符（如"□"、"¡"等）
+            cleaned = re.sub(r'[□¡¿]', '', cleaned)
             first_part = re.match(r'([\u4e00-\u9fa5·•]{2,8})', cleaned)
             if first_part:
                 candidate = first_part.group(1)
@@ -970,7 +1166,9 @@ class InfoExtractor:
         match = re.search(name_alias_pattern, text)
         if match:
             candidate = match.group(1)
-            if candidate not in self.invalid_name_tokens:
+            # 清理OCR错误
+            candidate = re.sub(r'[□¡¿]', '', candidate)
+            if candidate and candidate not in self.invalid_name_tokens:
                 stop_chars = {'族', '籍', '电', '邮', '住', '性', '学', '手', '号', '龄', '现', '籍'}
                 for idx, ch in enumerate(candidate):
                     if ch in stop_chars and idx >= 2:
@@ -984,30 +1182,45 @@ class InfoExtractor:
 
         # 常见格式：张三 男 / 张三 女士
         match = re.search(r'([\u4e00-\u9fa5·•]{2,8})\s*(?:先生|女士|男|女)\b', text)
-        if match and match.group(1) not in self.invalid_name_tokens:
-            return match.group(1)
+        if match:
+            candidate = match.group(1)
+            candidate = re.sub(r'[□¡¿]', '', candidate)  # 清理OCR错误
+            if candidate and candidate not in self.invalid_name_tokens:
+                return candidate
 
         # 在联系方式附近查找姓名
         phone_match = re.search(r'(?<!\d)(1[3-9]\d{9})(?!\d)', text)
         email_match = re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', text)
 
         if email_match:
-            after = text[email_match.end(): email_match.end() + 20]
+            after = text[email_match.end(): email_match.end() + 30]
             match = re.search(r'([\u4e00-\u9fa5·•]{2,8})', after)
-            if match and match.group(1) not in self.invalid_name_tokens:
-                return match.group(1)
-            before = text[max(0, email_match.start() - 20): email_match.start()]
+            if match:
+                candidate = re.sub(r'[□¡¿]', '', match.group(1))
+                if candidate and candidate not in self.invalid_name_tokens:
+                    return candidate
+            before = text[max(0, email_match.start() - 50): email_match.start()]
             candidates = re.findall(r'[\u4e00-\u9fa5·•]{2,6}', before)
             for cand in reversed(candidates):
-                if cand not in self.invalid_name_tokens:
-                    return cand
+                cand_cleaned = re.sub(r'[□¡¿]', '', cand)
+                if cand_cleaned and cand_cleaned not in self.invalid_name_tokens:
+                    # 检查上下文，避免提取到"意向岗位"、"商家运营"等
+                    cand_pos = before.rfind(cand)
+                    context = before[max(0, cand_pos-10):min(len(before), cand_pos+len(cand)+10)]
+                    if not any(kw in context for kw in ['岗位', '运营', '意向', '城市', '薪资', '类型', '行业', '状态']):
+                        return cand_cleaned
 
         if phone_match:
-            before = text[max(0, phone_match.start() - 30): phone_match.start()]
+            before = text[max(0, phone_match.start() - 50): phone_match.start()]
             candidates = re.findall(r'[\u4e00-\u9fa5·•]{2,6}', before)
             for cand in reversed(candidates):
-                if cand not in self.invalid_name_tokens:
-                    return cand
+                cand_cleaned = re.sub(r'[□¡¿]', '', cand)
+                if cand_cleaned and cand_cleaned not in self.invalid_name_tokens:
+                    # 检查上下文
+                    cand_pos = before.rfind(cand)
+                    context = before[max(0, cand_pos-10):min(len(before), cand_pos+len(cand)+10)]
+                    if not any(kw in context for kw in ['岗位', '运营', '意向', '城市', '薪资', '类型', '行业', '状态']):
+                        return cand_cleaned
 
         contact_positions = []
         if phone_match:
@@ -1019,18 +1232,64 @@ class InfoExtractor:
             window = text[max(0, idx - 60): idx + 40]
             candidates = re.findall(r'[\u4e00-\u9fa5·•]{2,6}', window)
             for cand in reversed(candidates):
-                if cand not in self.invalid_name_tokens:
-                    return cand
+                cand_cleaned = re.sub(r'[□¡¿]', '', cand)
+                if cand_cleaned and cand_cleaned not in self.invalid_name_tokens:
+                    return cand_cleaned
 
-        # Fallback：取前几行中的中文姓名或“姓名：”格式
-        lines = text.split('\n')[:15]
+        # Fallback：取前几行中的中文姓名或"姓名："格式
+        lines = text.split('\n')[:30]  # 进一步扩大搜索范围
         for line in lines:
             line = line.strip()
             if not line:
                 continue
-            match = re.match(r'^[\u4e00-\u9fa5·•]{2,6}$', line)
-            if match and line not in self.invalid_name_tokens:
-                return match.group(0)
+            # 清理OCR错误后再匹配
+            line_cleaned = re.sub(r'[□¡¿\s]', '', line)  # 移除OCR错误和空格
+            # 更宽松的匹配：允许包含少量非中文字符（可能是OCR错误）
+            if len(line_cleaned) >= 2 and len(line_cleaned) <= 10:
+                # 提取中文字符部分
+                chinese_chars = re.findall(r'[\u4e00-\u9fa5]', line_cleaned)
+                if len(chinese_chars) >= 2 and len(chinese_chars) <= 6:
+                    candidate = ''.join(chinese_chars)
+                    # 检查是否包含常见姓名字符（避免提取到"性别"、"年龄"等）
+                    if candidate not in self.invalid_name_tokens:
+                        # 检查是否在联系方式附近（更可能是姓名）
+                        line_lower = line.lower()
+                        if any(kw in line_lower for kw in ['电话', '手机', '邮箱', 'email', '联系']):
+                            return candidate
+                        # 或者检查是否在简历开头（前1000字符内）
+                        if text.find(line) < 1000:
+                            return candidate
+        
+        # 最后尝试：从文本开头提取2-6个连续的中文字符
+        text_start = text[:300]  # 扩大检查范围到300字符
+        # 先尝试匹配独立成行的姓名（如"李宜隆"单独一行）
+        lines = text_start.split('\n')
+        for line in lines[:10]:  # 检查前10行
+            line_cleaned = re.sub(r'[□¡¿\s]', '', line.strip())
+            chinese_only = re.sub(r'[^\u4e00-\u9fa5]', '', line_cleaned)
+            if 2 <= len(chinese_only) <= 6:
+                if chinese_only not in self.invalid_name_tokens:
+                    # 检查上下文，确保不是"性别"、"年龄"、"岗位"等
+                    line_lower = line.lower()
+                    if not any(kw in line_lower for kw in ['性别', '年龄', '出生', '籍贯', '民族', '岗位', '运营', '意向', '城市', '薪资']):
+                        return chinese_only
+        
+        # 如果独立行没找到，尝试从文本中提取
+        chinese_chars = re.findall(r'[\u4e00-\u9fa5]', text_start)
+        if len(chinese_chars) >= 2:
+            # 尝试提取连续的2-6个字符作为姓名
+            for i in range(len(chinese_chars) - 1):
+                for length in range(2, min(7, len(chinese_chars) - i + 1)):
+                    candidate = ''.join(chinese_chars[i:i+length])
+                    if candidate not in self.invalid_name_tokens:
+                        # 检查上下文，确保不是"性别"、"年龄"等
+                        candidate_pos = text_start.find(candidate)
+                        if candidate_pos >= 0:
+                            context_start = max(0, candidate_pos - 10)
+                            context_end = min(len(text_start), candidate_pos + len(candidate) + 10)
+                            context = text_start[context_start:context_end]
+                            if not any(kw in context for kw in ['性别', '年龄', '出生', '籍贯', '民族', '岗位', '运营', '意向']):
+                                return candidate
         return None
 
     def extract_gender(self, text: str, kv_pairs: dict) -> str | None:
@@ -1042,14 +1301,33 @@ class InfoExtractor:
             if '男' in value:
                 return '男'
 
+        # 匹配"性别：男/女"格式
         match = re.search(r'性别\s*[:：]?\s*(男|女)', text)
         if match:
             return match.group(1)
 
-        if '女' in text:
-            return None
-        if '男' in text:
-            return None
+        # 匹配"姓名 男|女"或"姓名 男 | 年龄"格式（如"邱曙光 男 | 41岁"）
+        name_gender_pattern = r'([\u4e00-\u9fa5·•]{2,8})\s*(男|女)(?:\s*[|｜]\s*|\s+|\s*$)'
+        match = re.search(name_gender_pattern, text)
+        if match:
+            return match.group(2)
+
+        # 匹配"男|女 | 年龄"格式
+        gender_age_pattern = r'(男|女)\s*[|｜]\s*\d+\s*岁'
+        match = re.search(gender_age_pattern, text)
+        if match:
+            return match.group(1)
+
+        # 在基本信息区域查找（前500字符）
+        basic_info = text[:500]
+        if '男' in basic_info and '女' not in basic_info:
+            # 检查是否在合理的上下文中（避免误匹配）
+            if re.search(r'(男|女)(?:\s*[|｜]|\s+岁|\s+性)', basic_info):
+                return '男'
+        elif '女' in basic_info and '男' not in basic_info:
+            if re.search(r'(男|女)(?:\s*[|｜]|\s+岁|\s+性)', basic_info):
+                return '女'
+        
         return None
 
     def extract_birth_year(self, text: str, kv_pairs: dict) -> int | None:
@@ -1063,20 +1341,44 @@ class InfoExtractor:
                     if 1950 <= year <= self.current_year:
                         return year
 
+        # 优先在基本信息区域查找（前500字符），避免从工作经历中误提取
+        basic_info = text[:500]
+        
         patterns = [
             r'出生[年月日]*[：:]\s*(\d{4})',
             r'生日[：:]\s*(\d{4})',
             r'出生[年月日]*[：:]\s*(\d{4})[年\-/]',  # 支持"出生日期：1985-01-01"格式
-            r'(\d{4})年\d{1,2}月\d{0,2}日?',
-            r'(\d{4})[年\-/]\d{1,2}[月\-/]\d{1,2}',  # 支持"1985-01-01"或"1985/01/01"格式
-            r'(\d{4})\.\d{1,2}\.\d{1,2}',
+            r'(\d{4})年\d{1,2}月\d{0,2}日?',  # 如"1984年1月"
         ]
+        
+        # 先在基本信息区域查找
         for pattern in patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, basic_info)
             if match:
                 year = int(match.group(1))
                 if 1950 <= year <= self.current_year:
                     return year
+        
+        # 如果基本信息区域没找到，再在全文中查找，但要排除工作经历中的日期
+        # 排除工作经历中的日期格式（如"2025.03-至今"、"2023.04-2025.0"）
+        work_date_pattern = r'\d{4}[./-]\d{1,2}[./-]?\d{0,2}\s*[-~至到]+\s*\d{4}'
+        text_without_work_dates = re.sub(work_date_pattern, '', text)
+        
+        for pattern in patterns:
+            match = re.search(pattern, text_without_work_dates)
+            if match:
+                year = int(match.group(1))
+                # 排除明显是工作年份的（2000年以后的，且不在"出生"关键词附近）
+                if 1950 <= year < 2000:
+                    return year
+                elif 2000 <= year <= self.current_year:
+                    # 检查是否在"出生"关键词附近（前后50字符内）
+                    match_start = match.start()
+                    context_start = max(0, match_start - 50)
+                    context_end = min(len(text_without_work_dates), match_start + 50)
+                    context = text_without_work_dates[context_start:context_end]
+                    if '出生' in context or '生日' in context:
+                        return year
 
         # 不再根据"X岁"推算出生年份，因为用户要求：如简历中没有具体出生日期，则"出生年份"为空
         # 只有明确提取到出生日期时才返回年份，否则返回None
@@ -1123,9 +1425,18 @@ class InfoExtractor:
             if match:
                 return match.group(0)
 
-        match = re.search(r'(?<!\d)(1[3-9]\d{9})(?!\d)', text)
-        if match:
-            return match.group(1)
+        # 在文本中查找手机号，支持OCR可能的分隔符错误
+        # 支持格式：138-4946-2558, 138 4946 2558, 13849462558等
+        phone_patterns = [
+            r'(?<!\d)(1[3-9]\d[\s\-]?\d{4}[\s\-]?\d{4})(?!\d)',  # 带分隔符
+            r'(?<!\d)(1[3-9]\d{9})(?!\d)',  # 无分隔符
+        ]
+        for pattern in phone_patterns:
+            match = re.search(pattern, text)
+            if match:
+                phone = re.sub(r'[\s\-]', '', match.group(1))  # 移除分隔符
+                if len(phone) == 11:
+                    return phone
         return None
 
     def extract_email(self, text: str, kv_pairs: dict) -> str | None:
@@ -1242,7 +1553,13 @@ class InfoExtractor:
 
         major_value = kv_pairs.get('专业')
         if major_value:
-            education_info['major'] = major_value.strip()
+            # 验证专业值是否合理（排除工作描述）
+            major_value = major_value.strip()
+            if major_value and len(major_value) <= 20:
+                if not any(kw in major_value for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目', '管理', '运营', '销售']):
+                    cleaned_major = self._clean_major_candidate(major_value)
+                    if cleaned_major:
+                        education_info['major'] = cleaned_major
 
         # 匹配教育经历段落
         edu_section_pattern = r'(教育经历|教育背景|学历)[：:：]?\s*(.*?)(?=(工作经历|工作经验|项目经历|自我评价|$))'
@@ -1257,15 +1574,119 @@ class InfoExtractor:
                     education_info['highest_education'], detected
                 )
 
+            # 优先按时间排序提取最高学历（时间最晚）对应的学校和专业
+            edu_lines = [line.strip() for line in edu_text.split('\n') if line.strip()]
+            education_entries = []
+            
+            for line in edu_lines:
+                # 提取时间信息
+                time_match = re.search(r'(\d{4})[-~至到](\d{4}|至今)', line)
+                if time_match:
+                    start_year = int(time_match.group(1))
+                    end_year_str = time_match.group(2)
+                    end_year = int(end_year_str) if end_year_str != '至今' else self.current_year
+                else:
+                    # 如果没有时间，跳过
+                    continue
+                
+                # 移除时间信息
+                line_no_time = re.sub(r'\d{4}[-~至到]\d{4}', '', line)
+                line_no_time = re.sub(r'\d{4}[-~至到]至今', '', line_no_time)
+                line_no_time = line_no_time.strip()
+                
+                # 匹配格式：学校 + 学历 + 专业
+                school_major_pattern = r'([\u4e00-\u9fa5]{2,20}(?:大学|学院|学校))\s*(本科|专科|硕士|博士|研究生)?\s*([\u4e00-\u9fa5]{2,20})$'
+                match = re.search(school_major_pattern, line_no_time)
+                if match:
+                    school_part = match.group(1)
+                    degree_part = match.group(2)
+                    major_candidate = match.group(3)
+                    
+                    # 验证专业候选
+                    invalid_majors = ['本科', '专科', '硕士', '博士', '研究生', '学士', '学习', '起点', '网络', '教育']
+                    if major_candidate and major_candidate != school_part and len(major_candidate) <= 20:
+                        if major_candidate not in invalid_majors:
+                            # 检查是否是工作描述（包含多个工作关键词）
+                            work_keywords = ['分析', '需求', '客户', '家长', '孩子', '负责', '完成']
+                            work_keyword_count = sum(1 for kw in work_keywords if kw in major_candidate)
+                            # 允许包含"管理"、"运营"、"销售"的专业（如"人力资源管理"、"工商管理"）
+                            if work_keyword_count < 2 and not re.search(r'(管理|运营|销售)(客户|项目|团队|公司|企业|部门|工作|内容|职责)', major_candidate):
+                                cleaned_major = self._clean_major_candidate(major_candidate)
+                                if cleaned_major:
+                                    education_entries.append({
+                                        'school': school_part,
+                                        'major': cleaned_major,
+                                        'degree': degree_part,
+                                        'end_year': end_year
+                                    })
+                                    continue
+                
+                # 尝试匹配"学校 专业"格式（没有学历）
+                simple_pattern = r'([\u4e00-\u9fa5]{2,20}(?:大学|学院|学校))\s+([\u4e00-\u9fa5]{2,20})$'
+                match = re.search(simple_pattern, line_no_time)
+                if match:
+                    school_part = match.group(1)
+                    major_candidate = match.group(2)
+                    invalid_majors = ['本科', '专科', '硕士', '博士', '研究生', '学士', '学习', '起点', '网络', '教育']
+                    if major_candidate and major_candidate != school_part and len(major_candidate) <= 20:
+                        if major_candidate not in invalid_majors:
+                            # 检查是否是工作描述（包含多个工作关键词）
+                            work_keywords = ['分析', '需求', '客户', '家长', '孩子', '负责', '完成']
+                            work_keyword_count = sum(1 for kw in work_keywords if kw in major_candidate)
+                            # 允许包含"管理"、"运营"、"销售"的专业（如"人力资源管理"、"工商管理"）
+                            if work_keyword_count < 2 and not re.search(r'(管理|运营|销售)(客户|项目|团队|公司|企业|部门|工作|内容|职责)', major_candidate):
+                                cleaned_major = self._clean_major_candidate(major_candidate)
+                                if cleaned_major:
+                                    education_entries.append({
+                                        'school': school_part,
+                                        'major': cleaned_major,
+                                        'degree': None,
+                                        'end_year': end_year
+                                    })
+            
+            # 按结束年份排序，优先提取最新的（时间最晚的）教育经历
+            if education_entries:
+                education_entries.sort(key=lambda x: x['end_year'], reverse=True)
+                best_entry = education_entries[0]
+                # 优先使用按时间排序后的结果（覆盖之前可能提取的错误结果）
+                education_info['school'] = best_entry['school']
+                education_info['major'] = best_entry['major']
+                if best_entry['degree']:
+                    normalized = self.normalize_education_level(best_entry['degree'])
+                    if normalized:
+                        education_info['highest_education'] = self._prefer_higher_level(
+                            education_info['highest_education'], normalized
+                        )
+            
+            # 如果上面的结构化提取失败，使用原来的逻辑作为备选
             if not education_info['school']:
                 school_match = self.school_regex.search(edu_text)
                 if school_match:
-                    education_info['school'] = school_match.group(0)
+                    school_text = school_match.group(0)
+                    # 清理前缀（如"教育经历"）
+                    school_text = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_text)
+                    if school_text:
+                        education_info['school'] = school_text.strip()
+            
+            # 清理学校名中的前缀（如果之前提取时包含了前缀）
+            if education_info['school']:
+                # 清理前缀（如"教育经历"、"教育经历北京大学"等）
+                education_info['school'] = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', education_info['school']).strip()
+                # 如果学校名以"教育经历"开头，移除它
+                if education_info['school'].startswith('教育经历'):
+                    education_info['school'] = education_info['school'][4:].strip()
+                if education_info['school'].startswith('教育背景'):
+                    education_info['school'] = education_info['school'][4:].strip()
 
             if not education_info['major']:
                 major_match = self.major_regex.search(edu_text)
                 if major_match:
-                    education_info['major'] = major_match.group(1).strip()
+                    candidate = major_match.group(1).strip()
+                    if candidate and len(candidate) <= 20:
+                        if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目', '管理', '运营', '销售']):
+                            cleaned_candidate = self._clean_major_candidate(candidate)
+                            if cleaned_candidate:
+                                education_info['major'] = cleaned_candidate
 
         if not education_info['school']:
             school_match = self.school_regex.search(text)
@@ -1273,15 +1694,56 @@ class InfoExtractor:
                 education_info['school'] = school_match.group(0)
 
         if not education_info['major']:
+            # 扩大搜索范围，不仅限于包含"专业"的行
+            # 但优先在教育经历段落中查找，避免误提取工作描述
             for line in text.split('\n'):
-                if '专业' not in line and '方向' not in line:
+                # 先尝试匹配包含"专业"关键词的行
+                # 但排除工作经历、项目经历等段落
+                if any(kw in line for kw in ['工作经历', '工作经验', '项目经历', '工作内容', '职责', '负责']):
                     continue
-                match = self.major_regex.search(line)
-                if match:
-                    candidate = match.group(1).strip(' ：:，,;；/|')
-                    if candidate:
-                        education_info['major'] = candidate
-                        break
+                if '专业' in line or '方向' in line:
+                    match = self.major_regex.search(line)
+                    if match:
+                        candidate = match.group(1).strip(' ：:，,;；/|')
+                        # 清理OCR错误
+                        candidate = re.sub(r'[□¡¿]', '', candidate)
+                        # 验证候选专业是否合理（排除工作描述）
+                        if candidate and len(candidate) >= 2 and len(candidate) <= 20:
+                            # 排除明显是工作描述的内容
+                            if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目']):
+                                cleaned_candidate = self._clean_major_candidate(candidate)
+                                if cleaned_candidate:
+                                    education_info['major'] = cleaned_candidate
+                                    break
+                # 如果还没找到，尝试在教育经历段落中查找
+                if education_info.get('school') and not education_info.get('major'):
+                    # 在学校名称附近查找专业
+                    school_pos = text.find(education_info['school'])
+                    if school_pos >= 0:
+                        # 在学校名称前后100字符内查找
+                        context_start = max(0, school_pos - 100)
+                        context_end = min(len(text), school_pos + len(education_info['school']) + 100)
+                        context = text[context_start:context_end]
+                        # 查找专业关键词
+                        major_patterns = [
+                            r'专业[：:]\s*([\u4e00-\u9fa5]{2,20})',
+                            r'([\u4e00-\u9fa5]{2,20})\s*专业',
+                            r'主修[：:]\s*([\u4e00-\u9fa5]{2,20})',
+                        ]
+                        for pattern in major_patterns:
+                            match = re.search(pattern, context)
+                            if match:
+                                candidate = match.group(1).strip(' ：:，,;；/|')
+                                candidate = re.sub(r'[□¡¿]', '', candidate)
+                                if candidate and len(candidate) >= 2 and len(candidate) <= 20:
+                                    # 验证候选专业
+                                    if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目']):
+                                        cleaned_candidate = self._clean_major_candidate(candidate)
+                                        if cleaned_candidate:
+                                            education_info['major'] = cleaned_candidate
+                                            break
+                        if education_info.get('major'):
+                            break
 
         if not education_info['school']:
             school_match = self.school_regex.search(text)
@@ -1314,6 +1776,17 @@ class InfoExtractor:
                     break
 
         if education_info['school']:
+            # 最终清理学校名前缀（在所有提取逻辑之后）
+            school_cleaned = education_info['school']
+            # 移除所有可能的前缀
+            school_cleaned = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_cleaned).strip()
+            # 如果学校名以"教育经历"开头，移除它（处理"教育经历北京大学"这种情况）
+            if school_cleaned.startswith('教育经历'):
+                school_cleaned = school_cleaned[4:].strip()
+            if school_cleaned.startswith('教育背景'):
+                school_cleaned = school_cleaned[4:].strip()
+            education_info['school'] = school_cleaned
+            
             detected = self.detect_highest_level_in_text(education_info['school'])
             if detected:
                 education_info['highest_education'] = self._prefer_higher_level(
@@ -1335,7 +1808,14 @@ class InfoExtractor:
 
             if best_score >= current_score:
                 if best_entry.get('school'):
-                    education_info['school'] = best_entry['school']
+                    # 清理学校名前缀
+                    school_cleaned = best_entry['school']
+                    school_cleaned = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_cleaned).strip()
+                    if school_cleaned.startswith('教育经历'):
+                        school_cleaned = school_cleaned[4:].strip()
+                    if school_cleaned.startswith('教育背景'):
+                        school_cleaned = school_cleaned[4:].strip()
+                    education_info['school'] = school_cleaned
                 if best_level:
                     education_info['highest_education'] = self._prefer_higher_level(
                         education_info['highest_education'], best_level
@@ -1345,7 +1825,14 @@ class InfoExtractor:
             else:
                 # 即使学历不是更高，也可以补充缺失字段
                 if not education_info['school'] and best_entry.get('school'):
-                    education_info['school'] = best_entry['school']
+                    # 清理学校名前缀
+                    school_cleaned = best_entry['school']
+                    school_cleaned = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_cleaned).strip()
+                    if school_cleaned.startswith('教育经历'):
+                        school_cleaned = school_cleaned[4:].strip()
+                    if school_cleaned.startswith('教育背景'):
+                        school_cleaned = school_cleaned[4:].strip()
+                    education_info['school'] = school_cleaned
                 if not education_info['major'] and best_entry.get('major'):
                     education_info['major'] = best_entry['major']
 
@@ -1418,8 +1905,13 @@ class InfoExtractor:
         if major_match:
             candidate = major_match.group(1).strip(' ：:，,;；/|')
             if candidate:
-                if not education_info.get('major') or education_info['major'].startswith('专业'):
-                    education_info['major'] = candidate
+                # 验证候选专业是否合理（排除工作描述）
+                if candidate and len(candidate) <= 20:
+                    if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目', '管理', '运营', '销售']):
+                        cleaned_candidate = self._clean_major_candidate(candidate)
+                        if cleaned_candidate:
+                            if not education_info.get('major') or education_info['major'].startswith('专业'):
+                                education_info['major'] = cleaned_candidate
         else:
             if not education_info.get('major'):
                 # 尝试识别形如“计算机科学与技术”等独立专业名，常见于学校后面
