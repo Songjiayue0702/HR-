@@ -365,6 +365,7 @@ header h1 {
     font-size: 13px;
 }
 
+/* 工作经历表格样式 */
 .experience-table {
     width: 100%;
     border-collapse: collapse;
@@ -382,6 +383,33 @@ header h1 {
 .experience-table th {
     background: #f0f2ff;
     font-weight: 600;
+}
+
+/* 表格中的输入框样式 */
+.experience-table input[type="text"],
+.experience-table input[type="number"] {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+    background: white;
+    transition: border-color 0.2s;
+}
+
+.experience-table input[type="text"]:focus,
+.experience-table input[type="number"]:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+/* 只读输入框样式 */
+input[readonly] {
+    background-color: #f5f5f5 !important;
+    cursor: not-allowed;
+    color: #666;
+    border-color: #e0e0e0 !important;
 }
 
 .form-grid {

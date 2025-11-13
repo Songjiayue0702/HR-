@@ -11,6 +11,7 @@ from models import get_db_session, Resume
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.api_integration import APIIntegration
+from utils.ai_extractor import AIExtractor
 import threading
 
 app = Flask(__name__, 
@@ -37,9 +38,26 @@ def process_resume_async(resume_id, file_path):
         # 提取文本
         text = extract_text(file_path)
         
-        # 提取信息
+        # 规则提取
         extractor = InfoExtractor()
-        info = extractor.extract_all(text)
+        
+        # AI辅助提取（如果启用）
+        ai_result = None
+        if app.config.get('AI_ENABLED') and app.config.get('AI_API_KEY'):
+            try:
+                ai_extractor = AIExtractor(
+                    api_key=app.config.get('AI_API_KEY'),
+                    api_base=app.config.get('AI_API_BASE'),
+                    model=app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+                )
+                ai_result = ai_extractor.extract_with_ai(text)
+                if ai_result:
+                    print(f"AI辅助解析成功，提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
+            except Exception as e:
+                print(f"AI辅助解析失败，继续使用规则提取: {e}")
+        
+        # 融合规则提取和AI提取的结果
+        info = extractor.extract_all(text, ai_result=ai_result)
         
         # 更新基本信息
         resume.name = info.get('name')
@@ -48,6 +66,7 @@ def process_resume_async(resume_id, file_path):
         resume.age = info.get('age')
         resume.phone = info.get('phone')
         resume.email = info.get('email')
+        resume.highest_education = info.get('highest_education')
         resume.raw_text = text
         resume.error_message = None
         

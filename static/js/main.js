@@ -364,7 +364,7 @@ function displayDetail(resume) {
             </label>
         </div>
         <div class="detail-item">
-            <div class="detail-label">最新工作经历（最多两段，可编辑）</div>
+            <div class="detail-label">最新工作经历（最多两段，只读，自动同步）</div>
             ${(() => {
                 const experiences = (resume.work_experience || []).slice(0, 2);
                 while (experiences.length < 2) {
@@ -373,23 +373,23 @@ function displayDetail(resume) {
                 return experiences.map((exp, idx) => `
                     <div class="work-experience-item">
                         <label>公司
-                            <input type="text" id="expCompany${idx}" value="${escapeHtml(exp.company || '')}">
+                            <input type="text" id="expCompany${idx}" value="${escapeHtml(exp.company || '')}" readonly>
                         </label>
                         <label>岗位
-                            <input type="text" id="expPosition${idx}" value="${escapeHtml(exp.position || '')}">
+                            <input type="text" id="expPosition${idx}" value="${escapeHtml(exp.position || '')}" readonly>
                         </label>
                         <label>开始年份
-                            <input type="number" id="expStart${idx}" value="${exp.start_year || ''}">
+                            <input type="number" id="expStart${idx}" value="${exp.start_year || ''}" readonly>
                         </label>
                         <label>结束年份
-                            <input type="number" id="expEnd${idx}" value="${exp.end_year || ''}">
+                            <input type="number" id="expEnd${idx}" value="${exp.end_year || ''}" readonly>
                         </label>
                     </div>
                 `).join('');
             })()}
         </div>
         <div class="detail-item">
-            <div class="detail-label">全部工作经历</div>
+            <div class="detail-label">全部工作经历（可编辑，修改后自动同步至最新工作经历）</div>
             ${(() => {
                 const allExps = resume.work_experience || [];
                 if (!allExps.length) {
@@ -406,14 +406,14 @@ function displayDetail(resume) {
                                 <th>结束年份</th>
                             </tr>
                         </thead>
-                        <tbody>
+                        <tbody id="allWorkExperienceTable">
                             ${allExps.map((exp, idx) => `
                                 <tr>
                                     <td>${idx + 1}</td>
-                                    <td>${escapeHtml(exp.company || '-')}</td>
-                                    <td>${escapeHtml(exp.position || '-')}</td>
-                                    <td>${exp.start_year || '-'}</td>
-                                    <td>${exp.end_year || '至今'}</td>
+                                    <td><input type="text" class="exp-company-input" data-index="${idx}" value="${escapeHtml(exp.company || '')}" placeholder="公司名称"></td>
+                                    <td><input type="text" class="exp-position-input" data-index="${idx}" value="${escapeHtml(exp.position || '')}" placeholder="岗位名称"></td>
+                                    <td><input type="number" class="exp-start-input" data-index="${idx}" value="${exp.start_year || ''}" placeholder="开始年份"></td>
+                                    <td><input type="number" class="exp-end-input" data-index="${idx}" value="${exp.end_year || ''}" placeholder="结束年份（空为至今）"></td>
                                 </tr>
                             `).join('')}
                         </tbody>
@@ -435,6 +435,74 @@ function displayDetail(resume) {
         </div>
     `;
     modal.style.display = 'block';
+    
+    // 添加全部工作经历表格的编辑事件监听
+    setupWorkExperienceEditListeners();
+}
+
+// 设置工作经历编辑监听器
+function setupWorkExperienceEditListeners() {
+    // 移除之前的事件监听器（如果存在）
+    const table = document.getElementById('allWorkExperienceTable');
+    if (!table) return;
+    
+    // 使用事件委托监听所有输入框的变化
+    table.addEventListener('input', function(e) {
+        if (e.target.classList.contains('exp-company-input') || 
+            e.target.classList.contains('exp-position-input') || 
+            e.target.classList.contains('exp-start-input') || 
+            e.target.classList.contains('exp-end-input')) {
+            syncToLatestWorkExperience();
+        }
+    });
+}
+
+// 同步全部工作经历到最新工作经历
+function syncToLatestWorkExperience() {
+    const table = document.getElementById('allWorkExperienceTable');
+    if (!table) return;
+    
+    const rows = table.querySelectorAll('tr');
+    const allExperiences = [];
+    
+    rows.forEach((row, idx) => {
+        const companyInput = row.querySelector('.exp-company-input');
+        const positionInput = row.querySelector('.exp-position-input');
+        const startInput = row.querySelector('.exp-start-input');
+        const endInput = row.querySelector('.exp-end-input');
+        
+        if (companyInput || positionInput || startInput || endInput) {
+            const company = companyInput ? companyInput.value.trim() : '';
+            const position = positionInput ? positionInput.value.trim() : '';
+            const startYear = startInput && startInput.value ? parseInt(startInput.value, 10) : null;
+            const endYear = endInput && endInput.value ? parseInt(endInput.value, 10) : null;
+            
+            // 如果有任何值，就添加到数组中
+            if (company || position || startYear !== null || endYear !== null) {
+                allExperiences.push({
+                    company: company || null,
+                    position: position || null,
+                    start_year: startYear,
+                    end_year: endYear
+                });
+            }
+        }
+    });
+    
+    // 更新最新工作经历（最多两条）
+    const latestExperiences = allExperiences.slice(0, 2);
+    for (let i = 0; i < 2; i++) {
+        const exp = latestExperiences[i] || { company: '', position: '', start_year: '', end_year: '' };
+        const companyInput = document.getElementById(`expCompany${i}`);
+        const positionInput = document.getElementById(`expPosition${i}`);
+        const startInput = document.getElementById(`expStart${i}`);
+        const endInput = document.getElementById(`expEnd${i}`);
+        
+        if (companyInput) companyInput.value = exp.company || '';
+        if (positionInput) positionInput.value = exp.position || '';
+        if (startInput) startInput.value = exp.start_year || '';
+        if (endInput) endInput.value = exp.end_year || '';
+    }
 }
 
 function closeModal() {
@@ -474,27 +542,55 @@ function saveResume() {
         error_message: document.getElementById('editErrorMessage').value.trim() || null,
     };
 
-    const updatedExperiences = (currentResumeData.work_experience || []).slice();
-    for (let i = 0; i < 2; i++) {
-        const company = document.getElementById(`expCompany${i}`).value.trim();
-        const position = document.getElementById(`expPosition${i}`).value.trim();
-        const startInput = document.getElementById(`expStart${i}`).value;
-        const endInput = document.getElementById(`expEnd${i}`).value;
-        const startYear = startInput ? parseInt(startInput, 10) : null;
-        const endYear = endInput ? parseInt(endInput, 10) : null;
+    // 从全部工作经历表格中读取数据
+    const table = document.getElementById('allWorkExperienceTable');
+    const updatedExperiences = [];
+    
+    if (table) {
+        const rows = table.querySelectorAll('tr');
+        rows.forEach((row) => {
+            const companyInput = row.querySelector('.exp-company-input');
+            const positionInput = row.querySelector('.exp-position-input');
+            const startInput = row.querySelector('.exp-start-input');
+            const endInput = row.querySelector('.exp-end-input');
+            
+            if (companyInput || positionInput || startInput || endInput) {
+                const company = companyInput ? companyInput.value.trim() : '';
+                const position = positionInput ? positionInput.value.trim() : '';
+                const startYear = startInput && startInput.value ? parseInt(startInput.value, 10) : null;
+                const endYear = endInput && endInput.value ? parseInt(endInput.value, 10) : null;
+                
+                // 如果有任何值，就添加到数组中
+                if (company || position || startYear !== null || endYear !== null) {
+                    updatedExperiences.push({
+                        company: company || null,
+                        position: position || null,
+                        start_year: startYear,
+                        end_year: endYear
+                    });
+                }
+            }
+        });
+    } else {
+        // 如果表格不存在，回退到原来的逻辑（从最新工作经历读取）
+        for (let i = 0; i < 2; i++) {
+            const company = document.getElementById(`expCompany${i}`).value.trim();
+            const position = document.getElementById(`expPosition${i}`).value.trim();
+            const startInput = document.getElementById(`expStart${i}`).value;
+            const endInput = document.getElementById(`expEnd${i}`).value;
+            const startYear = startInput ? parseInt(startInput, 10) : null;
+            const endYear = endInput ? parseInt(endInput, 10) : null;
 
-        const hasValue = company || position || startYear !== null || endYear !== null;
+            const hasValue = company || position || startYear !== null || endYear !== null;
 
-        if (hasValue) {
-            updatedExperiences[i] = {
-                company: company || null,
-                position: position || null,
-                start_year: startYear,
-                end_year: endYear,
-            };
-        } else if (updatedExperiences[i]) {
-            updatedExperiences.splice(i, 1);
-            i--;
+            if (hasValue) {
+                updatedExperiences.push({
+                    company: company || null,
+                    position: position || null,
+                    start_year: startYear,
+                    end_year: endYear,
+                });
+            }
         }
     }
 
