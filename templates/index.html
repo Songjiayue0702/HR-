@@ -7,136 +7,202 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>智能简历数据库系统</h1>
-            <p class="subtitle">自动化简历信息提取与管理平台</p>
-        </header>
+    <div class="app-layout">
+        <!-- 左侧侧边栏 -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <img src="{{ url_for('static', filename='images/logo.png') }}" alt="Logo" class="sidebar-logo" onerror="this.onerror=null; this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjUwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iNTAiIGZpbGw9IiM2NjdlZWEiLz48dGV4dCB4PSI1MCIgeT0iMzAiIGZvbnQtc2l6ZT0iMTQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwiPkxPR088L3RleHQ+PC9zdmc+';">
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li>
+                        <a href="#" class="nav-item active" data-module="upload" onclick="switchModule('upload'); return false;">
+                            <span class="nav-icon">📤</span>
+                            <span class="nav-text">简历上传</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#" class="nav-item" data-module="analysis" onclick="switchModule('analysis'); return false;">
+                            <span class="nav-icon">📊</span>
+                            <span class="nav-text">简历分析</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+            <nav class="sidebar-nav sidebar-nav-bottom">
+                <ul>
+                    <li>
+                        <a href="#" class="nav-item" data-module="settings" onclick="switchModule('settings'); return false;">
+                            <span class="nav-icon">⚙️</span>
+                            <span class="nav-text">设置</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+        </aside>
 
-        <!-- 文件上传区域 -->
-        <section class="upload-section">
-            <h2>上传简历</h2>
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-content">
-                    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="17 8 12 3 7 8"></polyline>
-                        <line x1="12" y1="3" x2="12" y2="15"></line>
-                    </svg>
-                    <p>拖拽文件到此处或<span class="upload-link">点击上传</span></p>
-                    <p class="upload-hint">支持 PDF、Word 格式，最大 10MB</p>
-                </div>
-                <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx" style="display: none;">
-            </div>
-            <div class="upload-progress" id="uploadProgress" style="display: none;">
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progressFill"></div>
-                </div>
-                <p class="progress-text" id="progressText">上传中...</p>
-            </div>
-        </section>
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 页面标题 -->
+            <header class="page-header">
+                <h1 class="page-title">智能简历系统</h1>
+            </header>
+            
+            <!-- 模块1：简历上传 -->
+            <div id="module-upload" class="module active">
+                <header class="module-header">
+                    <h2>简历上传</h2>
+                </header>
 
-        <!-- AI配置区域 -->
-        <section class="ai-config-section">
-            <div class="ai-config-header">
-                <h2>AI辅助解析配置</h2>
-                <button class="btn btn-small" onclick="toggleAIConfig()" id="toggleAIConfigBtn">展开配置</button>
-            </div>
-            <div class="ai-config-content" id="aiConfigContent" style="display: none;">
-                <div class="ai-config-form">
-                    <div class="form-group">
-                        <label>
-                            <input type="checkbox" id="aiEnabled" onchange="updateAIConfig()">
-                            启用AI辅助解析
-                        </label>
+                <!-- 文件上传区域 -->
+                <section class="upload-section">
+                    <h3>上传简历</h3>
+                    <div class="upload-area" id="uploadArea">
+                        <div class="upload-content">
+                            <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            <p>拖拽文件到此处或<span class="upload-link">点击上传</span></p>
+                            <p class="upload-hint">支持 PDF、Word 格式，最大 10MB</p>
+                        </div>
+                        <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx" style="display: none;">
                     </div>
-                    <div class="form-group">
-                        <label>AI模型：</label>
-                        <select id="aiModel" class="form-select" onchange="updateAIConfig()">
-                            <option value="gpt-3.5-turbo">GPT-3.5 Turbo (OpenAI)</option>
-                            <option value="gpt-4">GPT-4 (OpenAI)</option>
-                            <option value="gpt-4-turbo">GPT-4 Turbo (OpenAI)</option>
-                            <option value="deepseek-chat">DeepSeek Chat</option>
-                            <option value="deepseek-coder">DeepSeek Coder</option>
-                            <option value="qwen-turbo">Qwen Turbo (阿里云)</option>
-                            <option value="qwen-plus">Qwen Plus (阿里云)</option>
+                    <div class="upload-progress" id="uploadProgress" style="display: none;">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill"></div>
+                        </div>
+                        <p class="progress-text" id="progressText">上传中...</p>
+                    </div>
+                </section>
+
+                <!-- 筛选和搜索 -->
+                <section class="filter-section">
+                    <div class="filter-row">
+                        <input type="text" id="searchInput" placeholder="搜索姓名、学校、专业..." class="search-input">
+                        <select id="genderFilter" class="filter-select">
+                            <option value="">全部性别</option>
+                            <option value="男">男</option>
+                            <option value="女">女</option>
                         </select>
+                        <select id="educationFilter" class="filter-select">
+                            <option value="">全部学历</option>
+                            <option value="博士">博士</option>
+                            <option value="硕士">硕士</option>
+                            <option value="本科">本科</option>
+                            <option value="专科">专科</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="loadResumes()">搜索</button>
+                        <button class="btn btn-danger" onclick="deleteSelected()">删除选中</button>
+                        <button class="btn btn-secondary" onclick="exportSelected()">导出选中</button>
+                        <button class="btn btn-secondary" onclick="exportAll()">导出全部</button>
                     </div>
-                    <div class="form-group">
-                        <label>API密钥：</label>
-                        <input type="password" id="aiApiKey" class="form-input" placeholder="请输入AI API密钥" onchange="updateAIConfig()">
-                        <small class="form-hint">密钥仅保存在浏览器本地，不会上传到服务器</small>
+                </section>
+
+                <!-- 简历列表 -->
+                <section class="resume-list-section">
+                    <h3>简历列表</h3>
+                    <div class="table-container">
+                        <table class="resume-table" id="resumeTable">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
+                                    <th onclick="sortTable('applied_position')">应聘岗位 ↕</th>
+                                    <th>身份验证码</th>
+                                    <th>查重</th>
+                                    <th onclick="sortTable('name')">姓名 ↕</th>
+                                    <th onclick="sortTable('gender')">性别 ↕</th>
+                                    <th onclick="sortTable('age')">年龄 ↕</th>
+                                    <th>工龄</th>
+                                    <th onclick="sortTable('phone')">手机号 ↕</th>
+                                    <th>邮箱</th>
+                                    <th onclick="sortTable('highest_education')">学历 ↕</th>
+                                    <th>学校</th>
+                                    <th>专业</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resumeTableBody">
+                                <tr>
+                                    <td colspan="15" class="loading">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
-                    <div class="form-group">
-                        <label>API基础URL（可选）：</label>
-                        <input type="text" id="aiApiBase" class="form-input" placeholder="留空则使用默认URL" onchange="updateAIConfig()">
-                        <small class="form-hint">自定义API地址，如：https://api.deepseek.com/v1</small>
+                    <div class="pagination" id="pagination"></div>
+                </section>
+            </div>
+
+            <!-- 模块2：简历分析 -->
+            <div id="module-analysis" class="module" style="display: none;">
+                <!-- 页面标题已在主内容区顶部显示 -->
+                <div class="analysis-container">
+                    <div class="analysis-sidebar">
+                        <h3>选择简历</h3>
+                        <div class="resume-selector">
+                            <input type="text" id="analysisSearchInput" placeholder="搜索简历..." class="search-input" onkeyup="searchResumesForAnalysis(this.value)">
+                            <div id="resumeSelectorList" class="resume-selector-list">
+                                <div class="loading">加载中...</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <button class="btn btn-primary" onclick="saveAIConfig()">保存配置</button>
-                        <button class="btn btn-secondary" onclick="testAIConnection()">测试连接</button>
+
+                    <div class="analysis-content">
+                        <div id="analysisDetail" class="analysis-detail">
+                            <div class="empty-state">
+                                <p>请从左侧选择一份简历进行分析</p>
+                            </div>
+                        </div>
                     </div>
-                    <div id="aiConfigStatus" class="ai-config-status"></div>
                 </div>
             </div>
-        </section>
 
-        <!-- 筛选和搜索 -->
-        <section class="filter-section">
-            <div class="filter-row">
-                <input type="text" id="searchInput" placeholder="搜索姓名、学校、专业..." class="search-input">
-                <select id="genderFilter" class="filter-select">
-                    <option value="">全部性别</option>
-                    <option value="男">男</option>
-                    <option value="女">女</option>
-                </select>
-                <select id="educationFilter" class="filter-select">
-                    <option value="">全部学历</option>
-                    <option value="博士">博士</option>
-                    <option value="硕士">硕士</option>
-                    <option value="本科">本科</option>
-                    <option value="专科">专科</option>
-                </select>
-                <button class="btn btn-primary" onclick="loadResumes()">搜索</button>
-                <button class="btn btn-danger" onclick="deleteSelected()">删除选中</button>
-                <button class="btn btn-secondary" onclick="exportSelected()">导出选中</button>
-                <button class="btn btn-secondary" onclick="exportAll()">导出全部</button>
-            </div>
-        </section>
+            <!-- 模块3：设置 -->
+            <div id="module-settings" class="module" style="display: none;">
+                <!-- 页面标题已在主内容区顶部显示 -->
 
-        <!-- 简历列表 -->
-        <section class="resume-list-section">
-            <h2>简历列表</h2>
-            <div class="table-container">
-                <table class="resume-table" id="resumeTable">
-                    <thead>
-                        <tr>
-                            <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
-                            <th onclick="sortTable('applied_position')">应聘岗位 ↕</th>
-                            <th>身份验证码</th>
-                            <th>查重</th>
-                            <th onclick="sortTable('name')">姓名 ↕</th>
-                            <th onclick="sortTable('gender')">性别 ↕</th>
-                            <th onclick="sortTable('age')">年龄 ↕</th>
-                            <th>工龄</th>
-                            <th onclick="sortTable('phone')">手机号 ↕</th>
-                            <th>邮箱</th>
-                            <th onclick="sortTable('highest_education')">学历 ↕</th>
-                            <th>学校</th>
-                            <th>专业</th>
-                            <th>状态</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="resumeTableBody">
-                        <tr>
-                            <td colspan="15" class="loading">加载中...</td>
-                        </tr>
-                    </tbody>
-                </table>
+                <section class="settings-section">
+                    <h3>AI辅助解析配置</h3>
+                    <div class="settings-content">
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="aiEnabled" onchange="updateAIConfig()">
+                                启用AI辅助解析
+                            </label>
+                        </div>
+                        <div class="form-group">
+                            <label>AI模型：</label>
+                            <select id="aiModel" class="form-select" onchange="updateAIConfig()">
+                                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (OpenAI)</option>
+                                <option value="gpt-4">GPT-4 (OpenAI)</option>
+                                <option value="gpt-4-turbo">GPT-4 Turbo (OpenAI)</option>
+                                <option value="deepseek-chat">DeepSeek Chat</option>
+                                <option value="deepseek-coder">DeepSeek Coder</option>
+                                <option value="qwen-turbo">Qwen Turbo (阿里云)</option>
+                                <option value="qwen-plus">Qwen Plus (阿里云)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>API密钥：</label>
+                            <input type="password" id="aiApiKey" class="form-input" placeholder="请输入AI API密钥" onchange="updateAIConfig()">
+                            <small class="form-hint">密钥仅保存在浏览器本地，不会上传到服务器</small>
+                        </div>
+                        <div class="form-group">
+                            <label>API基础URL（可选）：</label>
+                            <input type="text" id="aiApiBase" class="form-input" placeholder="留空则使用默认URL" onchange="updateAIConfig()">
+                            <small class="form-hint">自定义API地址，如：https://api.deepseek.com/v1</small>
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-primary" onclick="saveAIConfig()">保存配置</button>
+                            <button class="btn btn-secondary" onclick="testAIConnection()">测试连接</button>
+                        </div>
+                        <div id="aiConfigStatus" class="ai-config-status"></div>
+                    </div>
+                </section>
             </div>
-            <div class="pagination" id="pagination"></div>
-        </section>
+        </main>
     </div>
 
     <!-- 详情模态框 -->
@@ -211,4 +277,3 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>
-

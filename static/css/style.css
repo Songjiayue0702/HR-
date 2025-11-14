@@ -6,36 +6,162 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #f5f5f5;
     min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* 应用布局 */
+.app-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* 左侧侧边栏 */
+.sidebar {
+    width: 200px;
+    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: 1000;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* 侧边栏Logo */
+.sidebar-header {
     padding: 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    display: flex;
+    justify-content: center;
+    align-items: center;
 }
 
-.container {
-    max-width: 1400px;
-    margin: 0 auto;
+.sidebar-logo {
+    max-width: 100%;
+    max-height: 50px;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+}
+
+/* 页面标题 */
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 20px 30px;
     background: white;
-    border-radius: 12px;
-    box-shadow: 0 10px 40px rgba(0,0,0,0.1);
-    padding: 30px;
+    border-bottom: 2px solid #e0e0e0;
+    margin-bottom: 0;
 }
 
-header {
-    text-align: center;
-    margin-bottom: 40px;
-    padding-bottom: 20px;
-    border-bottom: 2px solid #f0f0f0;
-}
-
-header h1 {
+.page-title {
+    font-size: 17px;
+    font-weight: 600;
     color: #333;
-    font-size: 32px;
-    margin-bottom: 10px;
+    margin: 0;
 }
 
-.subtitle {
-    color: #666;
-    font-size: 16px;
+.sidebar-nav {
+    padding: 20px 0;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.sidebar-nav-bottom {
+    margin-top: auto;
+    padding: 20px 0;
+    border-top: 1px solid rgba(255,255,255,0.2);
+    flex-shrink: 0;
+}
+
+.sidebar-nav ul {
+    list-style: none;
+}
+
+.sidebar-nav li {
+    margin: 0;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    padding: 15px 20px;
+    color: rgba(255,255,255,0.8);
+    text-decoration: none;
+    transition: all 0.3s;
+    border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+    background: rgba(255,255,255,0.1);
+    color: white;
+    border-left-color: white;
+}
+
+.nav-item.active {
+    background: rgba(255,255,255,0.15);
+    color: white;
+    border-left-color: white;
+    font-weight: 500;
+}
+
+.nav-icon {
+    font-size: 15px;
+    margin-right: 12px;
+    width: 20px;
+    text-align: center;
+}
+
+.nav-text {
+    font-size: 15px;
+}
+
+/* 主内容区 */
+.main-content {
+    flex: 1;
+    margin-left: 200px;
+    background: #f5f5f5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.module {
+    display: none;
+    padding: 30px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.module.active {
+    display: block;
+}
+
+.module-header {
+    margin-bottom: 30px;
+    padding-bottom: 15px;
+    border-bottom: 2px solid #e0e0e0;
+}
+
+.module-header h2 {
+    color: #333;
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+}
+
+.module h3 {
+    color: #333;
+    font-size: 15px;
+    font-weight: 500;
+    margin-bottom: 20px;
 }
 
 /* 上传区域 */
@@ -43,36 +169,175 @@ header h1 {
     margin-bottom: 30px;
 }
 
-/* AI配置区域 */
-.ai-config-section {
-    margin-bottom: 30px;
-    background: #f8f9fa;
+/* 设置区域 */
+.settings-section {
+    background: white;
     border-radius: 8px;
-    padding: 20px;
-    border: 1px solid #e0e0e0;
+    padding: 30px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
 }
 
-.ai-config-header {
+.settings-content {
+    margin-top: 20px;
+}
+
+/* 简历分析区域 */
+.analysis-container {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    gap: 20px;
+    height: calc(100vh - 150px);
+}
+
+.analysis-sidebar {
+    width: 300px;
+    background: white;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow-y: auto;
+}
+
+.analysis-sidebar h3 {
+    margin-bottom: 15px;
+    color: #333;
+    font-size: 14px;
+}
+
+.resume-selector-list {
+    margin-top: 15px;
+    max-height: calc(100vh - 250px);
+    overflow-y: auto;
+}
+
+.resume-selector-item {
+    padding: 12px;
+    margin-bottom: 8px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: 2px solid transparent;
+}
+
+.resume-selector-item:hover {
+    background: #e9ecef;
+    border-color: #667eea;
+}
+
+.resume-selector-item.active {
+    background: #e7f0ff;
+    border-color: #667eea;
+}
+
+.resume-selector-item-name {
+    font-weight: bold;
+    color: #333;
+    margin-bottom: 4px;
+    font-size: 13px;
+}
+
+.resume-selector-item-info {
+    font-size: 12px;
+    color: #666;
+}
+
+.analysis-content {
+    flex: 1;
+    background: white;
+    border-radius: 8px;
+    padding: 30px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    overflow-y: auto;
+}
+
+.analysis-detail {
+    min-height: 400px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: #999;
+}
+
+.empty-state p {
+    font-size: 14px;
+}
+
+/* 分析详情样式 */
+.detail-section {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.detail-section:last-child {
+    border-bottom: none;
+}
+
+.detail-section h3 {
+    color: #333;
+    font-size: 14px;
+    font-weight: 600;
     margin-bottom: 15px;
 }
 
-.ai-config-header h2 {
-    margin: 0;
-    font-size: 18px;
-    color: #333;
-}
-
-.ai-config-content {
-    margin-top: 15px;
-}
-
-.ai-config-form {
-    display: flex;
-    flex-direction: column;
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     gap: 15px;
+}
+
+.detail-item {
+    display: flex;
+    align-items: center;
+}
+
+.detail-item label {
+    font-weight: 500;
+    color: #666;
+    margin-right: 8px;
+    min-width: 80px;
+    font-size: 14px;
+}
+
+.detail-item span {
+    color: #333;
+    font-size: 14px;
+}
+
+.work-experience-list ul {
+    list-style: none;
+    padding: 0;
+}
+
+.work-experience-list li {
+    padding: 10px;
+    margin-bottom: 8px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border-left: 3px solid #667eea;
+    font-size: 14px;
+}
+
+.raw-text-container {
+    max-height: 400px;
+    overflow-y: auto;
+    background: #f8f9fa;
+    border-radius: 6px;
+    padding: 15px;
+    border: 1px solid #e0e0e0;
+}
+
+.raw-text {
+    margin: 0;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #333;
+    white-space: pre-wrap;
+    word-wrap: break-word;
 }
 
 .form-group {
@@ -184,9 +449,10 @@ header h1 {
 /* 筛选区域 */
 .filter-section {
     margin-bottom: 30px;
-    padding: 20px;
-    background: #f8f9fa;
+    background: white;
     border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .filter-row {
@@ -252,7 +518,10 @@ header h1 {
 
 /* 表格 */
 .resume-list-section {
-    margin-bottom: 30px;
+    background: white;
+    border-radius: 8px;
+    padding: 25px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .table-container {
@@ -474,7 +743,7 @@ header h1 {
     position: absolute;
     right: 20px;
     top: 20px;
-    font-size: 28px;
+    font-size: 14px;
     font-weight: bold;
     color: #999;
     cursor: pointer;
@@ -497,6 +766,62 @@ header h1 {
     margin-bottom: 5px;
 }
 
+/* 工作经历部分样式 */
+.work-experience-section {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #f8f9fa;
+    border-radius: 6px;
+}
+
+.work-experience-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.work-experience-content {
+    margin-top: 12px;
+}
+
+.work-experience-item {
+    margin-bottom: 12px;
+    padding: 12px;
+    background: white;
+    border-left: 4px solid #667eea;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: row;
+    gap: 15px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+
+.work-exp-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 120px;
+}
+
+.work-exp-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #666;
+}
+
+.work-experience-item input {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 100%;
+}
+
 .detail-value {
     color: #666;
 }
@@ -507,7 +832,7 @@ header h1 {
     background: #f8f9fa;
     border-left: 4px solid #667eea;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 /* 工作经历表格样式 */
@@ -515,7 +840,7 @@ header h1 {
     width: 100%;
     border-collapse: collapse;
     margin-top: 10px;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 .experience-table th,
@@ -537,7 +862,7 @@ header h1 {
     padding: 6px 8px;
     border: 1px solid #ddd;
     border-radius: 4px;
-    font-size: 13px;
+    font-size: 14px;
     background: white;
     transition: border-color 0.2s;
 }
@@ -578,7 +903,7 @@ input[readonly] {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 13px;
+    font-size: 14px;
     color: #555;
 }
 
@@ -594,7 +919,7 @@ input[readonly] {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    font-size: 13px;
+    font-size: 14px;
     color: #555;
     margin-bottom: 15px;
 }
