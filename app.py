@@ -46,15 +46,10 @@ def process_resume_async(resume_id, file_path):
         db.commit()
         
         # 提取文本
-        text = extract_text(file_path)
-        if not text:
+        raw_text = extract_text(file_path)
+        if not raw_text:
             raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
         
-        # 规则提取
-        extractor = InfoExtractor()
-        
-        # AI辅助提取（如果启用）
-        ai_result = None
         # 检查是否启用AI（从配置或请求参数）
         ai_enabled = app.config.get('AI_ENABLED', True)
         ai_api_key = app.config.get('AI_API_KEY', '')
@@ -65,6 +60,9 @@ def process_resume_async(resume_id, file_path):
         if not ai_api_key:
             ai_api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or os.environ.get('DEEPSEEK_API_KEY') or ''
         
+        # 如果链接了AI API，优先使用AI优化文本提取
+        text = raw_text
+        ai_extractor = None
         if ai_enabled and ai_api_key:
             try:
                 ai_extractor = AIExtractor(
@@ -72,11 +70,31 @@ def process_resume_async(resume_id, file_path):
                     api_base=ai_api_base if ai_api_base else None,
                     model=ai_model
                 )
+                # 使用AI优化文本提取
+                optimized_text = ai_extractor.optimize_text_extraction(raw_text)
+                if optimized_text:
+                    text = optimized_text
+                    print(f"AI文本优化成功（模型: {ai_model}），文本长度: {len(text)} 字符")
+                else:
+                    print(f"AI文本优化失败（模型: {ai_model}），使用原始文本")
+            except Exception as e:
+                print(f"AI文本优化失败（模型: {ai_model}），使用原始文本: {e}")
+        
+        # 保存原始文本和优化后的文本
+        resume.raw_text = text
+        
+        # 规则提取
+        extractor = InfoExtractor()
+        
+        # AI辅助信息提取（如果启用）
+        ai_result = None
+        if ai_enabled and ai_api_key and ai_extractor:
+            try:
                 ai_result = ai_extractor.extract_with_ai(text)
                 if ai_result:
-                    print(f"AI辅助解析成功（模型: {ai_model}），提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
+                    print(f"AI辅助信息提取成功（模型: {ai_model}），提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
             except Exception as e:
-                print(f"AI辅助解析失败（模型: {ai_model}），继续使用规则提取: {e}")
+                print(f"AI辅助信息提取失败（模型: {ai_model}），继续使用规则提取: {e}")
         
         # 融合规则提取和AI提取的结果
         info = extractor.extract_all(text, ai_result=ai_result)

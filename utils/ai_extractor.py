@@ -80,6 +80,79 @@ class AIExtractor:
         
         self.enabled = bool(self.api_key)
         
+    def optimize_text_extraction(self, text: str) -> Optional[str]:
+        """
+        使用AI优化文本提取结果
+        修复OCR错误、合并被分割的文本、提高文本准确性
+        
+        Args:
+            text: 原始提取的文本内容
+            
+        Returns:
+            优化后的文本，如果失败返回None
+        """
+        if not self.enabled:
+            return None
+            
+        try:
+            # 如果文本太长，分段处理
+            max_length = 12000  # 保留一些余量
+            if len(text) <= max_length:
+                return self._optimize_text_with_ai(text)
+            else:
+                # 分段处理
+                parts = []
+                for i in range(0, len(text), max_length):
+                    part = text[i:i+max_length]
+                    optimized = self._optimize_text_with_ai(part)
+                    if optimized:
+                        parts.append(optimized)
+                    else:
+                        parts.append(part)  # 如果优化失败，使用原文本
+                return '\n'.join(parts) if parts else text
+        except Exception as e:
+            print(f"AI文本优化失败: {e}")
+            return None
+    
+    def _optimize_text_with_ai(self, text: str) -> Optional[str]:
+        """使用AI优化单段文本"""
+        prompt = f"""请优化以下从简历文件中提取的文本，修复OCR识别错误、合并被换行分割的文本、保持正确的阅读顺序（从左到右、从上到下）。
+
+**优化要求：**
+1. 修复OCR常见错误（如"2O25" -> "2025"，"@4q.com" -> "@qq.com"）
+2. 合并被换行分割的信息：
+   - 时间范围：如"2019\n-\n2020" -> "2019-2020"
+   - 公司名：如"北京\n公司" -> "北京公司"
+   - 岗位：如"销售\n主管" -> "销售主管"
+   - 学校名：如"商洛\n学院" -> "商洛学院"
+3. 保持文本的原始结构和上下文位置
+4. 不要添加或删除内容，只进行修复和优化
+5. 保持页面分隔标记（如果有）
+
+原始文本：
+{text}
+
+请只返回优化后的文本，不要添加任何说明或注释。"""
+        
+        try:
+            response = self._call_ai_api(prompt)
+            if response:
+                # 清理可能的markdown标记
+                optimized = response.strip()
+                if optimized.startswith('```'):
+                    # 移除markdown代码块标记
+                    lines = optimized.split('\n')
+                    if lines[0].startswith('```'):
+                        lines = lines[1:]
+                    if lines[-1].strip() == '```':
+                        lines = lines[:-1]
+                    optimized = '\n'.join(lines).strip()
+                return optimized
+            return None
+        except Exception as e:
+            print(f"AI文本优化调用失败: {e}")
+            return None
+    
     def extract_with_ai(self, text: str) -> Optional[Dict[str, Any]]:
         """
         使用AI提取简历信息
