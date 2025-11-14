@@ -43,6 +43,76 @@ header h1 {
     margin-bottom: 30px;
 }
 
+/* AI配置区域 */
+.ai-config-section {
+    margin-bottom: 30px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    border: 1px solid #e0e0e0;
+}
+
+.ai-config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.ai-config-header h2 {
+    margin: 0;
+    font-size: 18px;
+    color: #333;
+}
+
+.ai-config-content {
+    margin-top: 15px;
+}
+
+.ai-config-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.form-group label {
+    font-weight: 500;
+    color: #555;
+    font-size: 14px;
+}
+
+.form-group label input[type="checkbox"] {
+    margin-right: 8px;
+}
+
+.form-select,
+.form-input {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 100%;
+    max-width: 500px;
+}
+
+.form-hint {
+    font-size: 12px;
+    color: #888;
+    margin-top: 2px;
+}
+
+.ai-config-status {
+    margin-top: 10px;
+    font-size: 14px;
+    min-height: 20px;
+}
+
 .upload-area {
     border: 3px dashed #667eea;
     border-radius: 8px;

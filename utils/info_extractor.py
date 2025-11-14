@@ -175,6 +175,49 @@ class InfoExtractor:
         tokens = re.split(r'[\s,，;；|/]+', cleaned)
         return [token for token in tokens if token]
 
+    def _clean_school_name(self, school_name: str) -> str:
+        """
+        清理学校名称，去除无效文字前缀和后缀
+        """
+        if not school_name:
+            return ""
+        
+        school_cleaned = school_name.strip()
+        
+        # 移除所有可能的前缀
+        invalid_prefixes = [
+            '教育经历', '教育背景', '学历', '毕业院校', '毕业学校', 
+            '学校', '院校', '就读', '毕业于', '毕业', '教育'
+        ]
+        for prefix in invalid_prefixes:
+            # 移除前缀（支持冒号、空格等分隔符）
+            school_cleaned = re.sub(rf'^{re.escape(prefix)}[：:：\s]*', '', school_cleaned, flags=re.IGNORECASE)
+            if school_cleaned.startswith(prefix):
+                school_cleaned = school_cleaned[len(prefix):].strip()
+        
+        # 移除后缀中的无效词
+        invalid_suffixes = ['教育经历', '教育背景', '学历', '毕业', '教育']
+        for suffix in invalid_suffixes:
+            if school_cleaned.endswith(suffix) and len(school_cleaned) > len(suffix):
+                # 如果学校名以无效后缀结尾，移除它
+                school_cleaned = school_cleaned[:-len(suffix)].strip()
+        
+        # 移除开头的数字、年月等
+        school_cleaned = re.sub(r'^[0-9年月\s]+', '', school_cleaned).lstrip('月')
+        
+        # 移除末尾的标点符号（保留必要的）
+        school_cleaned = school_cleaned.rstrip('，,。.；;：:')
+        
+        # 如果清理后太短（少于2个字符）或只包含无效词，返回原值
+        if len(school_cleaned) < 2:
+            return school_name.strip()
+        
+        # 如果清理后的结果只包含无效词，返回原值
+        if school_cleaned in invalid_prefixes + invalid_suffixes:
+            return school_name.strip()
+        
+        return school_cleaned
+
     def _clean_major_candidate(self, token: str) -> str | None:
         if not token:
             return None
@@ -1910,7 +1953,13 @@ class InfoExtractor:
             'major': None
         }
 
-        # 直接解析键值对
+        # 优先从提取后的文本中抓取学历相关信息（改进：优先从文本提取）
+        # 先尝试从文本中提取，再考虑键值对
+        detected = self.detect_highest_level_in_text(text)
+        if detected:
+            education_info['highest_education'] = detected
+
+        # 直接解析键值对（作为补充）
         edu_value = kv_pairs.get('最高学历') or kv_pairs.get('学历')
         if edu_value:
             normalized = self.normalize_education_level(edu_value)
@@ -1919,6 +1968,7 @@ class InfoExtractor:
                     education_info['highest_education'], normalized
                 )
 
+        # 增强学校名称提取逻辑，去除无效文字
         school_value = (
             kv_pairs.get('毕业院校') or
             kv_pairs.get('毕业学校') or
@@ -1926,7 +1976,10 @@ class InfoExtractor:
             kv_pairs.get('院校')
         )
         if school_value:
-            education_info['school'] = school_value.strip()
+            # 清理学校名称中的无效前缀和后缀
+            school_value = self._clean_school_name(school_value.strip())
+            if school_value:
+                education_info['school'] = school_value
 
         major_value = kv_pairs.get('专业')
         if major_value:
@@ -2047,14 +2100,43 @@ class InfoExtractor:
             
             # 清理学校名中的前缀（如果之前提取时包含了前缀）
             if education_info['school']:
-                # 清理前缀（如"教育经历"、"教育经历北京大学"等）
-                education_info['school'] = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', education_info['school']).strip()
-                # 如果学校名以"教育经历"开头，移除它
-                if education_info['school'].startswith('教育经历'):
-                    education_info['school'] = education_info['school'][4:].strip()
-                if education_info['school'].startswith('教育背景'):
-                    education_info['school'] = education_info['school'][4:].strip()
+                education_info['school'] = self._clean_school_name(education_info['school'])
 
+            # 专业优先提取学校前后信息
+            if not education_info['major'] and education_info['school']:
+                # 优先从学校名称前后提取专业
+                school_pos = edu_text.find(education_info['school'])
+                if school_pos >= 0:
+                    # 在学校名称前后150字符内查找专业
+                    context_start = max(0, school_pos - 150)
+                    context_end = min(len(edu_text), school_pos + len(education_info['school']) + 150)
+                    context = edu_text[context_start:context_end]
+                    
+                    # 优先匹配学校前后的专业信息
+                    major_patterns = [
+                        # 学校 专业 格式
+                        rf'{re.escape(education_info["school"])}\s+([\u4e00-\u9fa5]{{2,20}})\s*(?:专业|方向)',
+                        # 专业：xxx 格式（在学校附近）
+                        r'专业[：:]\s*([\u4e00-\u9fa5]{2,20})',
+                        # xxx 专业 格式（在学校附近）
+                        r'([\u4e00-\u9fa5]{2,20})\s*专业',
+                        # 主修：xxx 格式
+                        r'主修[：:]\s*([\u4e00-\u9fa5]{2,20})',
+                    ]
+                    for pattern in major_patterns:
+                        match = re.search(pattern, context)
+                        if match:
+                            candidate = match.group(1).strip(' ：:，,;；/|')
+                            candidate = re.sub(r'[□¡¿]', '', candidate)
+                            if candidate and len(candidate) >= 2 and len(candidate) <= 20:
+                                # 验证候选专业
+                                if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目', '本科', '专科', '硕士', '博士']):
+                                    cleaned_candidate = self._clean_major_candidate(candidate)
+                                    if cleaned_candidate:
+                                        education_info['major'] = cleaned_candidate
+                                        break
+            
+            # 如果还没找到，使用原来的逻辑作为备选
             if not education_info['major']:
                 major_match = self.major_regex.search(edu_text)
                 if major_match:
@@ -2093,18 +2175,25 @@ class InfoExtractor:
                                     education_info['major'] = cleaned_candidate
                                     break
                 # 如果还没找到，尝试在教育经历段落中查找
+                # 专业优先提取学校前后信息
                 if education_info.get('school') and not education_info.get('major'):
-                    # 在学校名称附近查找专业
+                    # 在学校名称附近查找专业（扩大搜索范围到150字符）
                     school_pos = text.find(education_info['school'])
                     if school_pos >= 0:
-                        # 在学校名称前后100字符内查找
-                        context_start = max(0, school_pos - 100)
-                        context_end = min(len(text), school_pos + len(education_info['school']) + 100)
+                        # 在学校名称前后150字符内查找
+                        context_start = max(0, school_pos - 150)
+                        context_end = min(len(text), school_pos + len(education_info['school']) + 150)
                         context = text[context_start:context_end]
-                        # 查找专业关键词
+                        
+                        # 优先匹配学校前后的专业信息
                         major_patterns = [
+                            # 学校 专业 格式（最优先）
+                            rf'{re.escape(education_info["school"])}\s+([\u4e00-\u9fa5]{{2,20}})\s*(?:专业|方向)',
+                            # 专业：xxx 格式（在学校附近）
                             r'专业[：:]\s*([\u4e00-\u9fa5]{2,20})',
+                            # xxx 专业 格式（在学校附近）
                             r'([\u4e00-\u9fa5]{2,20})\s*专业',
+                            # 主修：xxx 格式
                             r'主修[：:]\s*([\u4e00-\u9fa5]{2,20})',
                         ]
                         for pattern in major_patterns:
@@ -2113,8 +2202,8 @@ class InfoExtractor:
                                 candidate = match.group(1).strip(' ：:，,;；/|')
                                 candidate = re.sub(r'[□¡¿]', '', candidate)
                                 if candidate and len(candidate) >= 2 and len(candidate) <= 20:
-                                    # 验证候选专业
-                                    if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目']):
+                                    # 验证候选专业（排除学历和工作描述）
+                                    if not any(kw in candidate for kw in ['分析', '需求', '客户', '家长', '孩子', '负责', '完成', '工作', '项目', '本科', '专科', '硕士', '博士', '研究生']):
                                         cleaned_candidate = self._clean_major_candidate(candidate)
                                         if cleaned_candidate:
                                             education_info['major'] = cleaned_candidate
@@ -2154,15 +2243,7 @@ class InfoExtractor:
 
         if education_info['school']:
             # 最终清理学校名前缀（在所有提取逻辑之后）
-            school_cleaned = education_info['school']
-            # 移除所有可能的前缀
-            school_cleaned = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_cleaned).strip()
-            # 如果学校名以"教育经历"开头，移除它（处理"教育经历北京大学"这种情况）
-            if school_cleaned.startswith('教育经历'):
-                school_cleaned = school_cleaned[4:].strip()
-            if school_cleaned.startswith('教育背景'):
-                school_cleaned = school_cleaned[4:].strip()
-            education_info['school'] = school_cleaned
+            education_info['school'] = self._clean_school_name(education_info['school'])
             
             detected = self.detect_highest_level_in_text(education_info['school'])
             if detected:
@@ -2186,13 +2267,7 @@ class InfoExtractor:
             if best_score >= current_score:
                 if best_entry.get('school'):
                     # 清理学校名前缀
-                    school_cleaned = best_entry['school']
-                    school_cleaned = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_cleaned).strip()
-                    if school_cleaned.startswith('教育经历'):
-                        school_cleaned = school_cleaned[4:].strip()
-                    if school_cleaned.startswith('教育背景'):
-                        school_cleaned = school_cleaned[4:].strip()
-                    education_info['school'] = school_cleaned
+                    education_info['school'] = self._clean_school_name(best_entry['school'])
                 if best_level:
                     education_info['highest_education'] = self._prefer_higher_level(
                         education_info['highest_education'], best_level
@@ -2203,13 +2278,7 @@ class InfoExtractor:
                 # 即使学历不是更高，也可以补充缺失字段
                 if not education_info['school'] and best_entry.get('school'):
                     # 清理学校名前缀
-                    school_cleaned = best_entry['school']
-                    school_cleaned = re.sub(r'^(教育经历|教育背景|学历)[：:：]?\s*', '', school_cleaned).strip()
-                    if school_cleaned.startswith('教育经历'):
-                        school_cleaned = school_cleaned[4:].strip()
-                    if school_cleaned.startswith('教育背景'):
-                        school_cleaned = school_cleaned[4:].strip()
-                    education_info['school'] = school_cleaned
+                    education_info['school'] = self._clean_school_name(best_entry['school'])
                 if not education_info['major'] and best_entry.get('major'):
                     education_info['major'] = best_entry['major']
 

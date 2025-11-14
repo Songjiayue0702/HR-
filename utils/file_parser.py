@@ -76,37 +76,68 @@ def init_ocr_engine(ocr_enabled=True, engine='paddleocr', use_gpu=False):
 def clean_ocr_text(text):
     """
     清理OCR识别结果中的常见错误
+    保持文本结构和上下文位置信息
     """
     if not text:
         return text
     
-    # 移除常见的OCR错误字符
-    # 替换常见的OCR识别错误
-    replacements = {
-        '0': 'O',  # 数字0误识别为字母O（在特定上下文中）
-        '1': 'I',  # 数字1误识别为字母I（在特定上下文中）
-        '□': '',   # 移除无法识别的字符标记
-        '': '',   # 移除编码错误标记
-    }
-    
-    # 清理连续的特殊字符
     import re
-    # 移除连续的空白字符，保留单个空格或换行
-    text = re.sub(r'[ \t]+', ' ', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
     
-    # 移除行首行尾的空白
+    # 保留页面分隔标记（如果存在）
+    page_markers = []
+    if '--- 第' in text and '页 ---' in text:
+        # 提取并保留页面标记
+        page_marker_pattern = r'--- 第\d+页 ---'
+        page_markers = re.findall(page_marker_pattern, text)
+        # 临时替换页面标记，避免被清理
+        for i, marker in enumerate(page_markers):
+            text = text.replace(marker, f'__PAGE_MARKER_{i}__', 1)
+    
+    # 修复常见的OCR识别错误（但保留上下文）
+    # 修复年份中的O应该是0（如"2O25" -> "2025"）
+    text = re.sub(r'([12])O(\d{3})', r'\g<1>0\2', text)  # 修复年份中的O -> 0
+    text = re.sub(r'(\d{4})\.O(\d)', r'\1.0\2', text)  # 修复月份中的O -> 0
+    
+    # 修复邮箱中的常见OCR错误（如"@4q.com"应该是"@qq.com"）
+    text = re.sub(r'@4q\.com', '@qq.com', text, flags=re.IGNORECASE)
+    text = re.sub(r'@(\d+)q\.com', r'@qq.com', text, flags=re.IGNORECASE)
+    
+    # 移除无法识别的字符标记，但保留必要的标点
+    text = re.sub(r'[□¡¿\u200b\u200c\u200d\ufeff]', '', text)  # 移除OCR无法识别的字符标记和零宽字符
+    
+    # 清理连续的特殊字符，但保留换行结构
+    text = re.sub(r'[ \t]+', ' ', text)  # 多个空格/制表符合并为单个空格
+    text = re.sub(r'\n{4,}', '\n\n\n', text)  # 超过3个换行符的合并为3个（保留段落分隔）
+    
+    # 移除行首行尾的空白，但保留空行（用于段落分隔）
     lines = text.split('\n')
-    cleaned_lines = [line.strip() for line in lines if line.strip()]
+    cleaned_lines = []
+    prev_empty = False
+    for line in lines:
+        line_stripped = line.strip()
+        if line_stripped:
+            cleaned_lines.append(line_stripped)
+            prev_empty = False
+        elif not prev_empty:
+            # 保留单个空行作为段落分隔
+            cleaned_lines.append('')
+            prev_empty = True
+    
     text = '\n'.join(cleaned_lines)
+    
+    # 恢复页面标记
+    if page_markers:
+        for i, marker in enumerate(page_markers):
+            text = text.replace(f'__PAGE_MARKER_{i}__', marker, 1)
     
     return text
 
 def extract_text_from_pdf_with_ocr(file_path):
     """
     使用OCR从PDF中提取文本（适用于图片PDF）
+    保持页面顺序和位置信息
     """
-    ocr_text = ""
+    ocr_text_pages = []  # 存储每页OCR结果，保持页面顺序
     
     try:
         # 首先尝试使用pdf2image将PDF转换为图片
@@ -140,18 +171,80 @@ def extract_text_from_pdf_with_ocr(file_path):
                 print("警告: 无法将PDF转换为图片，需要安装 pdf2image 或 PyMuPDF")
                 return ""
         
-        # 使用OCR识别每页图片
+        total_pages = len(images)
+        
+        # 使用OCR识别每页图片（保持页面顺序）
         for idx, image in enumerate(images):
             try:
                 if OCR_ENGINE is None:
                     continue
+                
+                page_num = idx + 1
+                page_text = ""
                     
                 # 判断OCR引擎类型
                 if hasattr(OCR_ENGINE, 'ocr'):  # PaddleOCR
                     result = OCR_ENGINE.ocr(image, cls=True)
                     if result and result[0]:
-                        page_text = '\n'.join([line[1][0] for line in result[0] if line])
-                        ocr_text += page_text + "\n"
+                        # PaddleOCR返回的结果包含位置信息
+                        # 提取X和Y坐标，按从上到下、从左到右排序
+                        items_with_pos = []
+                        for line in result[0]:
+                            if line and len(line) >= 2:
+                                text_content = line[1][0] if isinstance(line[1], (list, tuple)) else str(line[1])
+                                # 获取位置信息（边界框的四个点）
+                                if len(line) >= 2 and isinstance(line[0], (list, tuple)) and len(line[0]) >= 4:
+                                    # line[0] 是位置信息，包含4个点 [左上, 右上, 右下, 左下]
+                                    bbox = line[0]
+                                    # 计算左上角坐标（X, Y）
+                                    x_pos = bbox[0][0] if isinstance(bbox[0], (list, tuple)) and len(bbox[0]) >= 2 else 0
+                                    y_pos = bbox[0][1] if isinstance(bbox[0], (list, tuple)) and len(bbox[0]) >= 2 else 0
+                                    # 计算行高（用于判断是否在同一行）
+                                    if len(bbox) >= 2 and isinstance(bbox[1], (list, tuple)):
+                                        height = abs(bbox[1][1] - bbox[0][1]) if len(bbox[1]) >= 2 else 0
+                                    else:
+                                        height = 0
+                                    items_with_pos.append((y_pos, x_pos, height, text_content))
+                                else:
+                                    items_with_pos.append((0, 0, 0, text_content))
+                        
+                        # 按位置排序：先按Y坐标（从上到下），然后按X坐标（从左到右）
+                        # 对于Y坐标相近的文本（在同一行），按X坐标排序
+                        if items_with_pos:
+                            # 计算平均行高，用于判断是否在同一行
+                            heights = [item[2] for item in items_with_pos if item[2] > 0]
+                            avg_height = sum(heights) / len(heights) if heights else 20
+                            line_tolerance = avg_height * 0.5  # 行高容差：同一行的Y坐标差异不超过平均行高的50%
+                            
+                            # 先按Y坐标排序
+                            items_with_pos.sort(key=lambda x: x[0])
+                            
+                            # 对于Y坐标相近的文本（在同一行），按X坐标排序
+                            sorted_items = []
+                            current_line = []
+                            current_y = None
+                            
+                            for y, x, h, text in items_with_pos:
+                                if current_y is None or abs(y - current_y) <= line_tolerance:
+                                    # 同一行或第一行
+                                    current_line.append((y, x, h, text))
+                                    current_y = y if current_y is None else (current_y + y) / 2  # 更新当前行的平均Y坐标
+                                else:
+                                    # 新的一行，先对上一行按X坐标排序
+                                    current_line.sort(key=lambda x: x[1])  # 按X坐标排序
+                                    sorted_items.extend([item[3] for item in current_line])
+                                    # 开始新行
+                                    current_line = [(y, x, h, text)]
+                                    current_y = y
+                            
+                            # 处理最后一行
+                            if current_line:
+                                current_line.sort(key=lambda x: x[1])  # 按X坐标排序
+                                sorted_items.extend([item[3] for item in current_line])
+                            
+                            page_text = '\n'.join([text for text in sorted_items if text.strip()])
+                        else:
+                            page_text = ""
                 elif hasattr(OCR_ENGINE, 'readtext'):  # EasyOCR
                     # EasyOCR需要numpy数组，转换PIL Image
                     import numpy as np
@@ -160,50 +253,113 @@ def extract_text_from_pdf_with_ocr(file_path):
                     img_array = np.array(image)
                     
                     # EasyOCR参数优化：提高识别准确率
-                    # 使用detail=1获取置信度，过滤低置信度结果
+                    # 使用detail=1获取置信度和位置信息
                     result = OCR_ENGINE.readtext(
                         img_array,
                         detail=1,  # 返回位置和置信度信息
-                        paragraph=False,  # 不使用段落模式，提高准确率
+                        paragraph=False,  # 不使用段落模式，保持行结构
                         width_ths=0.4,  # 降低字符宽度阈值，识别更多字符
                         height_ths=0.4,  # 降低字符高度阈值
                         allowlist=None,  # 允许所有字符
                         blocklist=''  # 不屏蔽任何字符
                     )
                     # 过滤低置信度的结果，但保留更多结果以提高召回率
+                    # 同时保持位置信息以维护上下文顺序（从上到下，从左到右）
                     if result:
-                        # 对于置信度 > 0.5 的结果，直接使用
-                        # 对于置信度 0.3-0.5 的结果，如果包含中文字符也使用
                         import re
-                        filtered_result = []
+                        # 存储文本和位置信息（Y坐标，X坐标，行高，文本，置信度）
+                        text_items_with_pos = []
                         for item in result:
                             if len(item) >= 3:
                                 confidence = item[2]
                                 text_item = item[1]
-                                # 高置信度直接使用
-                                if confidence > 0.5:
-                                    filtered_result.append(text_item)
-                                # 中等置信度但包含中文字符也使用
-                                elif confidence > 0.25 and re.search(r'[\u4e00-\u9fa5]', text_item):
-                                    filtered_result.append(text_item)
+                                # 获取位置信息（边界框）
+                                bbox = item[0] if len(item) >= 1 else None
+                                if bbox and isinstance(bbox, list) and len(bbox) >= 4:
+                                    # bbox格式：[[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                                    # 计算左上角坐标
+                                    x_pos = bbox[0][0] if isinstance(bbox[0], (list, tuple)) and len(bbox[0]) >= 2 else 0
+                                    y_pos = bbox[0][1] if isinstance(bbox[0], (list, tuple)) and len(bbox[0]) >= 2 else 0
+                                    # 计算行高
+                                    if len(bbox) >= 2 and isinstance(bbox[1], (list, tuple)) and len(bbox[1]) >= 2:
+                                        height = abs(bbox[1][1] - bbox[0][1])
+                                    else:
+                                        height = 0
+                                    
+                                    # 高置信度直接使用
+                                    if confidence > 0.5:
+                                        text_items_with_pos.append((y_pos, x_pos, height, text_item, confidence))
+                                    # 中等置信度但包含中文字符也使用
+                                    elif confidence > 0.25 and re.search(r'[\u4e00-\u9fa5]', text_item):
+                                        text_items_with_pos.append((y_pos, x_pos, height, text_item, confidence))
                             elif len(item) >= 2:
                                 # 如果没有置信度信息，直接使用
-                                filtered_result.append(item[1])
+                                bbox = item[0] if len(item) >= 1 else None
+                                if bbox and isinstance(bbox, list) and len(bbox) >= 4:
+                                    x_pos = bbox[0][0] if isinstance(bbox[0], (list, tuple)) and len(bbox[0]) >= 2 else 0
+                                    y_pos = bbox[0][1] if isinstance(bbox[0], (list, tuple)) and len(bbox[0]) >= 2 else 0
+                                    height = abs(bbox[1][1] - bbox[0][1]) if len(bbox) >= 2 and isinstance(bbox[1], (list, tuple)) and len(bbox[1]) >= 2 else 0
+                                    text_items_with_pos.append((y_pos, x_pos, height, item[1], 1.0))
+                                else:
+                                    text_items_with_pos.append((0, 0, 0, item[1], 1.0))
                         
-                        if filtered_result:
-                            result = filtered_result
+                        if text_items_with_pos:
+                            # 计算平均行高，用于判断是否在同一行
+                            heights = [item[2] for item in text_items_with_pos if item[2] > 0]
+                            avg_height = sum(heights) / len(heights) if heights else 20
+                            line_tolerance = avg_height * 0.5  # 行高容差：同一行的Y坐标差异不超过平均行高的50%
+                            
+                            # 先按Y坐标排序（从上到下）
+                            text_items_with_pos.sort(key=lambda x: x[0])
+                            
+                            # 对于Y坐标相近的文本（在同一行），按X坐标排序（从左到右）
+                            sorted_items = []
+                            current_line = []
+                            current_y = None
+                            
+                            for y, x, h, text, conf in text_items_with_pos:
+                                if current_y is None or abs(y - current_y) <= line_tolerance:
+                                    # 同一行或第一行
+                                    current_line.append((y, x, h, text, conf))
+                                    current_y = y if current_y is None else (current_y + y) / 2  # 更新当前行的平均Y坐标
+                                else:
+                                    # 新的一行，先对上一行按X坐标排序
+                                    current_line.sort(key=lambda x: x[1])  # 按X坐标排序
+                                    sorted_items.extend([item[3] for item in current_line])
+                                    # 开始新行
+                                    current_line = [(y, x, h, text, conf)]
+                                    current_y = y
+                            
+                            # 处理最后一行
+                            if current_line:
+                                current_line.sort(key=lambda x: x[1])  # 按X坐标排序
+                                sorted_items.extend([item[3] for item in current_line])
+                            
+                            page_text = '\n'.join([text for text in sorted_items if text.strip()])
                         else:
                             # 如果过滤后没有结果，使用所有结果
-                            result = [item[1] if len(item) >= 2 else str(item) for item in result]
-                    if result:
+                            page_text = '\n'.join([item[1] if len(item) >= 2 else str(item) for item in result])
+                    elif result:
                         page_text = '\n'.join(result) if isinstance(result, list) else str(result)
-                        ocr_text += page_text + "\n"
+                    else:
+                        page_text = ""
+                
+                # 如果提取到页面文本，添加到结果中
+                if page_text and page_text.strip():
+                    # 保持页面分隔，便于后续解析时识别上下文位置
+                    if total_pages > 1:
+                        ocr_text_pages.append(f"--- 第{page_num}页 ---\n{page_text.strip()}")
+                    else:
+                        ocr_text_pages.append(page_text.strip())
                         
             except Exception as e:
                 print(f"OCR处理第{idx+1}页失败: {e}")
                 continue
         
-        # 清理OCR文本
+        # 合并所有页面文本，保持页面顺序
+        ocr_text = "\n\n".join(ocr_text_pages)
+        
+        # 清理OCR文本（但保持基本结构）
         ocr_text = clean_ocr_text(ocr_text)
                 
     except Exception as e:
@@ -218,19 +374,33 @@ def extract_text_from_pdf(file_path):
     支持文本PDF和图片PDF（OCR）
     
     策略：
-    1. 文本PDF：直接使用PyPDF2提取，完全按照OCR更新前的逻辑（不进行任何OCR判断）
-    2. 图片PDF：使用OCR识别
+    1. 文本PDF：直接使用PyPDF2提取，保持页面顺序和结构
+    2. 图片PDF：使用OCR识别，保持位置信息
     """
     text = ""
+    page_texts = []  # 存储每页文本，保持页面顺序
     
     try:
-        # 首先尝试直接提取文本（OCR更新前的逻辑）
+        # 首先尝试直接提取文本（保持页面顺序和结构）
         with open(file_path, 'rb') as file:
             pdf_reader = PyPDF2.PdfReader(file)
-            for page in pdf_reader.pages:
+            total_pages = len(pdf_reader.pages)
+            
+            for page_num, page in enumerate(pdf_reader.pages, 1):
                 page_text = page.extract_text()
-                if page_text and isinstance(page_text, str) and page_text.strip():
-                    text += page_text + "\n"
+                if page_text and isinstance(page_text, str):
+                    # 清理每页文本，但保持基本结构
+                    page_text_cleaned = page_text.strip()
+                    if page_text_cleaned:
+                        # 保持页面分隔，便于后续解析时识别上下文位置
+                        # 在页面之间添加明确的分隔符（仅在多页时）
+                        if total_pages > 1:
+                            page_texts.append(f"--- 第{page_num}页 ---\n{page_text_cleaned}")
+                        else:
+                            page_texts.append(page_text_cleaned)
+            
+            # 合并所有页面文本，保持顺序
+            text = "\n\n".join(page_texts)
         
         text_stripped = text.strip()
         
@@ -387,4 +557,3 @@ def extract_text(file_path):
         return extract_text_from_word(file_path)
     else:
         raise Exception(f"不支持的文件格式: {file_ext}")
-

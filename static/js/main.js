@@ -23,6 +23,7 @@ function escapeHtml(value) {
 document.addEventListener('DOMContentLoaded', function() {
     initUpload();
     loadResumes();
+    loadAIConfig();
 });
 
 // 初始化上传功能
@@ -64,6 +65,15 @@ function uploadFiles(files) {
     for (let file of files) {
         formData.append('file', file);
     }
+    
+    // 添加AI配置（从本地存储或表单获取）
+    const aiConfig = {
+        ai_enabled: document.getElementById('aiEnabled') ? document.getElementById('aiEnabled').checked : false,
+        ai_model: document.getElementById('aiModel') ? document.getElementById('aiModel').value : 'gpt-3.5-turbo',
+        ai_api_key: document.getElementById('aiApiKey') ? document.getElementById('aiApiKey').value : (localStorage.getItem('ai_api_key') || ''),
+        ai_api_base: document.getElementById('aiApiBase') ? document.getElementById('aiApiBase').value : ''
+    };
+    formData.append('ai_config', JSON.stringify(aiConfig));
     
     const progressDiv = document.getElementById('uploadProgress');
     const progressFill = document.getElementById('progressFill');
@@ -1030,5 +1040,170 @@ window.onclick = function(event) {
     if (event.target === modal) {
         closeModal();
     }
+}
+
+// AI配置相关函数
+function toggleAIConfig() {
+    const content = document.getElementById('aiConfigContent');
+    const btn = document.getElementById('toggleAIConfigBtn');
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        btn.textContent = '收起配置';
+    } else {
+        content.style.display = 'none';
+        btn.textContent = '展开配置';
+    }
+}
+
+function loadAIConfig() {
+    fetch('/api/ai/config')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const config = data.data;
+                document.getElementById('aiEnabled').checked = config.ai_enabled;
+                document.getElementById('aiModel').value = config.ai_model;
+                if (config.ai_api_base) {
+                    document.getElementById('aiApiBase').value = config.ai_api_base;
+                }
+                
+                // 从本地存储加载API密钥（如果存在）
+                const savedKey = localStorage.getItem('ai_api_key');
+                if (savedKey) {
+                    document.getElementById('aiApiKey').value = savedKey;
+                }
+                
+                // 更新模型选项
+                if (config.ai_models && config.ai_models.length > 0) {
+                    updateModelOptions(config.ai_models);
+                }
+            }
+        })
+        .catch(error => {
+            console.error('加载AI配置失败:', error);
+        });
+}
+
+function updateModelOptions(models) {
+    const select = document.getElementById('aiModel');
+    if (models && models.length > 0) {
+        select.innerHTML = '';
+        models.forEach(model => {
+            const option = document.createElement('option');
+            option.value = model.value;
+            option.textContent = model.label;
+            select.appendChild(option);
+        });
+    }
+}
+
+function updateAIConfig() {
+    // 实时更新配置到本地存储
+    const config = {
+        ai_enabled: document.getElementById('aiEnabled').checked,
+        ai_model: document.getElementById('aiModel').value,
+        ai_api_key: document.getElementById('aiApiKey').value,
+        ai_api_base: document.getElementById('aiApiBase').value
+    };
+    
+    // 保存API密钥到本地存储
+    if (config.ai_api_key) {
+        localStorage.setItem('ai_api_key', config.ai_api_key);
+    }
+    
+    // 保存其他配置到本地存储
+    localStorage.setItem('ai_config', JSON.stringify({
+        ai_enabled: config.ai_enabled,
+        ai_model: config.ai_model,
+        ai_api_base: config.ai_api_base
+    }));
+}
+
+function saveAIConfig() {
+    const config = {
+        ai_enabled: document.getElementById('aiEnabled').checked,
+        ai_model: document.getElementById('aiModel').value,
+        ai_api_key: document.getElementById('aiApiKey').value,
+        ai_api_base: document.getElementById('aiApiBase').value
+    };
+    
+    fetch('/api/ai/config', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+    })
+    .then(response => response.json())
+    .then(data => {
+        const statusDiv = document.getElementById('aiConfigStatus');
+        if (data.success) {
+            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
+            // 保存到本地存储
+            if (config.ai_api_key) {
+                localStorage.setItem('ai_api_key', config.ai_api_key);
+            }
+            localStorage.setItem('ai_config', JSON.stringify({
+                ai_enabled: config.ai_enabled,
+                ai_model: config.ai_model,
+                ai_api_base: config.ai_api_base
+            }));
+        } else {
+            statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
+        }
+        setTimeout(() => {
+            statusDiv.innerHTML = '';
+        }, 3000);
+    })
+    .catch(error => {
+        console.error('保存AI配置失败:', error);
+        const statusDiv = document.getElementById('aiConfigStatus');
+        statusDiv.innerHTML = '<span style="color: red;">✗ 保存失败，请重试</span>';
+        setTimeout(() => {
+            statusDiv.innerHTML = '';
+        }, 3000);
+    });
+}
+
+function testAIConnection() {
+    const config = {
+        api_key: document.getElementById('aiApiKey').value,
+        api_base: document.getElementById('aiApiBase').value,
+        model: document.getElementById('aiModel').value
+    };
+    
+    if (!config.api_key) {
+        alert('请先输入API密钥');
+        return;
+    }
+    
+    const statusDiv = document.getElementById('aiConfigStatus');
+    statusDiv.innerHTML = '<span style="color: blue;">测试连接中...</span>';
+    
+    fetch('/api/ai/test', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(config)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
+        } else {
+            statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
+        }
+        setTimeout(() => {
+            statusDiv.innerHTML = '';
+        }, 5000);
+    })
+    .catch(error => {
+        console.error('测试AI连接失败:', error);
+        statusDiv.innerHTML = '<span style="color: red;">✗ 测试失败，请检查网络连接</span>';
+        setTimeout(() => {
+            statusDiv.innerHTML = '';
+        }, 5000);
+    });
 }
 

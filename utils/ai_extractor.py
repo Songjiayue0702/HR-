@@ -12,18 +12,72 @@ import requests
 class AIExtractor:
     """AI辅助信息提取器"""
     
+    # 支持的AI模型配置
+    MODEL_CONFIGS = {
+        # OpenAI模型
+        'gpt-3.5-turbo': {
+            'api_base': 'https://api.openai.com/v1',
+            'endpoint': '/chat/completions'
+        },
+        'gpt-4': {
+            'api_base': 'https://api.openai.com/v1',
+            'endpoint': '/chat/completions'
+        },
+        'gpt-4-turbo': {
+            'api_base': 'https://api.openai.com/v1',
+            'endpoint': '/chat/completions'
+        },
+        # DeepSeek模型
+        'deepseek-chat': {
+            'api_base': 'https://api.deepseek.com/v1',
+            'endpoint': '/chat/completions'
+        },
+        'deepseek-coder': {
+            'api_base': 'https://api.deepseek.com/v1',
+            'endpoint': '/chat/completions'
+        },
+        # 其他兼容OpenAI API的模型
+        'claude-3-opus': {
+            'api_base': 'https://api.anthropic.com/v1',
+            'endpoint': '/messages'
+        },
+        'qwen-turbo': {
+            'api_base': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'endpoint': '/chat/completions'
+        },
+        'qwen-plus': {
+            'api_base': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            'endpoint': '/chat/completions'
+        },
+    }
+    
     def __init__(self, api_key: Optional[str] = None, api_base: Optional[str] = None, model: str = "gpt-3.5-turbo"):
         """
         初始化AI提取器
         
         Args:
-            api_key: OpenAI API密钥，如果为None则从环境变量获取
-            api_base: API基础URL，如果为None则使用OpenAI默认
-            model: 使用的模型名称
+            api_key: AI API密钥，如果为None则从环境变量获取
+            api_base: API基础URL，如果为None则根据模型自动选择
+            model: 使用的模型名称（支持：gpt-3.5-turbo, gpt-4, deepseek-chat, deepseek-coder等）
         """
-        self.api_key = api_key or os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY')
-        self.api_base = api_base or os.environ.get('OPENAI_API_BASE') or 'https://api.openai.com/v1'
+        self.api_key = api_key or os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or os.environ.get('DEEPSEEK_API_KEY')
         self.model = model
+        
+        # 根据模型自动选择API基础URL
+        if api_base:
+            self.api_base = api_base.rstrip('/')
+        elif model in self.MODEL_CONFIGS:
+            self.api_base = self.MODEL_CONFIGS[model]['api_base']
+        else:
+            # 默认使用OpenAI格式
+            self.api_base = os.environ.get('OPENAI_API_BASE') or 'https://api.openai.com/v1'
+        
+        # 获取API端点
+        if model in self.MODEL_CONFIGS:
+            self.api_endpoint = self.MODEL_CONFIGS[model]['endpoint']
+        else:
+            self.api_endpoint = '/chat/completions'
+        
         self.enabled = bool(self.api_key)
         
     def extract_with_ai(self, text: str) -> Optional[Dict[str, Any]]:
@@ -56,88 +110,139 @@ class AIExtractor:
             return None
     
     def _build_prompt(self, text: str) -> str:
-        """构建AI提示词"""
-        return f"""请从以下简历文本中提取结构化信息，并以JSON格式返回。如果某个字段无法确定，请返回null。
+        """构建AI提示词（改进版，提高准确性）"""
+        return f"""你是一个专业的简历信息提取助手。请仔细分析以下简历文本，准确提取结构化信息，并以JSON格式返回。
+
+**重要提示：**
+1. 只提取简历中明确存在的信息，如果某个字段无法确定，请返回null
+2. 姓名：仅提取姓名本身，不要包含"姓名："等标签文字，不要提取城市名、公司名等
+3. 出生年份：只提取出生年份，不要提取工作年份、毕业年份等
+4. 学历：优先提取最高学历，格式如"商洛学院， 生物制药工程专业，本科"应提取为：school="商洛学院", major="生物制药工程", highest_education="本科"
+5. 工作经历：按时间顺序提取，格式如"2019.02-2020.05 陕西康华医药分公司 储备干部、质量管理"应提取为：company="陕西康华医药分公司", position="储备干部、质量管理"（多个岗位用顿号分隔）
 
 需要提取的字段：
-- name: 姓名（仅姓名，不要包含其他文字）
+- name: 姓名（仅姓名，2-6个中文字符，不要包含其他文字）
 - gender: 性别（"男"或"女"，如果无法确定则返回null）
-- birth_year: 出生年份（整数，如1990）
+- birth_year: 出生年份（整数，如1990，只提取出生年份，不要提取工作年份）
 - phone: 手机号（11位数字）
 - email: 邮箱地址
 - highest_education: 最高学历（"博士"、"硕士"、"本科"、"专科"、"高中"、"初中"等）
-- school: 毕业学校名称（完整的学校名称）
-- major: 专业名称（完整的专业名称）
-- work_experience: 工作经历数组，每个元素包含：
-  - company: 公司名称
-  - position: 职位名称
-  - start_year: 开始年份（整数）
-  - end_year: 结束年份（整数，如果至今则返回null）
+- school: 毕业学校名称（完整的学校名称，去除"教育经历"等前缀）
+- major: 专业名称（完整的专业名称，优先从学校前后提取）
+- work_experience: 工作经历数组，按时间顺序，每个元素包含：
+  - company: 公司名称（完整的公司名称）
+  - position: 职位名称（如果有多个职位用顿号分隔，如"储备干部、质量管理"）
+  - start_year: 开始年份（整数，如2019）
+  - end_year: 结束年份（整数，如2020，如果至今则返回null）
 
 简历文本：
 {text}
 
-请只返回JSON格式，不要包含任何其他文字说明。JSON格式示例：
+请只返回JSON格式，不要包含任何其他文字说明。确保提取的信息准确无误。JSON格式示例：
 {{
-  "name": "张三",
+  "name": "高峰",
   "gender": "男",
   "birth_year": 1990,
   "phone": "13800138000",
-  "email": "zhangsan@example.com",
+  "email": "gaofeng@example.com",
   "highest_education": "本科",
-  "school": "北京大学",
-  "major": "计算机科学与技术",
+  "school": "商洛学院",
+  "major": "生物制药工程",
   "work_experience": [
     {{
-      "company": "某某科技有限公司",
-      "position": "软件工程师",
-      "start_year": 2015,
+      "company": "陕西康华医药分公司",
+      "position": "储备干部、质量管理",
+      "start_year": 2019,
       "end_year": 2020
+    }},
+    {{
+      "company": "陕西华森特保健公司",
+      "position": "保健品广告策划",
+      "start_year": 2018,
+      "end_year": 2019
     }}
   ]
 }}
 """
     
     def _call_ai_api(self, prompt: str) -> Optional[str]:
-        """调用AI API"""
+        """调用AI API（支持多种模型）"""
         try:
             headers = {
                 'Content-Type': 'application/json',
                 'Authorization': f'Bearer {self.api_key}'
             }
             
-            data = {
-                'model': self.model,
-                'messages': [
-                    {
-                        'role': 'system',
-                        'content': '你是一个专业的简历信息提取助手。请准确提取简历中的关键信息，并以JSON格式返回。'
-                    },
-                    {
-                        'role': 'user',
-                        'content': prompt
-                    }
-                ],
-                'temperature': 0.1,  # 降低随机性，提高准确性
-                'max_tokens': 2000
-            }
+            # 根据模型类型构建请求数据
+            if 'claude' in self.model.lower():
+                # Claude模型使用不同的格式
+                data = {
+                    'model': self.model,
+                    'max_tokens': 2000,
+                    'messages': [
+                        {
+                            'role': 'user',
+                            'content': f'你是一个专业的简历信息提取助手。请准确提取简历中的关键信息，并以JSON格式返回。\n\n{prompt}'
+                        }
+                    ]
+                }
+            else:
+                # OpenAI兼容格式（包括DeepSeek、Qwen等）
+                data = {
+                    'model': self.model,
+                    'messages': [
+                        {
+                            'role': 'system',
+                            'content': '你是一个专业的简历信息提取助手。请准确提取简历中的关键信息，并以JSON格式返回。'
+                        },
+                        {
+                            'role': 'user',
+                            'content': prompt
+                        }
+                    ],
+                    'temperature': 0.1,  # 降低随机性，提高准确性
+                    'max_tokens': 2000
+                }
+            
+            # 构建完整的API URL
+            api_url = f'{self.api_base}{self.api_endpoint}'
             
             response = requests.post(
-                f'{self.api_base}/chat/completions',
+                api_url,
                 headers=headers,
                 json=data,
-                timeout=30
+                timeout=60  # 增加超时时间，某些模型可能需要更长时间
             )
             
             if response.status_code == 200:
                 result = response.json()
-                return result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                # 处理不同模型的响应格式
+                if 'choices' in result:
+                    # OpenAI格式
+                    return result.get('choices', [{}])[0].get('message', {}).get('content', '')
+                elif 'content' in result:
+                    # Claude格式
+                    if isinstance(result['content'], list):
+                        return result['content'][0].get('text', '')
+                    return result.get('content', '')
+                else:
+                    # 其他格式，尝试通用提取
+                    return str(result)
             else:
-                print(f"AI API调用失败: {response.status_code}, {response.text}")
+                error_msg = f"AI API调用失败: {response.status_code}"
+                try:
+                    error_detail = response.json()
+                    error_msg += f", {error_detail}"
+                except:
+                    error_msg += f", {response.text[:200]}"
+                print(error_msg)
                 return None
                 
+        except requests.exceptions.Timeout:
+            print(f"AI API调用超时（模型: {self.model}）")
+            return None
         except Exception as e:
-            print(f"AI API调用异常: {e}")
+            print(f"AI API调用异常（模型: {self.model}）: {e}")
             return None
     
     def _parse_ai_response(self, response_text: str) -> Optional[Dict[str, Any]]:

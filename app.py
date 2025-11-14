@@ -55,18 +55,28 @@ def process_resume_async(resume_id, file_path):
         
         # AI辅助提取（如果启用）
         ai_result = None
-        if app.config.get('AI_ENABLED') and app.config.get('AI_API_KEY'):
+        # 检查是否启用AI（从配置或请求参数）
+        ai_enabled = app.config.get('AI_ENABLED', True)
+        ai_api_key = app.config.get('AI_API_KEY', '')
+        ai_api_base = app.config.get('AI_API_BASE', '')
+        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+        
+        # 如果配置中没有API密钥，尝试从环境变量获取
+        if not ai_api_key:
+            ai_api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or os.environ.get('DEEPSEEK_API_KEY') or ''
+        
+        if ai_enabled and ai_api_key:
             try:
                 ai_extractor = AIExtractor(
-                    api_key=app.config.get('AI_API_KEY'),
-                    api_base=app.config.get('AI_API_BASE'),
-                    model=app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+                    api_key=ai_api_key,
+                    api_base=ai_api_base if ai_api_base else None,
+                    model=ai_model
                 )
                 ai_result = ai_extractor.extract_with_ai(text)
                 if ai_result:
-                    print(f"AI辅助解析成功，提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
+                    print(f"AI辅助解析成功（模型: {ai_model}），提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
             except Exception as e:
-                print(f"AI辅助解析失败，继续使用规则提取: {e}")
+                print(f"AI辅助解析失败（模型: {ai_model}），继续使用规则提取: {e}")
         
         # 融合规则提取和AI提取的结果
         info = extractor.extract_all(text, ai_result=ai_result)
@@ -188,6 +198,23 @@ def upload_file():
         filename = f"{timestamp}{safe_name}{ext}"
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
+        
+        # 获取AI配置（如果前端提供了）
+        ai_config = request.form.get('ai_config')
+        if ai_config:
+            try:
+                ai_config_data = json.loads(ai_config)
+                # 更新临时配置（仅用于本次处理）
+                if ai_config_data.get('ai_api_key'):
+                    app.config['AI_API_KEY'] = ai_config_data['ai_api_key']
+                if ai_config_data.get('ai_api_base'):
+                    app.config['AI_API_BASE'] = ai_config_data['ai_api_base']
+                if ai_config_data.get('ai_model'):
+                    app.config['AI_MODEL'] = ai_config_data['ai_model']
+                if 'ai_enabled' in ai_config_data:
+                    app.config['AI_ENABLED'] = ai_config_data['ai_enabled']
+            except:
+                pass  # 如果解析失败，使用默认配置
         
         # 创建数据库记录
         db = get_db_session()
@@ -439,6 +466,92 @@ def export_batch():
     
     file_path = export_resumes_to_excel(resumes)
     return send_file(file_path, as_attachment=True, download_name=f'简历批量导出_{datetime.now().strftime("%Y%m%d")}.xlsx')
+
+@app.route('/api/ai/config', methods=['GET'])
+def get_ai_config():
+    """获取AI配置（不返回密钥）"""
+    return jsonify({
+        'success': True,
+        'data': {
+            'ai_enabled': app.config.get('AI_ENABLED', True),
+            'ai_model': app.config.get('AI_MODEL', 'gpt-3.5-turbo'),
+            'ai_api_base': app.config.get('AI_API_BASE', ''),
+            'ai_models': app.config.get('AI_MODELS', [])
+        }
+    })
+
+@app.route('/api/ai/config', methods=['POST'])
+def save_ai_config():
+    """保存AI配置"""
+    try:
+        data = request.json
+        ai_enabled = data.get('ai_enabled', True)
+        ai_model = data.get('ai_model', 'gpt-3.5-turbo')
+        ai_api_key = data.get('ai_api_key', '')
+        ai_api_base = data.get('ai_api_base', '')
+        
+        # 更新配置（注意：这里只是临时更新，重启后会恢复）
+        # 实际生产环境应该保存到配置文件或数据库
+        app.config['AI_ENABLED'] = ai_enabled
+        app.config['AI_MODEL'] = ai_model
+        if ai_api_key:
+            app.config['AI_API_KEY'] = ai_api_key
+        if ai_api_base:
+            app.config['AI_API_BASE'] = ai_api_base
+        
+        return jsonify({
+            'success': True,
+            'message': 'AI配置已保存（当前会话有效）'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'保存配置失败: {str(e)}'
+        }), 400
+
+@app.route('/api/ai/test', methods=['POST'])
+def test_ai_connection():
+    """测试AI连接"""
+    try:
+        data = request.json
+        api_key = data.get('api_key', '')
+        api_base = data.get('api_base', '')
+        model = data.get('model', 'gpt-3.5-turbo')
+        
+        if not api_key:
+            return jsonify({
+                'success': False,
+                'message': '请提供API密钥'
+            }), 400
+        
+        # 创建临时AI提取器进行测试
+        ai_extractor = AIExtractor(
+            api_key=api_key,
+            api_base=api_base if api_base else None,
+            model=model
+        )
+        
+        # 使用简单的测试文本
+        test_text = "姓名：张三\n性别：男\n手机：13800138000"
+        result = ai_extractor.extract_with_ai(test_text)
+        
+        if result:
+            return jsonify({
+                'success': True,
+                'message': 'AI连接测试成功',
+                'data': result
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'AI连接测试失败，请检查API密钥和网络连接'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 400
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
