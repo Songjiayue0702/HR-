@@ -168,10 +168,18 @@ class AIExtractor:
             return None
             
         try:
-            # 截断文本以避免超出token限制
-            max_length = 8000  # 保留一些余量
+            # 智能处理长文本，避免简单截断导致JSON格式内容不全
+            max_length = 40000  # 进一步增加长度限制，支持页数较多的简历（GPT-4等模型支持更长的输入）
+            
             if len(text) > max_length:
-                text = text[:max_length] + "..."
+                # 检查是否是JSON格式的文本
+                text_stripped = text.strip()
+                if text_stripped.startswith('{') or '"工作经历"' in text or '"教育经历"' in text or '"教育背景"' in text:
+                    # 对于JSON格式，尝试智能提取关键部分
+                    text = self._smart_truncate_json(text, max_length)
+                else:
+                    # 对于非JSON格式，采用智能截取，保留关键信息区域
+                    text = self._smart_truncate_text(text, max_length)
             
             prompt = self._build_prompt(text, is_word_file=is_word_file)
             response = self._call_ai_api(prompt)
@@ -182,6 +190,331 @@ class AIExtractor:
         except Exception as e:
             print(f"AI提取失败: {e}")
             return None
+    
+    def _smart_truncate_json(self, text: str, max_length: int) -> str:
+        """
+        智能截取JSON格式的文本，优先保留完整的结构化字段
+        
+        Args:
+            text: 原始文本
+            max_length: 最大长度
+            
+        Returns:
+            截取后的文本
+        """
+        # 如果文本不是特别长，直接返回
+        if len(text) <= max_length:
+            return text
+        
+        # 尝试解析JSON，如果成功，只保留关键字段
+        try:
+            import json
+            # 尝试解析JSON
+            data = json.loads(text)
+            
+            # 构建包含关键字段的新JSON对象
+            result_data = {}
+            
+            # 保留的关键字段（按优先级）
+            key_fields = ['工作经历', '教育经历', '教育背景', '个人信息', '基本信息', '姓名', '性别', '手机', '邮箱']
+            
+            for key in key_fields:
+                if key in data:
+                    result_data[key] = data[key]
+            
+            # 额外处理：如果工作经历数组太长，保留所有条目的核心字段（时间、公司、岗位）
+            if '工作经历' in result_data and isinstance(result_data['工作经历'], list):
+                work_experiences = result_data['工作经历']
+                if len(work_experiences) > 0:
+                    # 精简每条工作经历，只保留核心字段
+                    simplified_experiences = []
+                    for exp in work_experiences:
+                        if isinstance(exp, dict):
+                            simplified_exp = {}
+                            # 保留核心字段：时间、公司、职位/岗位
+                            for field in ['时间', '公司', '职位', '岗位', 'position', 'company', 'period']:
+                                if field in exp:
+                                    simplified_exp[field] = exp[field]
+                            if simplified_exp:
+                                simplified_experiences.append(simplified_exp)
+                        else:
+                            simplified_experiences.append(exp)
+                    result_data['工作经历'] = simplified_experiences
+            
+            # 如果没有找到关键字段，尝试查找类似的字段名
+            if not result_data:
+                for key in data.keys():
+                    if any(kf in key for kf in ['工作', '教育', '个人', '基本', '姓名', '手机', '邮箱']):
+                        result_data[key] = data[key]
+            
+            # 如果构建的新JSON仍然太长，则截取每个字段的内容
+            result_json = json.dumps(result_data, ensure_ascii=False, indent=2)
+            if len(result_json) <= max_length:
+                return result_json
+            else:
+                # 如果还是太长，先尝试使用紧凑格式（无缩进）以节省空间
+                compact_json = json.dumps(result_data, ensure_ascii=False, separators=(',', ':'))
+                if len(compact_json) <= max_length:
+                    return compact_json
+                # 如果紧凑格式还是太长，进一步精简字段内容
+                return self._truncate_json_fields(result_data, max_length)
+                
+        except (json.JSONDecodeError, Exception):
+            # 如果解析失败，使用字符串方式提取关键字段
+            pass
+        
+        # 字符串方式提取关键字段
+        key_fields = ['"工作经历"', '"教育经历"', '"教育背景"', '"个人信息"', '"基本信息"']
+        
+        result_parts = []
+        remaining_length = max_length
+        
+        # 提取文本开头部分（通常包含关键信息）
+        start_text = text[:min(500, len(text))]
+        if start_text and start_text.strip().startswith('{'):
+            result_parts.append(start_text.rstrip().rstrip(',') + ',')
+            remaining_length -= len(start_text)
+        
+        # 查找并提取关键字段的完整内容
+        for field in key_fields:
+            if remaining_length <= 200:
+                break
+                
+            start_idx = text.find(field)
+            if start_idx == -1:
+                continue
+            
+            # 找到字段的开始位置（包含引号和冒号）
+            field_start = text.rfind('"', 0, start_idx - 1)  # 找到前一个引号
+            if field_start == -1:
+                field_start = start_idx
+            
+            # 尝试找到字段的结束位置（匹配JSON结构）
+            bracket_count = 0
+            in_string = False
+            escape_next = False
+            field_end = field_start
+            
+            # 向前查找，找到该字段的开始（冒号之后）
+            colon_pos = text.find(':', field_start)
+            if colon_pos != -1:
+                bracket_start = colon_pos + 1
+                # 跳过空白字符
+                while bracket_start < len(text) and text[bracket_start] in ' \n\t\r':
+                    bracket_start += 1
+                
+                if bracket_start < len(text):
+                    first_char = text[bracket_start]
+                    if first_char == '{':
+                        bracket_count = 1
+                    elif first_char == '[':
+                        bracket_count = 1
+                    
+                    for i in range(bracket_start + 1, min(bracket_start + remaining_length, len(text))):
+                        char = text[i]
+                        
+                        if escape_next:
+                            escape_next = False
+                            continue
+                            
+                        if char == '\\':
+                            escape_next = True
+                            continue
+                            
+                        if char == '"' and not escape_next:
+                            in_string = not in_string
+                            continue
+                            
+                        if not in_string:
+                            if char == '{' or char == '[':
+                                bracket_count += 1
+                            elif char == '}' or char == ']':
+                                bracket_count -= 1
+                                if bracket_count == 0:
+                                    field_end = i + 1
+                                    break
+                    
+                    if field_end > bracket_start:
+                        field_content = text[field_start:field_end]
+                        if len(field_content) <= remaining_length:
+                            result_parts.append(field_content)
+                            remaining_length -= len(field_content)
+        
+        # 添加结束括号
+        if result_parts:
+            result = '\n'.join(result_parts)
+            # 确保有结束括号
+            if not result.rstrip().endswith('}'):
+                result = result.rstrip().rstrip(',') + '\n}'
+            
+            if len(result) <= max_length:
+                return result
+        
+        # 如果提取失败，返回截取后的文本（至少保留开头和结尾）
+        return text[:max_length // 2] + '...' + text[-max_length // 2:]
+    
+    def _truncate_json_fields(self, data: dict, max_length: int) -> str:
+        """
+        截取JSON字段内容，使其不超过最大长度
+        优先完整保留工作经历和教育经历的核心字段
+        
+        Args:
+            data: JSON数据
+            max_length: 最大长度
+            
+        Returns:
+            截取后的JSON字符串
+        """
+        import json
+        
+        # 对每个字段的内容进行截取
+        truncated_data = {}
+        remaining = max_length - 200  # 预留一些空间给JSON格式符号
+        
+        # 优先处理关键字段
+        priority_keys = ['工作经历', '教育经历', '教育背景', '个人信息', '基本信息']
+        
+        for key in priority_keys:
+            if key in data and remaining > 200:
+                value = data[key]
+                
+                if isinstance(value, list):
+                    # 对于工作经历数组，保留所有条目的核心字段
+                    if key == '工作经历':
+                        truncated_list = []
+                        for item in value:
+                            if isinstance(item, dict):
+                                # 只保留核心字段：时间、公司、职位/岗位
+                                core_item = {}
+                                for field in ['时间', '公司', '职位', '岗位', 'position', 'company', 'period', 'start_year', 'end_year']:
+                                    if field in item:
+                                        core_item[field] = item[field]
+                                if core_item:
+                                    truncated_list.append(core_item)
+                            else:
+                                truncated_list.append(item)
+                        
+                        # 序列化测试长度（使用紧凑格式以节省空间）
+                        test_data = truncated_data.copy()
+                        test_data[key] = truncated_list
+                        test_json = json.dumps(test_data, ensure_ascii=False, separators=(',', ':'))
+                        
+                        if len(test_json) <= max_length:
+                            truncated_data[key] = truncated_list
+                            remaining = max_length - len(test_json)
+                        else:
+                            # 如果还是太长，尝试保留更多条目，逐步减少
+                            # 优先保留所有条目的核心字段，而不是截断条目数量
+                            # 但如果超过限制太多，最多保留前20条
+                            max_items = min(20, len(truncated_list))
+                            truncated_data[key] = truncated_list[:max_items]
+                            # 重新计算剩余空间
+                            test_data2 = truncated_data.copy()
+                            test_data2[key] = truncated_list[:max_items]
+                            test_json2 = json.dumps(test_data2, ensure_ascii=False, separators=(',', ':'))
+                            remaining = max_length - len(test_json2)
+                    else:
+                        # 其他列表，保留前10个元素
+                        truncated_data[key] = value[:min(10, len(value))]
+                        remaining -= 1000
+                elif isinstance(value, dict):
+                    # 对于字典，保留所有字段（这些通常是基本信息）
+                    test_data = truncated_data.copy()
+                    test_data[key] = value
+                    test_json = json.dumps(test_data, ensure_ascii=False, indent=2)
+                    if len(test_json) <= max_length:
+                        truncated_data[key] = value
+                        remaining = max_length - len(test_json)
+                    else:
+                        # 如果太长，只保留关键字段
+                        truncated_dict = {}
+                        for k, v in value.items():
+                            truncated_dict[k] = v
+                            test_json2 = json.dumps(truncated_dict, ensure_ascii=False, indent=2)
+                            if len(test_json2) < remaining:
+                                truncated_dict[k] = v
+                            else:
+                                break
+                        truncated_data[key] = truncated_dict
+                        remaining -= 500
+                else:
+                    # 简单值，直接添加
+                    truncated_data[key] = value
+                    remaining -= 100
+        
+        # 处理其他字段
+        for key, value in data.items():
+            if key in priority_keys:
+                continue
+                
+            if remaining <= 100:
+                break
+                
+            if isinstance(value, (str, int, float, bool, type(None))):
+                truncated_data[key] = value
+                remaining -= 100
+            elif isinstance(value, list) and remaining > 300:
+                # 保留前5个元素
+                truncated_data[key] = value[:min(5, len(value))]
+                remaining -= 500
+            elif isinstance(value, dict) and remaining > 300:
+                # 保留前5个字段
+                truncated_dict = {}
+                for k, v in list(value.items())[:5]:
+                    truncated_dict[k] = v
+                truncated_data[key] = truncated_dict
+                remaining -= 500
+        
+        result = json.dumps(truncated_data, ensure_ascii=False, indent=2)
+        if len(result) > max_length:
+            # 如果还是太长，使用紧凑格式
+            result = json.dumps(truncated_data, ensure_ascii=False, separators=(',', ':'))
+        
+        return result[:max_length] if len(result) > max_length else result
+    
+    def _smart_truncate_text(self, text: str, max_length: int) -> str:
+        """
+        智能截取普通文本，优先保留关键信息区域
+        
+        Args:
+            text: 原始文本
+            max_length: 最大长度
+            
+        Returns:
+            截取后的文本
+        """
+        if len(text) <= max_length:
+            return text
+        
+        # 查找关键区域（工作经历、教育经历等）
+        key_sections = ['工作经历', '工作经验', '教育经历', '教育背景', '个人信息', '基本信息']
+        
+        # 提取关键区域
+        important_parts = []
+        for section in key_sections:
+            idx = text.find(section)
+            if idx != -1:
+                # 提取该区域及后续一定长度的内容
+                section_text = text[idx:min(idx + 3000, len(text))]
+                important_parts.append(section_text)
+        
+        # 如果找到了关键区域，优先保留这些区域
+        if important_parts:
+            result = text[:500]  # 保留开头
+            remaining = max_length - 500
+            for part in important_parts[:3]:  # 最多保留3个关键区域
+                if len(part) <= remaining:
+                    result += '\n...\n' + part
+                    remaining -= len(part) + 5
+                elif remaining > 200:
+                    result += '\n...\n' + part[:remaining]
+                    remaining = 0
+                if remaining <= 200:
+                    break
+            return result[:max_length]
+        
+        # 如果没有找到关键区域，使用简单截取
+        return text[:max_length] + "..."
     
     def _build_prompt(self, text: str, is_word_file: bool = False) -> str:
         """构建AI提示词（改进版，提高准确性）"""
@@ -329,13 +662,14 @@ class AIExtractor:
      * `"教育背景": [ ... ]` 或 `"education_background": [ ... ]`
      * `"教育经历": [ ... ]`
      * 这些字段中的信息准确性最高，优先提取
+     * **重要提示**：如果原始文本本身是完整的JSON格式（以`{{`开头和`}}`结尾，或包含完整的JSON对象结构），请先识别这是一个JSON对象，然后从JSON对象的`"教育背景"`、`"教育经历"`或`"education_background"`字段中直接提取
    - **步骤1（第二优先级）**：如果结构化字段中没有，在原始文本中搜索教育相关关键词（"教育经历"、"教育背景"、"学历"等）
    - 步骤2：找到关键词后，将该关键词所在段落及其前后各2行作为教育信息区域
    - 步骤3：如果找不到明确的教育关键词，搜索学历等级关键词（"本科"、"硕士"等），找到后将其所在段落作为教育信息区域
 
 2. **提取最高学历**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
-     * 如果对象中有明确的键值对（如`"学历": "xxx"`、`"degree": "xxx"`），直接使用这些值
+     * 如果对象中有明确的键值对（如`"学历": "xxx"`、`"degree": "xxx"`、`"教育程度": "xxx"`、`"education": "xxx"`），直接使用这些值（**重要：当键名是"学历"、"degree"、"教育程度"、"education"时，必须提取其值作为highest_education字段**）
      * 如果对象中没有明确的键值对，但对象是数组或字符串格式，按照"学校，专业，学历"或"学历，学校，专业"等顺序识别
    - **步骤1（第二优先级）**：如果结构化字段中没有，在教育信息区域中搜索所有学历等级关键词
    - 步骤2：按照学历等级排序（博士 > 硕士 > 本科 > 专科 > 高中 > 初中），选择等级最高的
@@ -350,7 +684,7 @@ class AIExtractor:
 
 3. **提取学校名称**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
-     * 如果对象中有明确的键值对（如`"学校": "xxx"`、`"school": "xxx"`），直接使用这些值
+     * 如果对象中有明确的键值对（如`"学校": "xxx"`、`"school": "xxx"`、`"毕业院校": "xxx"`、`"院校": "xxx"`），直接使用这些值（**重要：当键名是"学校"、"school"、"毕业院校"、"院校"时，必须提取其值作为school字段**）
      * 如果对象中没有明确的键值对，但对象是数组或字符串格式，按照"学校，专业，学历"或"学历，学校，专业"等顺序识别：
        - 查找包含学校关键词的字符串（如"大学"、"学院"、"学校"等）
        - 如果找到学校关键词，提取包含该关键词的完整学校名称
@@ -373,7 +707,7 @@ class AIExtractor:
 
 4. **提取专业名称**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
-     * 如果对象中有明确的键值对（如`"专业": "xxx"`、`"major": "xxx"`），直接使用这些值
+     * 如果对象中有明确的键值对（如`"专业": "xxx"`、`"major": "xxx"`、`"专业名称": "xxx"`、`"所学专业": "xxx"`），直接使用这些值（**重要：当键名是"专业"、"major"、"专业名称"、"所学专业"时，必须提取其值作为major字段**）
      * 如果对象中没有明确的键值对，但对象是数组或字符串格式，按照"学校，专业，学历"或"学历，学校，专业"等顺序识别：
        - 在学校和学历之间查找专业信息
        - 专业通常是2-20个字符，不包含学历等级关键词
@@ -412,6 +746,40 @@ class AIExtractor:
      * 结果：school="北京大学", major="计算机科学与技术", highest_education="本科"
    - 示例3：原始文本中只有"本科"但没有明确的学校名称
      * 结果：highest_education="本科", school=null, major=null
+   - 示例4（完整JSON格式，结构化字段）：如果原始文本是完整的JSON对象，例如：
+     ```
+     {{
+       "教育经历": [
+         {{
+           "学校": "北京大学",
+           "专业": "计算机科学与技术",
+           "学历": "本科",
+           "时间": "2015-2019"
+         }}
+       ]
+     }}
+     ```
+     或
+     ```
+     {{
+       "教育背景": {{
+         "学校": "商洛学院",
+         "专业": "生物制药工程专业",
+         "学历": "本科"
+       }}
+     }}
+     ```
+     * **处理步骤（必须严格按照此步骤执行）**：
+       1. **首先识别**：原始文本是完整的JSON对象
+       2. **提取教育信息**：
+          - 如果JSON中有`"教育经历"`数组，从数组中提取最高学历对应的教育信息
+          - 如果JSON中有`"教育背景"`或`"education_background"`对象，直接从对象中提取
+       3. **提取字段**：
+          - 从对象中直接提取`"学历": "本科"` → highest_education="本科"（**注意：键名可能是"学历"、"degree"、"教育程度"、"education"等，都要识别**）
+          - 从对象中直接提取`"学校": "北京大学"` → school="北京大学"（**注意：键名可能是"学校"、"school"、"毕业院校"、"院校"等，都要识别**）
+          - 从对象中直接提取`"专业": "计算机科学与技术"` → major="计算机科学与技术"（**注意：键名可能是"专业"、"major"、"专业名称"、"所学专业"等，都要识别**）
+       4. **如果有多段教育经历**：选择学历等级最高的（博士 > 硕士 > 本科 > 专科 > 高中 > 初中）
+     * 最终结果：{{"highest_education": "本科", "school": "北京大学", "major": "计算机科学与技术"}}
 
 **工作经历提取规则（第三步，使用关键词定位法，非常重要）：**
 
@@ -419,48 +787,105 @@ class AIExtractor:
 1. **第一优先级**：从结构化字段中提取（如果存在）
 2. **第二优先级**：从关键词定位提取（如果结构化字段不存在或信息不完整）
 
-**关键词列表（用于定位信息位置）：**
-- 工作经历关键词：工作经历、工作经验、职业经历、任职经历、工作履历、工作、就职、任职、Work Experience、work experience、Employment、employment、Career、career、工作信息
-- 公司关键词：公司、集团、企业、中心、研究院、研究所、事务所、工作室、银行、医院、有限公司、股份有限公司、有限责任公司、Company、company、Corporation、corporation、律所、律师事务所
-- 岗位关键词：岗位、职位、职务、角色、任职、担任、负责、Position、position、Job、job、Role、role、职位名称
-- 时间关键词：时间、期间、Period、period、Duration、duration、工作期间
-
 **提取方法（优先从结构化字段，然后使用关键词定位法）：**
-1. **定位工作经历区域**：
+1. **定位工作经历区域（工作经历模块）**：
    - **步骤0（第一优先级）**：如果原始文本中包含结构化字段，优先从以下字段中提取：
      * `"工作经历": [ ... ]` 或 `"work_experience": [ ... ]`
      * 这些字段中的信息准确性最高，优先提取
-   - 步骤1：如果结构化字段中没有，在原始文本中搜索工作经历关键词（"工作经历"、"工作经验"等）
-   - 步骤2：找到关键词后，将该关键词所在段落及其后续所有段落作为工作经历区域
-   - 步骤3：如果找不到明确的工作经历关键词，搜索公司关键词，找到后将其所在段落作为工作经历区域
+     * **重要提示**：如果原始文本本身是完整的JSON格式（以`{{`开头和`}}`结尾，或包含完整的JSON对象结构），请先识别这是一个JSON对象，然后从JSON对象的`"工作经历"`或`"work_experience"`字段中直接提取
+     * 在JSON对象中，键名`"岗位"`、`"职位"`、`"position"`都表示职位名称（"岗位"等同于"职位"），应该同等处理和提取
+   - **步骤1（第二优先级）**：如果结构化字段中没有，从简历文本中定位"工作经历"区域：
+     * **搜索关键词**：
+       - 中文：工作经历、工作经验、职业经历、任职经历、工作履历、就职经历
+       - 英文：Work Experience、work experience、Employment、Career
+     * **识别方法**：
+       - 找到关键词后，将该关键词所在段落及其后续内容作为"工作经历模块"
+       - 如果找不到明确关键词，但文本中有时间格式（如"2019.02-2020.05"）配合公司关键词（如"公司"、"集团"等），也视为工作经历模块
+     * **重要规则**：
+       - **位置灵活性**：简历顺序可能不同，允许工作经历模块在"原始文本"的任意位置（可能在个人信息之前、之后，或在教育经历之前、之后等），需要在整个文本中搜索，不要局限于某个固定位置
+       - **重要注意**：不要将"教育经历"、"项目经历"、"实习经历"误认为工作经历模块（除非明确标注为工作经历）
 
-2. **识别工作经历条目**：
+2. **从工作经历模块中提取每条工作经历**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
      * 直接遍历数组中的每个对象，每个对象就是一条工作经历
      * 对于每个对象，按以下顺序提取：
-       a. 如果对象中有明确的键值对（如`"时间": "xxx"`、`"公司": "xxx"`、`"职位": "xxx"`），直接使用这些值
+       a. 如果对象中有明确的键值对（如`"时间": "xxx"`、`"公司": "xxx"`、`"职位": "xxx"`、`"岗位": "xxx"`、`"position": "xxx"`），直接使用这些值（**重要：当键名是"岗位"时，必须提取其值作为position字段，不要跳过。键名"岗位"、"职位"、"position"都表示职位名称，应该同等处理**）
        b. 如果对象中没有明确的键值对，但对象是数组或字符串格式，按照以下顺序识别：
-          - 顺序1："时间，公司，岗位"（如`["2019.02-2020.05", "陕西康华医药分公司", "储备干部"]`）
-          - 顺序2："公司，岗位，时间"（如`["陕西康华医药分公司", "储备干部", "2019.02-2020.05"]`）
-          - 顺序3："时间 公司 岗位"（如`"2019.02-2020.05 陕西康华医药分公司 储备干部"`）
-          - 顺序4："公司 岗位 时间"（如`"陕西康华医药分公司 储备干部 2019.02-2020.05"`）
+          - 顺序1："时间，公司，职位"（如`["2019.02-2020.05", "陕西康华医药分公司", "储备干部"]`）
+          - 顺序2："公司，职位，时间"（如`["陕西康华医药分公司", "储备干部", "2019.02-2020.05"]`）
+          - 顺序3："时间 公司 职位"（如`"2019.02-2020.05 陕西康华医药分公司 储备干部"`）
+          - 顺序4："公司 职位 时间"（如`"陕西康华医药分公司 储备干部 2019.02-2020.05"`）
        c. 识别规则：
           - 时间：查找时间格式（如"2019.02-2020.05"、"2019-2020"等）
           - 公司：查找包含公司关键词的字符串（如"公司"、"集团"等）
-          - 岗位：查找公司后面的内容，通常是2-20个字符
-   - **步骤1（第二优先级）**：如果结构化字段中没有，在工作经历区域中，逐行或逐段分析
-   - 步骤2：识别每条工作经历的起始标志：
-     * 时间格式（如"2019.02-2020.05"、"2019-2020"、"2025年至今"等）
-     * 公司名称（包含"公司"、"集团"、"企业"、"中心"、"研究院"、"事务所"、"律所"等后缀）
-     * 明确的段落分隔
-   - 步骤3：将每条工作经历作为独立条目处理
-   - 步骤4：注意不要遗漏工作经历，确保提取所有工作经历条目
-   - 步骤5：注意不要重复提取相同的工作经历（如果发现重复，只保留一条）
+          - 职位：查找公司后面的内容，通常是2-20个字符
+   - **步骤1（第二优先级）**：如果结构化字段中没有，从工作经历模块中，按"时间、公司、职位"为一组，提取每条工作经历：
+     * **分组原则**：以一组"时间、公司、职位"为一条工作经历
+     * **识别起始标志**：
+       - 时间格式（如"2019.02-2020.05"、"2019-2020"、"2025年至今"等）
+       - 段落分隔（空行或明显的段落边界）
+       - 新的公司名称出现
+     * **重要规则**：
+       - **跨行提取**：允许时间、公司、岗位不是连续行，可以在3行以内（包括当前行、下一行、下两行、下三行）进行跨行提取
+       - 例如：如果第1行是时间"2019.02-2020.05"，第2行是空行或描述，第3行是公司"陕西康华医药分公司"，第4行是职位"储备干部"，这仍然是一条完整的工作经历
+       - 如果时间、公司、职位之间的间隔超过3行，则视为不同的工作经历条目
+     * **提取字段**：
+       - **时间**：必需字段
+         * 格式：2019.02-2020.05、2019-2020、2018.07—2019.01、2019.02至2020.05、2025年至今等
+         * 提取 start_year（开始年份，如2019）和 end_year（结束年份，如2020；如果"至今"则为null）
+         * 如果时间在某一行，可以在该行及后续3行内查找对应的公司和职位
+       - **公司**：可选字段（可能为null）
+         * 识别包含公司关键词的字符串：公司、集团、企业、中心、研究院、事务所、律所、有限公司等
+         * 提取完整公司全称
+         * 如果找不到公司名称，返回null
+         * 特殊情况：备考、学习、培训等可能没有公司名称
+         * 如果时间在某一行，可以在该行及后续3行内查找对应的公司
+       - **职位**：可选字段（可能为null）
+         * 从公司名称后面或时间后面提取
+         * 如果找不到职位名称，返回null
+         * 特殊情况：备考、学习等可能没有职位名称
+         * 如果时间或公司在某一行，可以在该行及后续3行内查找对应的职位
+     * **特殊情况处理**：
+       - **只有时间，没有公司和职位**：
+         * 示例："2017.08-2018.06 描述：备考北京中医药大学中药化学研究生"
+         * 提取：{{"start_year": 2017, "end_year": 2018, "company": null, "position": null}}
+       - **有时间和公司，没有职位**：
+         * 示例："2020.07-2020.09 兼职考研机构助教老师"
+         * 提取：{{"start_year": 2020, "end_year": 2020, "company": "考研机构", "position": "助教老师"}}
+       - **有多个职位**：
+         * 示例："职位：储备干部、质量管理"
+         * 提取：{{"position": "储备干部、质量管理"}}（保留顿号分隔）
+       - **跨行提取示例**：
+         * 示例1（时间在第1行，公司在第3行，职位在第4行）：
+           ```
+           2019.02-2020.05
+           工作描述：负责质量管理
+           陕西康华医药分公司
+           储备干部、质量管理
+           ```
+           * 提取：{{"start_year": 2019, "end_year": 2020, "company": "陕西康华医药分公司", "position": "储备干部、质量管理"}}
+         * 示例2（时间在第1行，公司在第2行，职位在第3行）：
+           ```
+           2018.07—2019.01
+           陕西华森特保健公司
+           保健品广告策划
+           ```
+           * 提取：{{"start_year": 2018, "end_year": 2019, "company": "陕西华森特保健公司", "position": "保健品广告策划"}}
+         * 示例3（时间、公司、职位都在不同行，但都在3行以内）：
+           ```
+           2019.02-2020.05
+           陕西康华医药分公司
+           储备干部、质量管理
+           ```
+           * 提取：{{"start_year": 2019, "end_year": 2020, "company": "陕西康华医药分公司", "position": "储备干部、质量管理"}}
+     * **提取顺序**：
+       - 按时间倒序（最新的在前）
+       - 如果时间相同，按文本出现顺序
    - **重要**：不要将教育经历中的时间（如"2006/9-2009/7"、"2013.9-2016.6"、"2020年9月-2023年6月"）误认为是工作时间
-3. **提取时间信息**：
+3. **提取时间信息（必需字段）**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
      * 如果对象中有明确的键值对（如`"时间": "2019.02-2020.05"`、`"period": "2019-2020"`），直接使用这些值
-     * 如果对象中没有明确的键值对，按照"时间，公司，岗位"或"公司，岗位，时间"等顺序识别：
+     * 如果对象中没有明确的键值对，按照"时间，公司，职位"或"公司，职位，时间"等顺序识别：
        - 查找时间格式（如"2019.02-2020.05"、"2019-2020"等）
        - 如果找到时间格式，提取该时间
    - **步骤1（第二优先级）**：如果结构化字段中没有，在每条工作经历条目中搜索时间格式：
@@ -487,13 +912,18 @@ class AIExtractor:
    - 错误示例：不要提取"2006/9-2009/7 西安外事学院"中的2006-2009（这是教育时间，不是工作时间）
    - 错误示例：不要提取"2013.9-2016.6 实验中学"中的2013-2016（这是教育时间，不是工作时间）
 
-4. **提取公司名称**：
+4. **提取公司名称（可选字段，可能为null）**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
      * 如果对象中有明确的键值对（如`"公司": "xxx"`、`"company": "xxx"`、`"单位": "xxx"`），直接使用这些值
-     * 如果对象中没有明确的键值对，按照"时间，公司，岗位"或"公司，岗位，时间"等顺序识别：
+     * 如果对象中没有明确的键值对，按照"时间，公司，职位"或"公司，职位，时间"等顺序识别：
        - 查找包含公司关键词的字符串（如"公司"、"集团"、"企业"等）
        - 如果找到公司关键词，提取包含该关键词的完整公司名称
-   - **步骤1（第二优先级）**：如果结构化字段中没有，在每条工作经历条目中搜索公司关键词（"公司"、"集团"、"企业"、"中心"、"研究院"、"事务所"、"律所"、"律师事务所"等）
+   - **步骤1（第二优先级）**：如果结构化字段中没有，在每条工作经历条目中搜索公司关键词（"公司"、"集团"、"企业"、"中心"、"研究院"、"事务所"、"律所"、"律师事务所"、"有限公司"等）
+   - **重要**：
+     * 识别包含公司关键词的字符串：公司、集团、企业、中心、研究院、事务所、律所、有限公司等
+     * 提取完整公司全称
+     * 如果找不到公司名称，返回null
+     * 特殊情况：备考、学习、培训等可能没有公司名称
    - 步骤2：找到公司关键词后，提取包含该关键词的完整公司名称
    - 步骤3：验证提取的公司名称：
      * 通常包含"公司"、"集团"、"企业"、"中心"、"研究院"、"事务所"、"律师事务所"、"律所"等后缀
@@ -511,13 +941,18 @@ class AIExtractor:
    - 错误示例：不要提取"按时保质地满足公司"（这是工作描述，不是公司名称）
    - 错误示例：不要提取"上海仁联"（不完整，应为"上海仁联人力资源有限公司"）
 
-5. **提取岗位名称**：
+5. **提取职位名称（可选字段，可能为null）**：
    - **步骤0（第一优先级）**：如果从结构化字段中提取：
      * 如果对象中有明确的键值对（如`"职位": "xxx"`、`"position": "xxx"`、`"岗位": "xxx"`），直接使用这些值
-     * 如果对象中没有明确的键值对，按照"时间，公司，岗位"或"公司，岗位，时间"等顺序识别：
-       - 在时间、公司之后查找岗位信息
-       - 岗位通常是2-20个字符，不包含工作描述关键词
-   - **步骤1（第二优先级）**：如果结构化字段中没有，在每条工作经历条目中，优先从公司名称后面提取岗位信息
+     * 如果对象中没有明确的键值对，按照"时间，公司，职位"或"公司，职位，时间"等顺序识别：
+       - 在时间、公司之后查找职位信息
+       - 职位通常是2-20个字符，不包含工作描述关键词
+   - **步骤1（第二优先级）**：如果结构化字段中没有，在每条工作经历条目中，优先从公司名称后面或时间后面提取职位信息
+   - **重要**：
+     * 从公司名称后面或时间后面提取
+     * 如果找不到职位名称，返回null
+     * 特殊情况：备考、学习等可能没有职位名称
+     * 如果有多个职位用顿号"、"或逗号"，"分隔，请完整保留（如"储备干部、质量管理"）
    - 步骤2：搜索岗位关键词（"岗位"、"职位"、"担任"、"任职"、"职务"等），找到后提取关键词后面的内容
    - 步骤3：如果没有岗位关键词，提取公司名称后面的内容作为岗位候选
    - 步骤4：验证提取的岗位名称：
@@ -531,6 +966,7 @@ class AIExtractor:
    - 步骤5：如果找不到岗位信息，检查公司名称后面的内容，看是否符合岗位名称特征
    - 步骤6：如果仍找不到岗位信息，返回null
    - 示例：原始文本`"工作经历": [ {{ "职位": "市场营销" }} ]` → 提取"市场营销"
+   - 示例：原始文本`"工作经历": [ {{ "岗位": "市场营销" }} ]` → 提取"市场营销"
    - 示例：原始文本`"work_experience": [ {{ "position": "网络营销" }} ]` → 提取"网络营销"
    - 示例：原始文本"储备干部、质量管理" → 提取"储备干部、质量管理"（完整保留）
    - 示例：原始文本"软件工程师\n负责系统开发工作" → 提取"软件工程师"（不要提取"负责系统开发工作"）
@@ -539,34 +975,99 @@ class AIExtractor:
    - 错误示例：不要提取"描述 : 备考北京中医药大学中药化学研究生"（这是描述，不是岗位名称）
 
 6. **提取顺序**：
-   - 按照原始文本中的时间顺序，从最新到最旧（倒序）提取工作经历
-   - 如果时间相同，按照在文本中的出现顺序
+   - 按时间倒序（最新的在前）
+   - 如果时间相同，按文本出现顺序
 7. **完整示例**：
    - 示例1（结构化字段，有明确键值对）：原始文本`"工作经历": [ {{ "时间": "2019.02-2020.05", "公司": "陕西康华医药分公司", "职位": "储备干部、质量管理" }} ]`
      * 直接从结构化字段提取：time="2019.02-2020.05", company="陕西康华医药分公司", position="储备干部、质量管理"
      * 结果：{{"company": "陕西康华医药分公司", "position": "储备干部、质量管理", "start_year": 2019, "end_year": 2020}}
+   - 示例1a（结构化字段，使用"岗位"键名）：原始文本`"工作经历": [ {{ "时间": "2019.02-2020.05", "公司": "陕西康华医药分公司", "岗位": "储备干部、质量管理" }} ]`
+     * 直接从结构化字段提取：time="2019.02-2020.05", company="陕西康华医药分公司", position="储备干部、质量管理"
+     * 结果：{{"company": "陕西康华医药分公司", "position": "储备干部、质量管理", "start_year": 2019, "end_year": 2020}}
+   - 示例1b（完整JSON格式，使用"岗位"键名，"至今"时间格式）：如果原始文本是完整的JSON对象，例如：
+     ```
+     {{
+       "工作经历": [
+         {{
+           "公司": "西安博海新思迈企业管理咨询有限公司",
+           "时间": "2020.09-至今",
+           "岗位": "市场营销"
+         }},
+         {{
+           "公司": "西安毓秀企业文化传播有限公司",
+           "时间": "2018.12-2020.07",
+           "岗位": "网络营销"
+         }}
+       ]
+     }}
+     ```
+     * **处理步骤（必须严格按照此步骤执行）**：
+       1. **首先识别**：原始文本是完整的JSON对象
+       2. **提取工作经历数组**：从JSON对象的`"工作经历"`字段中提取数组
+       3. **遍历数组中的每个对象**：每个对象就是一条工作经历
+       4. **对于第一条工作经历**：
+          - 从对象中直接提取`"公司": "西安博海新思迈企业管理咨询有限公司"` → company="西安博海新思迈企业管理咨询有限公司"
+          - 从对象中直接提取`"时间": "2020.09-至今"` → start_year=2020, end_year=null（因为"至今"表示当前还在职）
+          - **关键步骤**：从对象中直接提取`"岗位": "市场营销"` → position="市场营销"（**注意：即使键名是"岗位"而不是"职位"，也必须提取其值**）
+       5. **对于第二条工作经历**：
+          - company="西安毓秀企业文化传播有限公司"
+          - start_year=2018, end_year=2020
+          - position="网络营销"（**同样：键名是"岗位"，必须提取**）
+     * 最终结果：{{"work_experience": [{{"company": "西安博海新思迈企业管理咨询有限公司", "position": "市场营销", "start_year": 2020, "end_year": null}}, {{"company": "西安毓秀企业文化传播有限公司", "position": "网络营销", "start_year": 2018, "end_year": 2020}}]}}
    - 示例2（结构化字段，无明确键值对，按顺序识别）：原始文本`"工作经历": [ ["2019.02-2020.05", "陕西康华医药分公司", "储备干部、质量管理"] ]`
-     * 按照"时间，公司，岗位"顺序识别：
+     * 按照"时间，公司，职位"顺序识别：
        - 第1个元素："2019.02-2020.05" → 时间
        - 第2个元素："陕西康华医药分公司" → 公司
-       - 第3个元素："储备干部、质量管理" → 岗位
+       - 第3个元素："储备干部、质量管理" → 职位
      * 结果：{{"company": "陕西康华医药分公司", "position": "储备干部、质量管理", "start_year": 2019, "end_year": 2020}}
    - 示例3（结构化字段，无明确键值对，字符串格式）：原始文本`"工作经历": [ "2019.02-2020.05 陕西康华医药分公司 储备干部、质量管理" ]`
-     * 按照"时间 公司 岗位"顺序识别：
+     * 按照"时间 公司 职位"顺序识别：
        - 找到时间格式："2019.02-2020.05" → 时间
        - 找到公司关键词："陕西康华医药分公司" → 公司
-       - 公司后面的内容："储备干部、质量管理" → 岗位
+       - 公司后面的内容："储备干部、质量管理" → 职位
      * 结果：{{"company": "陕西康华医药分公司", "position": "储备干部、质量管理", "start_year": 2019, "end_year": 2020}}
-   - 示例4（无结构化字段，从关键词提取）：原始文本"2018.07—2019.01 陕西华森特保健公司 保健品广告策划"
+   - 示例4（无结构化字段，从关键词提取，完整信息）：原始文本"2018.07—2019.01 陕西华森特保健公司 保健品广告策划"
      * 时间：找到"2018.07—2019.01" → start_year=2018, end_year=2019
      * 公司：找到"陕西华森特保健公司" → company="陕西华森特保健公司"
-     * 岗位：找到"保健品广告策划" → position="保健品广告策划"
+     * 职位：找到"保健品广告策划" → position="保健品广告策划"
      * 结果：{{"company": "陕西华森特保健公司", "position": "保健品广告策划", "start_year": 2018, "end_year": 2019}}
-   - 示例5（无结构化字段，从关键词提取）：原始文本"2016.9-2019.2 北京科技有限公司 软件工程师\n负责系统开发工作"
-     * 时间：找到"2016.9-2019.2" → start_year=2016, end_year=2019
-     * 公司：找到"北京科技有限公司" → company="北京科技有限公司"
-     * 岗位：找到"软件工程师" → position="软件工程师"（注意：不要提取"负责系统开发工作"）
-     * 结果：{{"company": "北京科技有限公司", "position": "软件工程师", "start_year": 2016, "end_year": 2019}}
+   - 示例5（无结构化字段，只有时间，没有公司和职位）：原始文本"2017.08-2018.06 描述：备考北京中医药大学中药化学研究生"
+     * 时间：找到"2017.08-2018.06" → start_year=2017, end_year=2018
+     * 公司：未找到公司关键词 → company=null
+     * 职位：未找到职位信息 → position=null
+     * 结果：{{"company": null, "position": null, "start_year": 2017, "end_year": 2018}}
+   - 示例6（无结构化字段，有时间和公司，没有职位）：原始文本"2020.07-2020.09 兼职考研机构助教老师"
+     * 时间：找到"2020.07-2020.09" → start_year=2020, end_year=2020
+     * 公司：找到"考研机构" → company="考研机构"
+     * 职位：找到"助教老师" → position="助教老师"
+     * 结果：{{"company": "考研机构", "position": "助教老师", "start_year": 2020, "end_year": 2020}}
+   - 示例7（无结构化字段，有多个职位）：原始文本"2019.02-2020.05 陕西康华医药分公司 储备干部、质量管理"
+     * 时间：找到"2019.02-2020.05" → start_year=2019, end_year=2020
+     * 公司：找到"陕西康华医药分公司" → company="陕西康华医药分公司"
+     * 职位：找到"储备干部、质量管理" → position="储备干部、质量管理"（保留顿号分隔）
+     * 结果：{{"company": "陕西康华医药分公司", "position": "储备干部、质量管理", "start_year": 2019, "end_year": 2020}}
+   - 示例8（跨行提取，时间在第1行，公司在第3行，职位在第4行）：
+     * 原始文本：
+       ```
+       2019.02-2020.05
+       工作描述：负责质量管理
+       陕西康华医药分公司
+       储备干部、质量管理
+       ```
+     * 时间：在第1行找到"2019.02-2020.05" → start_year=2019, end_year=2020
+     * 公司：在第3行（时间所在行的后续3行内）找到"陕西康华医药分公司" → company="陕西康华医药分公司"
+     * 职位：在第4行（时间所在行的后续3行内）找到"储备干部、质量管理" → position="储备干部、质量管理"
+     * 结果：{{"company": "陕西康华医药分公司", "position": "储备干部、质量管理", "start_year": 2019, "end_year": 2020}}
+   - 示例9（工作经历模块在原始文本的任意位置，如个人信息之后）：
+     * 原始文本：
+       ```
+       姓名：张三
+       性别：男
+       工作经历
+       2019.02-2020.05 陕西康华医药分公司 储备干部
+       ```
+     * 定位：在整个文本中搜索"工作经历"关键词，找到后将其所在段落及其后续内容作为工作经历模块
+     * 提取：{{"company": "陕西康华医药分公司", "position": "储备干部", "start_year": 2019, "end_year": 2020}}
 
 **常见错误避免（重要，必须严格遵守）：**
 1. **姓名提取错误避免**：
@@ -613,6 +1114,18 @@ class AIExtractor:
   - position: 职位名称（从原始文本中提取，如果有多个职位用顿号分隔，必须准确）
   - start_year: 开始年份（从原始文本中提取，整数，如2019，必须准确）
   - end_year: 结束年份（从原始文本中提取，整数，如2020，如果至今则返回null，必须准确）
+
+**重要：原始文本格式说明：**
+- 如果原始文本是完整的JSON格式（以`{{`开头和`}}`结尾，或包含完整的JSON对象结构），请先识别这是一个JSON对象
+- 然后从JSON对象的结构化字段中直接提取信息：
+  - **工作经历**：从`"工作经历": [ ... ]`或`"work_experience": [ ... ]`中提取`"时间"`、`"公司"`、`"岗位"`、`"职位"`等字段
+  - **教育经历**：从`"教育经历": [ ... ]`、`"教育背景": { ... }`或`"education_background": [ ... ]`中提取`"学校"`、`"专业"`、`"学历"`等字段
+- 在JSON对象中：
+  - 键名`"岗位"`、`"职位"`、`"position"`都表示职位名称（"岗位"等同于"职位"），应该同等处理和提取
+  - 键名`"学校"`、`"school"`、`"毕业院校"`、`"院校"`都表示学校名称，应该同等处理和提取
+  - 键名`"专业"`、`"major"`、`"专业名称"`、`"所学专业"`都表示专业名称，应该同等处理和提取
+  - 键名`"学历"`、`"degree"`、`"教育程度"`、`"education"`都表示学历等级，应该同等处理和提取
+- 如果原始文本不是JSON格式，则按照关键词定位法提取
 
 **原始文本（以下文本是从简历文件中直接提取的原始文本，准确性较高，请严格按照此文本进行提取）：**
 {text}
