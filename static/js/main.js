@@ -6,6 +6,7 @@ let sortBy = 'upload_time';
 let sortOrder = 'desc';
 let selectedResumes = new Set();
 let currentResumeData = null;
+let aiConfigStatus = null; // AI配置状态缓存
 
 function escapeHtml(value) {
     if (value === null || value === undefined) {
@@ -35,6 +36,11 @@ document.addEventListener('DOMContentLoaded', function() {
         // 默认显示上传模块
         switchModule('upload');
     }
+    
+    // 初始化时检查AI状态
+    checkAIStatus().then(() => {
+        updateAIStatusDisplay();
+    });
 });
 
 // 初始化上传功能
@@ -163,7 +169,12 @@ function loadResumes(page = 1) {
                         selectedResumes.delete(id);
                     }
                 });
-                displayResumes(data.data);
+                // 先检查AI状态，然后显示简历列表
+                checkAIStatus().then(() => {
+                    displayResumes(data.data);
+                }).catch(() => {
+                    displayResumes(data.data);
+                });
                 totalPages = Math.ceil(data.total / perPage);
                 updatePagination();
             }
@@ -208,6 +219,7 @@ function displayResumes(resumes) {
         }
     }
     
+    // 渲染简历行
     tbody.innerHTML = resumes.map(resume => {
         const isSelected = selectedResumes.has(resume.id);
         // 计算工龄：今年-最早工作年份
@@ -461,7 +473,7 @@ function displayDetail(resume) {
                     ${educationOptions}
                 </select>
             </label>
-            <label>学校
+            <label>毕业学校
                 <input id="editSchool" type="text" value="${escapeHtml(resume.school || '')}">
             </label>
             <label>专业
@@ -489,7 +501,7 @@ function displayDetail(resume) {
                     return experiences.map((exp, idx) => `
                         <div class="work-experience-item">
                             <div class="work-exp-field">
-                                <div class="work-exp-label">公司</div>
+                                <div class="work-exp-label">公司名称</div>
                                 <input type="text" id="expCompany${idx}" value="${escapeHtml(exp.company || '')}" readonly>
                             </div>
                             <div class="work-exp-field">
@@ -530,7 +542,7 @@ function displayDetail(resume) {
                             <thead>
                                 <tr>
                                     <th>序号</th>
-                                    <th>公司</th>
+                                    <th>公司名称</th>
                                     <th>岗位</th>
                                     <th>开始年份</th>
                                     <th>结束年份</th>
@@ -598,7 +610,7 @@ function addWorkExperience() {
                     <thead>
                         <tr>
                             <th>序号</th>
-                            <th>公司</th>
+                            <th>公司名称</th>
                             <th>岗位</th>
                             <th>开始年份</th>
                             <th>结束年份</th>
@@ -771,7 +783,7 @@ function syncToLatestWorkExperience() {
             contentContainer.innerHTML = latestExperiences.map((exp, idx) => `
                 <div class="work-experience-item">
                     <div class="work-exp-field">
-                        <div class="work-exp-label">公司</div>
+                        <div class="work-exp-label">公司名称</div>
                         <input type="text" id="expCompany${idx}" value="${escapeHtml(exp.company || '')}" readonly>
                     </div>
                     <div class="work-exp-field">
@@ -1168,7 +1180,7 @@ function saveAIConfig() {
     .then(data => {
         const statusDiv = document.getElementById('aiConfigStatus');
         if (data.success) {
-            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
+            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '，配置已自动生效</span>';
             // 保存到本地存储
             if (config.ai_api_key) {
                 localStorage.setItem('ai_api_key', config.ai_api_key);
@@ -1178,6 +1190,12 @@ function saveAIConfig() {
                 ai_model: config.ai_model,
                 ai_api_base: config.ai_api_base
             }));
+            // 保存后自动使用，不需要重新连接
+            updateAIConfig();
+            // 更新简历列表中的AI状态显示
+            checkAIStatus().then(() => {
+                updateAIStatusDisplay();
+            });
         } else {
             statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
         }
@@ -1271,6 +1289,10 @@ function switchModule(moduleName) {
             loadResumesForAnalysis();
         } else if (moduleName === 'upload') {
             loadResumes();
+            // 更新AI状态显示
+            checkAIStatus().then(() => {
+                updateAIStatusDisplay();
+            });
         } else if (moduleName === 'settings') {
             loadAIConfig();
         } else if (moduleName === 'positions') {
@@ -1334,9 +1356,37 @@ function displayResumeSelector(resumes) {
         const status = resume.parse_status || 'pending';
         const statusClass = status === 'success' ? 'success' : status === 'processing' ? 'processing' : 'pending';
         
+        // 获取匹配度色块
+        let matchBadgeHtml = '';
+        if (resume.applied_position) {
+            const cacheKey = `${resume.id}_${resume.applied_position}`;
+            const matchAnalysis = matchAnalysisCache[cacheKey];
+            if (matchAnalysis && matchAnalysis.match_score !== undefined) {
+                const score = matchAnalysis.match_score;
+                let colorClass = 'match-gray';
+                if (score >= 80) {
+                    colorClass = 'match-green';
+                } else if (score >= 60) {
+                    colorClass = 'match-orange';
+                } else {
+                    colorClass = 'match-red';
+                }
+                matchBadgeHtml = `<span class="match-badge ${colorClass}" title="匹配度: ${score}分"></span>`;
+            } else {
+                // 未解析
+                matchBadgeHtml = '<span class="match-badge match-gray" title="未解析"></span>';
+            }
+        } else {
+            // 未填写应聘岗位
+            matchBadgeHtml = '<span class="match-badge match-gray" title="未填写应聘岗位"></span>';
+        }
+        
         return `
             <div class="resume-selector-item" onclick="selectResumeForAnalysis(${resume.id})" data-resume-id="${resume.id}">
-                <div class="resume-selector-item-name">${name}</div>
+                <div class="resume-selector-item-header">
+                    <div class="resume-selector-item-name">${name}</div>
+                    ${matchBadgeHtml}
+                </div>
                 <div class="resume-selector-item-info">${school} | ${major}</div>
                 <div class="resume-selector-item-info">应聘岗位：${appliedPosition}</div>
                 <div class="resume-selector-item-info" style="margin-top: 4px;">
@@ -1431,8 +1481,38 @@ function displayAnalysisDetail(resume) {
         workExpHtml += '</ul>';
     }
     
-    detailDiv.innerHTML = `
+    // 加载岗位列表用于下拉选择
+    loadPositionsForAnalysis().then(positions => {
+        const positionOptions = positions.map(pos => 
+            `<option value="${escapeHtml(pos.position_name)}" ${resume.applied_position === pos.position_name ? 'selected' : ''}>${escapeHtml(pos.position_name)}</option>`
+        ).join('');
+        const positionSelectHtml = `
+            <option value="">请选择岗位</option>
+            ${positionOptions}
+        `;
+        
+        detailDiv.innerHTML = `
         <div class="analysis-detail-content">
+            <div class="detail-section">
+                <h3>应聘岗位</h3>
+                <div class="detail-grid">
+                    <div class="detail-item" style="grid-column: 1 / -1;">
+                        <label>应聘岗位：</label>
+                        <select id="analysisAppliedPosition" class="form-select" style="width: 300px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;" onchange="onAppliedPositionChange(${resume.id})">
+                            ${positionSelectHtml}
+                        </select>
+                        <button class="btn btn-primary" onclick="saveAppliedPosition(${resume.id})" style="margin-left: 10px; padding: 8px 15px;">保存</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="detail-section">
+                <h3>简历匹配度分析</h3>
+                <div id="matchAnalysisResult" class="match-analysis-result">
+                    <div class="loading">正在分析中...</div>
+                </div>
+            </div>
+            
             <div class="detail-section">
                 <h3>基本信息</h3>
                 <div class="detail-grid">
@@ -1471,7 +1551,7 @@ function displayAnalysisDetail(resume) {
                         <span>${escapeHtml(resume.highest_education || '-')}</span>
                     </div>
                     <div class="detail-item">
-                        <label>学校：</label>
+                        <label>毕业学校：</label>
                         <span>${escapeHtml(resume.school || '-')}</span>
                     </div>
                     <div class="detail-item">
@@ -1500,6 +1580,318 @@ function displayAnalysisDetail(resume) {
             </div>
         </div>
     `;
+        
+        // 如果有应聘岗位，检查是否有缓存的分析结果
+        if (resume.applied_position) {
+            const cacheKey = `${resume.id}_${resume.applied_position}`;
+            if (matchAnalysisCache[cacheKey]) {
+                // 使用缓存的分析结果
+                displayMatchAnalysis(matchAnalysisCache[cacheKey]);
+            } else {
+                // 没有缓存，进行新的分析
+                analyzeResumeMatch(resume.id, resume.applied_position);
+            }
+        } else {
+            document.getElementById('matchAnalysisResult').innerHTML = '<div class="empty-state"><p>请先选择应聘岗位，然后系统将自动进行匹配度分析</p></div>';
+        }
+    });
+}
+
+// 加载岗位列表用于分析模块
+function loadPositionsForAnalysis() {
+    return fetch('/api/positions')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                return data.data;
+            } else {
+                return [];
+            }
+        })
+        .catch(error => {
+            console.error('加载岗位列表失败:', error);
+            return [];
+        });
+}
+
+// 应聘岗位变化时的处理
+function onAppliedPositionChange(resumeId) {
+    const select = document.getElementById('analysisAppliedPosition');
+    const appliedPosition = select.value;
+    
+    if (appliedPosition) {
+        // 检查是否有缓存的分析结果
+        const cacheKey = `${resumeId}_${appliedPosition}`;
+        if (matchAnalysisCache[cacheKey]) {
+            // 使用缓存的分析结果
+            displayMatchAnalysis(matchAnalysisCache[cacheKey]);
+        } else {
+            // 没有缓存，进行新的分析
+            analyzeResumeMatch(resumeId, appliedPosition);
+        }
+    } else {
+        document.getElementById('matchAnalysisResult').innerHTML = '<div class="empty-state"><p>请选择应聘岗位后，系统将自动进行匹配度分析</p></div>';
+    }
+}
+
+// 保存应聘岗位
+function saveAppliedPosition(resumeId) {
+    const select = document.getElementById('analysisAppliedPosition');
+    const appliedPosition = select.value.trim();
+    
+    fetch(`/api/resumes/${resumeId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            applied_position: appliedPosition || null
+        })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('应聘岗位保存成功');
+            // 如果有岗位，检查是否有缓存的分析结果
+            if (appliedPosition) {
+                const cacheKey = `${resumeId}_${appliedPosition}`;
+                if (matchAnalysisCache[cacheKey]) {
+                    // 使用缓存的分析结果
+                    displayMatchAnalysis(matchAnalysisCache[cacheKey]);
+                } else {
+                    // 没有缓存，进行新的分析
+                    analyzeResumeMatch(resumeId, appliedPosition);
+                }
+            }
+        } else {
+            alert('保存失败: ' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('保存应聘岗位失败:', error);
+        alert('保存失败，请重试');
+    });
+}
+
+// 分析简历匹配度
+function analyzeResumeMatch(resumeId, appliedPosition) {
+    const resultDiv = document.getElementById('matchAnalysisResult');
+    if (!resultDiv) {
+        return;
+    }
+    
+    resultDiv.innerHTML = '<div class="loading">正在分析中，请稍候...</div>';
+    
+    fetch(`/api/resumes/${resumeId}/match-analysis`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            applied_position: appliedPosition
+        })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            // 缓存分析结果
+            const cacheKey = `${resumeId}_${appliedPosition}`;
+            matchAnalysisCache[cacheKey] = result.data;
+            // 显示分析结果
+            displayMatchAnalysis(result.data);
+            // 更新简历选择卡片中的匹配度色块
+            updateResumeSelectorMatchBadge(resumeId, appliedPosition, result.data.match_score);
+        } else {
+            resultDiv.innerHTML = `<div class="error">分析失败: ${result.message || '未知错误'}</div>`;
+        }
+    })
+    .catch(error => {
+        console.error('分析简历匹配度失败:', error);
+        resultDiv.innerHTML = '<div class="error">分析失败，请检查AI配置是否正确</div>';
+    });
+}
+
+// 显示匹配度分析结果
+function displayMatchAnalysis(analysisData) {
+    const resultDiv = document.getElementById('matchAnalysisResult');
+    if (!resultDiv) {
+        return;
+    }
+    
+    const matchScore = analysisData.match_score || 0;
+    const matchLevel = analysisData.match_level || '未知';
+    const strengths = analysisData.strengths || [];
+    const weaknesses = analysisData.weaknesses || [];
+    const suggestions = analysisData.suggestions || [];
+    const detailedAnalysis = analysisData.detailed_analysis || '';
+    
+    let html = `
+        <div class="match-analysis-content">
+            <div class="match-score-section">
+                <div class="match-score-circle" style="background: ${getScoreColor(matchScore)}">
+                    <div class="match-score-value">${matchScore}</div>
+                    <div class="match-score-label">匹配度</div>
+                </div>
+                <div class="match-level-badge match-level-${matchLevel.toLowerCase()}">${matchLevel}</div>
+            </div>
+            
+            ${detailedAnalysis ? `
+            <div class="match-analysis-text">
+                <h4>详细分析</h4>
+                <div class="analysis-text-content">${escapeHtml(detailedAnalysis).replace(/\n/g, '<br>')}</div>
+            </div>
+            ` : ''}
+            
+            ${strengths.length > 0 ? `
+            <div class="match-strengths">
+                <h4>优势匹配点</h4>
+                <ul>
+                    ${strengths.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
+                </ul>
+            </div>
+            ` : ''}
+            
+            ${weaknesses.length > 0 ? `
+            <div class="match-weaknesses">
+                <h4>不足匹配点</h4>
+                <ul>
+                    ${weaknesses.map(w => `<li>${escapeHtml(w)}</li>`).join('')}
+                </ul>
+            </div>
+            ` : ''}
+            
+            ${suggestions.length > 0 ? `
+            <div class="match-suggestions">
+                <h4>改进建议</h4>
+                <ul>
+                    ${suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
+                </ul>
+            </div>
+            ` : ''}
+        </div>
+    `;
+    
+    resultDiv.innerHTML = html;
+}
+
+// 根据分数获取颜色
+function getScoreColor(score) {
+    if (score >= 80) return '#52c41a'; // 绿色
+    if (score >= 60) return '#faad14'; // 橙色
+    return '#ff4d4f'; // 红色
+}
+
+// 根据分数获取颜色类名
+function getScoreColorClass(score) {
+    if (score >= 80) return 'match-green';
+    if (score >= 60) return 'match-orange';
+    return 'match-red';
+}
+
+// 更新简历选择卡片中的匹配度色块
+function updateResumeSelectorMatchBadge(resumeId, appliedPosition, matchScore) {
+    const resumeItem = document.querySelector(`[data-resume-id="${resumeId}"]`);
+    if (!resumeItem) {
+        return; // 如果简历卡片不在当前显示的列表中，不更新
+    }
+    
+    const header = resumeItem.querySelector('.resume-selector-item-header');
+    if (!header) {
+        return;
+    }
+    
+    // 查找或创建匹配度色块
+    let badge = header.querySelector('.match-badge');
+    if (!badge) {
+        // 如果没有色块，创建一个
+        badge = document.createElement('span');
+        badge.className = 'match-badge';
+        header.appendChild(badge);
+    }
+    
+    // 更新色块样式和提示
+    if (matchScore !== undefined && matchScore !== null) {
+        badge.className = `match-badge ${getScoreColorClass(matchScore)}`;
+        badge.title = `匹配度: ${matchScore}分`;
+    } else {
+        badge.className = 'match-badge match-gray';
+        badge.title = '未解析';
+    }
+}
+
+// 检查AI配置状态
+function checkAIStatus() {
+    return new Promise((resolve) => {
+        // 先从本地存储获取
+        const localConfig = localStorage.getItem('ai_config');
+        const localApiKey = localStorage.getItem('ai_api_key');
+        
+        // 然后从后端获取最新状态
+        fetch('/api/ai/config')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const config = data.data;
+                    // 使用后端返回的ai_available状态，或检查本地存储
+                    const isEnabled = config.ai_available !== undefined 
+                        ? config.ai_available 
+                        : (config.ai_enabled && (localApiKey || config.ai_enabled));
+                    
+                    aiConfigStatus = {
+                        enabled: isEnabled,
+                        hasApiKey: !!localApiKey || config.ai_available,
+                        aiEnabled: config.ai_enabled
+                    };
+                    
+                    resolve();
+                } else {
+                    // 使用本地存储的状态
+                    const isEnabled = localConfig && localApiKey;
+                    aiConfigStatus = {
+                        enabled: isEnabled,
+                        hasApiKey: !!localApiKey,
+                        aiEnabled: false
+                    };
+                    resolve();
+                }
+            })
+            .catch(error => {
+                console.error('检查AI配置状态失败:', error);
+                // 使用本地存储的状态
+                const isEnabled = localConfig && localApiKey;
+                aiConfigStatus = {
+                    enabled: isEnabled,
+                    hasApiKey: !!localApiKey,
+                    aiEnabled: false
+                };
+                resolve();
+            });
+    });
+}
+
+// 获取AI状态显示
+function getAIStatusDisplay() {
+    if (aiConfigStatus === null) {
+        // 如果还没有检查，先使用本地存储判断
+        const localConfig = localStorage.getItem('ai_config');
+        const localApiKey = localStorage.getItem('ai_api_key');
+        const isEnabled = localConfig && localApiKey;
+        return isEnabled 
+            ? '<span class="ai-status-enabled">AI解析已启动</span>'
+            : '<span class="ai-status-disabled">AI解析未启动</span>';
+    }
+    
+    return aiConfigStatus.enabled
+        ? '<span class="ai-status-enabled">AI解析已启动</span>'
+        : '<span class="ai-status-disabled">AI解析未启动</span>';
+}
+
+// 更新标题行的AI状态显示
+function updateAIStatusDisplay() {
+    const statusHeader = document.getElementById('aiStatusHeader');
+    if (statusHeader) {
+        statusHeader.innerHTML = getAIStatusDisplay();
+    }
 }
 
 // 处理浏览器前进后退
@@ -1511,6 +1903,9 @@ window.addEventListener('popstate', function(event) {
 
 // ==================== 岗位目录功能 ====================
 let currentPositionId = null;
+
+// ==================== 简历匹配度分析缓存 ====================
+let matchAnalysisCache = {}; // 缓存格式: { 'resumeId_positionName': analysisData }
 
 // 加载岗位列表
 function loadPositions() {

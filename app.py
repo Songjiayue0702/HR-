@@ -80,8 +80,13 @@ def process_resume_async(resume_id, file_path):
             except Exception as e:
                 print(f"AI文本优化失败（模型: {ai_model}），使用原始文本: {e}")
         
-        # 保存原始文本和优化后的文本
+        # 保存原始文本（优先保存优化后的文本，如果没有优化则保存原始文本）
+        # 注意：raw_text字段存储的是用于信息提取的文本（可能是优化后的）
+        # 如果需要保存真正的原始文本，可以添加新字段
         resume.raw_text = text
+        
+        # 如果使用了AI优化，原始文本和优化后的文本都保存
+        # 但为了信息提取准确性，使用优化后的文本进行提取
         
         # 规则提取
         extractor = InfoExtractor()
@@ -478,10 +483,16 @@ def export_batch():
 @app.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
     """获取AI配置（不返回密钥）"""
+    ai_enabled = app.config.get('AI_ENABLED', True)
+    ai_api_key = app.config.get('AI_API_KEY', '')
+    # 检查AI是否真正可用（启用且有API密钥）
+    ai_available = ai_enabled and bool(ai_api_key)
+    
     return jsonify({
         'success': True,
         'data': {
-            'ai_enabled': app.config.get('AI_ENABLED', True),
+            'ai_enabled': ai_enabled,
+            'ai_available': ai_available,  # 新增：AI是否真正可用
             'ai_model': app.config.get('AI_MODEL', 'gpt-3.5-turbo'),
             'ai_api_base': app.config.get('AI_API_BASE', ''),
             'ai_models': app.config.get('AI_MODELS', [])
@@ -709,6 +720,153 @@ def delete_position(position_id):
         return jsonify({
             'success': False,
             'message': f'删除岗位失败: {str(e)}'
+        }), 500
+
+@app.route('/api/resumes/<int:resume_id>/match-analysis', methods=['POST'])
+def analyze_resume_match(resume_id):
+    """分析简历与岗位的匹配度"""
+    try:
+        data = request.json
+        applied_position = data.get('applied_position', '').strip()
+        
+        if not applied_position:
+            return jsonify({
+                'success': False,
+                'message': '请先选择应聘岗位'
+            }), 400
+        
+        # 获取简历信息
+        session = get_db_session()
+        resume = session.query(Resume).filter(Resume.id == resume_id).first()
+        if not resume:
+            session.close()
+            return jsonify({
+                'success': False,
+                'message': '简历不存在'
+            }), 404
+        
+        # 获取岗位信息
+        position = session.query(Position).filter(Position.position_name == applied_position).first()
+        if not position:
+            session.close()
+            return jsonify({
+                'success': False,
+                'message': '岗位不存在，请先在岗位目录中添加该岗位'
+            }), 404
+        
+        session.close()
+        
+        # 检查AI配置
+        ai_enabled = app.config.get('AI_ENABLED', True)
+        ai_api_key = app.config.get('AI_API_KEY', '')
+        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+        ai_api_base = app.config.get('AI_API_BASE', '')
+        
+        if not ai_enabled or not ai_api_key:
+            return jsonify({
+                'success': False,
+                'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'
+            }), 400
+        
+        # 使用AI进行匹配度分析
+        from utils.ai_extractor import AIExtractor
+        ai_extractor = AIExtractor(
+            api_key=ai_api_key,
+            api_base=ai_api_base if ai_api_base else None,
+            model=ai_model
+        )
+        
+        # 构建分析提示
+        resume_info = f"""
+姓名：{resume.name or '未知'}
+性别：{resume.gender or '未知'}
+年龄：{resume.age or '未知'}
+学历：{resume.highest_education or '未知'}
+毕业学校：{resume.school or '未知'}
+专业：{resume.major or '未知'}
+工龄：{resume.earliest_work_year and (datetime.now().year - resume.earliest_work_year) or '未知'}年
+工作经历：{json.dumps(resume.work_experience or [], ensure_ascii=False, indent=2)}
+"""
+        
+        position_info = f"""
+岗位名称：{position.position_name}
+工作内容：{position.work_content or '未填写'}
+任职资格：{position.job_requirements or '未填写'}
+核心需求：{position.core_requirements or '未填写'}
+"""
+        
+        prompt = f"""请分析以下简历与岗位的匹配度，并给出详细的分析报告。
+
+【简历信息】
+{resume_info}
+
+【岗位要求】
+{position_info}
+
+请从以下维度进行分析：
+1. 教育背景匹配度（学历、学校、专业）
+2. 工作经验匹配度（工作年限、工作内容、岗位相关性）
+3. 技能匹配度（根据工作经历推断的技能）
+4. 综合匹配度评分（0-100分）
+
+请以JSON格式返回分析结果，格式如下：
+{{
+    "match_score": 85,
+    "match_level": "高度匹配",
+    "detailed_analysis": "详细的分析说明...",
+    "strengths": ["优势1", "优势2"],
+    "weaknesses": ["不足1", "不足2"],
+    "suggestions": ["建议1", "建议2"]
+}}
+
+其中：
+- match_score: 匹配度分数（0-100）
+- match_level: 匹配等级（高度匹配/中等匹配/低度匹配）
+- detailed_analysis: 详细分析说明（200-500字）
+- strengths: 优势匹配点列表
+- weaknesses: 不足匹配点列表
+- suggestions: 改进建议列表
+
+请只返回JSON格式，不要包含其他文字说明。"""
+        
+        try:
+            response_text = ai_extractor._call_ai_api(prompt)
+            
+            # 尝试解析JSON响应
+            try:
+                # 提取JSON部分
+                import re
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    analysis_result = json.loads(json_match.group())
+                else:
+                    # 如果找不到JSON，尝试直接解析
+                    analysis_result = json.loads(response_text)
+            except json.JSONDecodeError:
+                # 如果解析失败，返回一个默认结构
+                analysis_result = {
+                    'match_score': 50,
+                    'match_level': '中等匹配',
+                    'detailed_analysis': response_text[:500] if len(response_text) > 500 else response_text,
+                    'strengths': [],
+                    'weaknesses': [],
+                    'suggestions': []
+                }
+            
+            return jsonify({
+                'success': True,
+                'data': analysis_result
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'AI分析失败: {str(e)}'
+            }), 500
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'分析失败: {str(e)}'
         }), 500
 
 if __name__ == '__main__':

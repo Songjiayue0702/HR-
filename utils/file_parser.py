@@ -387,7 +387,42 @@ def extract_text_from_pdf(file_path):
             total_pages = len(pdf_reader.pages)
             
             for page_num, page in enumerate(pdf_reader.pages, 1):
-                page_text = page.extract_text()
+                # 尝试多种提取方法，确保获取完整文本
+                page_text = ""
+                
+                # 方法1：标准提取
+                try:
+                    page_text = page.extract_text()
+                    # 如果提取结果为空或过短，尝试其他方法
+                    if not page_text or len(page_text.strip()) < 10:
+                        # 方法2：尝试使用PyMuPDF（如果可用）作为备选
+                        try:
+                            import fitz  # PyMuPDF
+                            pdf_doc = fitz.open(file_path)
+                            if page_num <= len(pdf_doc):
+                                page_obj = pdf_doc[page_num - 1]
+                                page_text_pymupdf = page_obj.get_text()
+                                if page_text_pymupdf and len(page_text_pymupdf.strip()) > len(page_text.strip() if page_text else ""):
+                                    page_text = page_text_pymupdf
+                                    print(f"页面 {page_num} 使用PyMuPDF提取，文本长度: {len(page_text)}")
+                            pdf_doc.close()
+                        except Exception as e:
+                            # PyMuPDF不可用或提取失败，继续使用标准方法
+                            pass
+                except Exception as e:
+                    print(f"页面 {page_num} 标准提取失败: {e}")
+                    # 尝试使用PyMuPDF作为备选
+                    try:
+                        import fitz  # PyMuPDF
+                        pdf_doc = fitz.open(file_path)
+                        if page_num <= len(pdf_doc):
+                            page_obj = pdf_doc[page_num - 1]
+                            page_text = page_obj.get_text()
+                            print(f"页面 {page_num} 使用PyMuPDF提取（标准方法失败），文本长度: {len(page_text)}")
+                        pdf_doc.close()
+                    except Exception as e2:
+                        print(f"页面 {page_num} PyMuPDF提取也失败: {e2}")
+                
                 if page_text and isinstance(page_text, str):
                     # 清理每页文本，但保持基本结构
                     page_text_cleaned = page_text.strip()
@@ -502,12 +537,33 @@ def extract_text_from_word(file_path):
             for row in table.rows:
                 row_text = []
                 for cell in row.cells:
-                    cell_text = cell.text.strip()
+                    # 提取单元格中的所有段落文本
+                    cell_text = ""
+                    for para in cell.paragraphs:
+                        para_text = para.text.strip()
+                        if para_text:
+                            cell_text += para_text + " "
+                    cell_text = cell_text.strip()
                     if cell_text:
                         row_text.append(cell_text)
                 if row_text:
                     # 使用空格分隔，保持表格内容的可读性
                     text += " ".join(row_text) + "\n"
+        
+        # 尝试提取文本框和形状中的文本（可能包含重要信息）
+        try:
+            from docx.oxml.ns import qn
+            from docx.oxml import OxmlElement
+            # 遍历文档中的所有形状和文本框
+            for element in doc.element.body.iter():
+                # 查找文本框（textbox）
+                if element.tag.endswith('textbox'):
+                    for text_elem in element.iter():
+                        if text_elem.text and text_elem.text.strip():
+                            text += text_elem.text.strip() + "\n"
+        except Exception as e:
+            # 文本框提取失败不影响主流程
+            pass
         
         # 尝试提取页眉和页脚（可能包含重要信息）
         try:

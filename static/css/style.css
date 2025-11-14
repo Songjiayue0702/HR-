@@ -1137,3 +1137,199 @@ input[readonly] {
     background-color: #c0392b;
 }
 
+/* 简历匹配度分析样式 */
+.match-analysis-result {
+    padding: 20px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    margin-top: 15px;
+}
+
+.match-analysis-content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.match-score-section {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.match-score-circle {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
+}
+
+.match-score-value {
+    font-size: 36px;
+    line-height: 1;
+}
+
+.match-score-label {
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+.match-level-badge {
+    padding: 8px 16px;
+    border-radius: 20px;
+    font-size: 16px;
+    font-weight: bold;
+    color: white;
+}
+
+.match-level-高度匹配 {
+    background-color: #52c41a;
+}
+
+.match-level-中等匹配 {
+    background-color: #faad14;
+}
+
+.match-level-低度匹配 {
+    background-color: #ff4d4f;
+}
+
+.match-analysis-text {
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.match-analysis-text h4 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    color: #333;
+}
+
+.analysis-text-content {
+    font-size: 14px;
+    line-height: 1.8;
+    color: #666;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+.match-strengths,
+.match-weaknesses,
+.match-suggestions {
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.match-strengths h4 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    color: #52c41a;
+}
+
+.match-weaknesses h4 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    color: #ff4d4f;
+}
+
+.match-suggestions h4 {
+    margin: 0 0 10px 0;
+    font-size: 15px;
+    color: #1890ff;
+}
+
+.match-strengths ul,
+.match-weaknesses ul,
+.match-suggestions ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.match-strengths li,
+.match-weaknesses li,
+.match-suggestions li {
+    margin-bottom: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #666;
+}
+
+.form-select {
+    font-size: 14px;
+}
+
+/* 简历选择器匹配度色块样式 */
+.resume-selector-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.match-badge {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    cursor: help;
+}
+
+.match-green {
+    background-color: #52c41a;
+}
+
+.match-orange {
+    background-color: #faad14;
+}
+
+.match-red {
+    background-color: #ff4d4f;
+}
+
+.match-gray {
+    background-color: #d9d9d9;
+}
+
+/* AI解析状态样式 */
+.resume-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.resume-list-header h3 {
+    margin: 0;
+}
+
+.ai-status-header {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.ai-status-enabled {
+    color: #52c41a;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.ai-status-disabled {
+    color: #ff4d4f;
+    font-weight: 500;
+    font-size: 14px;
+}
+

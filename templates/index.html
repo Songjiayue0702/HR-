@@ -108,7 +108,10 @@
 
                 <!-- 简历列表 -->
                 <section class="resume-list-section">
-                    <h3>简历列表</h3>
+                    <div class="resume-list-header">
+                        <h3>简历列表</h3>
+                        <span id="aiStatusHeader" class="ai-status-header"></span>
+                    </div>
                     <div class="table-container">
                         <table class="resume-table" id="resumeTable">
                             <thead>
@@ -124,7 +127,7 @@
                                     <th onclick="sortTable('phone')">手机号 ↕</th>
                                     <th>邮箱</th>
                                     <th onclick="sortTable('highest_education')">学历 ↕</th>
-                                    <th>学校</th>
+                                    <th>毕业学校</th>
                                     <th>专业</th>
                                     <th>状态</th>
                                     <th>操作</th>
