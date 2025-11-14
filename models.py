@@ -77,14 +77,8 @@ class Resume(Base):
             'highest_education': self.highest_education,
             'school': self.school,
             'school_original': self.school_original,
-            'school_code': self.school_code,
-            'school_match_status': self.school_match_status,
-            'school_confidence': self.school_confidence,
             'major': self.major,
             'major_original': self.major_original,
-            'major_code': self.major_code,
-            'major_match_status': self.major_match_status,
-            'major_confidence': self.major_confidence,
             'applied_position': self.applied_position,
             'work_experience': self.work_experience,
             'parse_status': self.parse_status,
@@ -122,6 +116,42 @@ with engine.connect() as conn:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
     conn.commit()
 Session = sessionmaker(bind=engine)
+
+class Position(Base):
+    """岗位目录数据模型"""
+    __tablename__ = 'positions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    position_name = Column(String(200), nullable=False)  # 岗位名称
+    work_content = Column(Text)  # 工作内容
+    job_requirements = Column(Text)  # 任职资格
+    core_requirements = Column(Text)  # 核心需求
+    create_time = Column(DateTime, default=datetime.now)  # 创建时间
+    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)  # 更新时间
+    
+    def to_dict(self):
+        """转换为字典"""
+        return {
+            'id': self.id,
+            'position_name': self.position_name,
+            'work_content': self.work_content,
+            'job_requirements': self.job_requirements,
+            'core_requirements': self.core_requirements,
+            'create_time': self.create_time.isoformat() if self.create_time else None,
+            'update_time': self.update_time.isoformat() if self.update_time else None
+        }
+
+# 确保positions表存在
+Base.metadata.create_all(engine)
+
+# 检查positions表是否存在，如果不存在则创建
+with engine.connect() as conn:
+    try:
+        conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
+    except:
+        # 表不存在，创建表
+        Position.__table__.create(engine)
+    conn.commit()
 
 def get_db_session():
     """获取数据库会话"""

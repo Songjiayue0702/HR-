@@ -27,6 +27,12 @@
                             <span class="nav-text">简历分析</span>
                         </a>
                     </li>
+                    <li>
+                        <a href="#" class="nav-item" data-module="positions" onclick="switchModule('positions'); return false;">
+                            <span class="nav-icon">💼</span>
+                            <span class="nav-text">岗位目录</span>
+                        </a>
+                    </li>
                 </ul>
             </nav>
             <nav class="sidebar-nav sidebar-nav-bottom">
@@ -160,6 +166,54 @@
             </div>
 
             <!-- 模块3：设置 -->
+            <!-- 模块4：岗位目录 -->
+            <div id="module-positions" class="module" style="display: none;">
+                <header class="module-header">
+                    <h2>岗位目录</h2>
+                </header>
+
+                <section class="positions-section">
+                    <div class="positions-toolbar">
+                        <button class="btn btn-primary" onclick="showAddPositionForm()">+ 新增岗位</button>
+                    </div>
+
+                    <div class="positions-list" id="positionsList">
+                        <div class="loading">加载中...</div>
+                    </div>
+                </section>
+
+                <!-- 岗位表单模态框 -->
+                <div id="positionModal" class="modal" style="display: none;">
+                    <div class="modal-content" style="max-width: 800px;">
+                        <span class="close" onclick="closePositionModal()">&times;</span>
+                        <h3 id="positionModalTitle">新增岗位</h3>
+                        <form id="positionForm" onsubmit="savePosition(event); return false;">
+                            <div class="form-group">
+                                <label for="positionName">岗位名称 <span class="required">*</span></label>
+                                <input type="text" id="positionName" class="form-input" required placeholder="请输入岗位名称">
+                            </div>
+                            <div class="form-group">
+                                <label for="workContent">工作内容 <span class="required">*</span></label>
+                                <textarea id="workContent" class="form-textarea" rows="6" placeholder="请输入工作内容" required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="jobRequirements">任职资格 <span class="required">*</span></label>
+                                <textarea id="jobRequirements" class="form-textarea" rows="6" placeholder="请输入任职资格" required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="coreRequirements">核心需求 <span class="required">*</span></label>
+                                <textarea id="coreRequirements" class="form-textarea" rows="6" placeholder="请输入核心需求" required></textarea>
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" class="btn btn-primary">保存</button>
+                                <button type="button" class="btn btn-secondary" onclick="closePositionModal()">取消</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块5：设置 -->
             <div id="module-settings" class="module" style="display: none;">
                 <!-- 页面标题已在主内容区顶部显示 -->
 
@@ -275,5 +329,35 @@
     </div>
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+    <!-- 岗位编辑模态框 -->
+    <div id="positionModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px;">
+            <span class="close" onclick="closePositionModal()">&times;</span>
+            <h3 id="positionModalTitle">新增岗位</h3>
+            <form id="positionForm" onsubmit="savePosition(event)">
+                <div class="form-group">
+                    <label>岗位名称 <span class="required">*</span></label>
+                    <input type="text" id="positionName" required placeholder="请输入岗位名称">
+                </div>
+                <div class="form-group">
+                    <label>工作内容</label>
+                    <textarea id="workContent" rows="6" placeholder="请输入工作内容，支持多行"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>任职资格</label>
+                    <textarea id="jobRequirements" rows="6" placeholder="请输入任职资格，支持多行"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>核心需求</label>
+                    <textarea id="coreRequirements" rows="6" placeholder="请输入核心需求，支持多行"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closePositionModal()">取消</button>
+                    <button type="submit" class="btn btn-primary">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </body>
 </html>

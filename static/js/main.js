@@ -278,14 +278,8 @@ function displayResumes(resumes) {
             <td>${escapeHtml(resume.phone) || '-'}</td>
             <td>${escapeHtml(resume.email) || '-'}</td>
             <td>${escapeHtml(resume.highest_education) || '-'}</td>
-            <td>
-                ${escapeHtml(resume.school) || '-'}
-                ${getStatusIcon(resume.school_match_status)}
-            </td>
-            <td>
-                ${escapeHtml(resume.major) || '-'}
-                ${getStatusIcon(resume.major_match_status)}
-            </td>
+            <td>${escapeHtml(resume.school) || '-'}</td>
+            <td>${escapeHtml(resume.major) || '-'}</td>
             <td>${statusDisplay}</td>
             <td>
                 <button class="${viewButtonClass}" ${viewButtonDisabled} onclick="viewDetail(${resume.id})">查看/编辑</button>
@@ -404,8 +398,6 @@ function displayDetail(resume) {
     const workExperienceText = resume.work_experience && resume.work_experience.length > 0
         ? JSON.stringify(resume.work_experience, null, 2)
         : '';
-    const schoolMatch = resume.school_match_status || '未校验';
-    const majorMatch = resume.major_match_status || '未校验';
     const parseStatus = resume.parse_status || '-';
     const errorMessage = resume.error_message || '';
     
@@ -469,31 +461,11 @@ function displayDetail(resume) {
                     ${educationOptions}
                 </select>
             </label>
-            <label>学校（标准化）
+            <label>学校
                 <input id="editSchool" type="text" value="${escapeHtml(resume.school || '')}">
             </label>
-            <label>学校（原始）
-                <input id="editSchoolOriginal" type="text" value="${escapeHtml(resume.school_original || '')}">
-            </label>
-            <label>专业（标准化）
+            <label>专业
                 <input id="editMajor" type="text" value="${escapeHtml(resume.major || '')}">
-            </label>
-            <label>专业（原始）
-                <input id="editMajorOriginal" type="text" value="${escapeHtml(resume.major_original || '')}">
-            </label>
-        </div>
-        <div class="form-grid">
-            <label>学校匹配状态
-                <input type="text" value="${escapeHtml(schoolMatch)}" disabled>
-            </label>
-            <label>专业匹配状态
-                <input type="text" value="${escapeHtml(majorMatch)}" disabled>
-            </label>
-            <label>学校置信度
-                <input type="text" value="${escapeHtml(resume.school_confidence ?? '')}" disabled>
-            </label>
-            <label>专业置信度
-                <input type="text" value="${escapeHtml(resume.major_confidence ?? '')}" disabled>
             </label>
         </div>
         <div class="work-experience-section">
@@ -852,9 +824,7 @@ function saveResume() {
         applied_position: document.getElementById('editAppliedPosition').value.trim() || null,
         highest_education: document.getElementById('editEducation').value || null,
         school: document.getElementById('editSchool').value.trim() || null,
-        school_original: document.getElementById('editSchoolOriginal').value.trim() || null,
         major: document.getElementById('editMajor').value.trim() || null,
-        major_original: document.getElementById('editMajorOriginal').value.trim() || null,
         error_message: document.getElementById('editErrorMessage').value.trim() || null,
     };
 
@@ -1303,6 +1273,8 @@ function switchModule(moduleName) {
             loadResumes();
         } else if (moduleName === 'settings') {
             loadAIConfig();
+        } else if (moduleName === 'positions') {
+            loadPositions();
         }
     }
 }
@@ -1536,4 +1508,236 @@ window.addEventListener('popstate', function(event) {
     const module = urlParams.get('module') || 'upload';
     switchModule(module);
 });
+
+// ==================== 岗位目录功能 ====================
+let currentPositionId = null;
+
+// 加载岗位列表
+function loadPositions() {
+    const listElement = document.getElementById('positionsList');
+    if (!listElement) {
+        console.warn('positionsList element not found');
+        return;
+    }
+    
+    listElement.innerHTML = '<div class="loading">加载中...</div>';
+    
+    fetch('/api/positions')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                displayPositions(data.data);
+            } else {
+                listElement.innerHTML = '<div class="error">加载失败: ' + (data.message || '未知错误') + '</div>';
+            }
+        })
+        .catch(error => {
+            console.error('加载岗位列表失败:', error);
+            listElement.innerHTML = '<div class="error">加载失败，请刷新重试</div>';
+        });
+}
+
+// 显示岗位列表
+function displayPositions(positions) {
+    const listElement = document.getElementById('positionsList');
+    if (!listElement) {
+        return;
+    }
+    
+    if (!positions || positions.length === 0) {
+        listElement.innerHTML = '<div class="empty-state"><p>暂无岗位信息，点击"新增岗位"按钮添加</p></div>';
+        return;
+    }
+    
+    let html = '<div class="positions-grid">';
+    positions.forEach(position => {
+        const createTime = position.create_time ? new Date(position.create_time).toLocaleString('zh-CN') : '-';
+        const updateTime = position.update_time ? new Date(position.update_time).toLocaleString('zh-CN') : '-';
+        
+        html += `
+            <div class="position-card">
+                <div class="position-card-header">
+                    <h4 class="position-name">${escapeHtml(position.position_name || '未命名岗位')}</h4>
+                    <div class="position-actions">
+                        <button class="btn btn-sm btn-edit" onclick="editPosition(${position.id})" title="编辑">✏️</button>
+                        <button class="btn btn-sm btn-delete" onclick="deletePosition(${position.id})" title="删除">🗑️</button>
+                    </div>
+                </div>
+                <div class="position-card-body">
+                    <div class="position-field">
+                        <label>工作内容：</label>
+                        <div class="position-content">${escapeHtml(position.work_content || '未填写')}</div>
+                    </div>
+                    <div class="position-field">
+                        <label>任职资格：</label>
+                        <div class="position-content">${escapeHtml(position.job_requirements || '未填写')}</div>
+                    </div>
+                    <div class="position-field">
+                        <label>核心需求：</label>
+                        <div class="position-content">${escapeHtml(position.core_requirements || '未填写')}</div>
+                    </div>
+                </div>
+                <div class="position-card-footer">
+                    <span class="position-time">创建: ${createTime}</span>
+                    <span class="position-time">更新: ${updateTime}</span>
+                </div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    
+    listElement.innerHTML = html;
+}
+
+// 显示新增岗位表单
+function showAddPositionForm() {
+    currentPositionId = null;
+    const modal = document.getElementById('positionModal');
+    const form = document.getElementById('positionForm');
+    const title = document.getElementById('positionModalTitle');
+    
+    if (!modal || !form || !title) {
+        console.error('岗位表单元素未找到');
+        return;
+    }
+    
+    title.textContent = '新增岗位';
+    form.reset();
+    modal.style.display = 'block';
+}
+
+// 编辑岗位
+function editPosition(positionId) {
+    currentPositionId = positionId;
+    const modal = document.getElementById('positionModal');
+    const form = document.getElementById('positionForm');
+    const title = document.getElementById('positionModalTitle');
+    
+    if (!modal || !form || !title) {
+        console.error('岗位表单元素未找到');
+        return;
+    }
+    
+    title.textContent = '编辑岗位';
+    
+    fetch(`/api/positions/${positionId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                const position = data.data;
+                document.getElementById('positionName').value = position.position_name || '';
+                document.getElementById('workContent').value = position.work_content || '';
+                document.getElementById('jobRequirements').value = position.job_requirements || '';
+                document.getElementById('coreRequirements').value = position.core_requirements || '';
+                modal.style.display = 'block';
+            } else {
+                alert('加载岗位信息失败: ' + (data.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            console.error('加载岗位信息失败:', error);
+            alert('加载岗位信息失败，请重试');
+        });
+}
+
+// 保存岗位
+function savePosition(event) {
+    event.preventDefault();
+    
+    const positionName = document.getElementById('positionName').value.trim();
+    const workContent = document.getElementById('workContent').value.trim();
+    const jobRequirements = document.getElementById('jobRequirements').value.trim();
+    const coreRequirements = document.getElementById('coreRequirements').value.trim();
+    
+    // 验证所有字段
+    if (!positionName) {
+        alert('请输入岗位名称');
+        return;
+    }
+    if (!workContent) {
+        alert('请输入工作内容');
+        return;
+    }
+    if (!jobRequirements) {
+        alert('请输入任职资格');
+        return;
+    }
+    if (!coreRequirements) {
+        alert('请输入核心需求');
+        return;
+    }
+    
+    const data = {
+        position_name: positionName,
+        work_content: workContent,
+        job_requirements: jobRequirements,
+        core_requirements: coreRequirements
+    };
+    
+    const url = currentPositionId ? `/api/positions/${currentPositionId}` : '/api/positions';
+    const method = currentPositionId ? 'PUT' : 'POST';
+    
+    fetch(url, {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            closePositionModal();
+            loadPositions();
+            alert(currentPositionId ? '岗位更新成功' : '岗位创建成功');
+        } else {
+            alert('保存失败: ' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('保存岗位失败:', error);
+        alert('保存失败，请重试');
+    });
+}
+
+// 删除岗位
+function deletePosition(positionId) {
+    if (!confirm('确定要删除这个岗位吗？此操作不可恢复。')) {
+        return;
+    }
+    
+    fetch(`/api/positions/${positionId}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            loadPositions();
+            alert('岗位删除成功');
+        } else {
+            alert('删除失败: ' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('删除岗位失败:', error);
+        alert('删除失败，请重试');
+    });
+}
+
+// 关闭岗位表单模态框
+function closePositionModal() {
+    const modal = document.getElementById('positionModal');
+    if (modal) {
+        modal.style.display = 'none';
+        currentPositionId = null;
+    }
+}
+
+// 点击模态框外部关闭
+window.onclick = function(event) {
+    const modal = document.getElementById('positionModal');
+    if (event.target === modal) {
+        closePositionModal();
+    }
+}
 

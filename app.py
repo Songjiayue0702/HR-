@@ -7,7 +7,7 @@ import os
 import json
 from datetime import datetime
 from config import Config
-from models import get_db_session, Resume
+from models import get_db_session, Resume, Position
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.api_integration import APIIntegration
@@ -134,27 +134,17 @@ def process_resume_async(resume_id, file_path):
         
         resume.work_experience = work_experiences
         
-        # 处理学校验证
+        # 处理学校信息（仅保留原文提取）
         school_original = info.get('school')
         if school_original:
+            resume.school = school_original
             resume.school_original = school_original
-            standardized, status, confidence, code, alternatives = \
-                APIIntegration.verify_school(school_original)
-            resume.school = standardized or school_original
-            resume.school_code = code
-            resume.school_match_status = status
-            resume.school_confidence = confidence
         
-        # 处理专业验证
+        # 处理专业信息（仅保留原文提取）
         major_original = info.get('major')
         if major_original:
+            resume.major = major_original
             resume.major_original = major_original
-            standardized, status, confidence, code, alternatives = \
-                APIIntegration.verify_major(major_original, resume.school_code)
-            resume.major = standardized or major_original
-            resume.major_code = code
-            resume.major_match_status = status
-            resume.major_confidence = confidence
         
         # 计算并保存最早工作年份
         if work_experiences:
@@ -566,10 +556,160 @@ def test_ai_connection():
             }), 400
             
     except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'测试失败: {str(e)}'
+            }), 400
+
+# 岗位目录API
+@app.route('/api/positions', methods=['GET'])
+def get_positions():
+    """获取岗位列表"""
+    try:
+        session = get_db_session()
+        positions = session.query(Position).order_by(Position.update_time.desc()).all()
+        session.close()
+        
+        return jsonify({
+            'success': True,
+            'data': [pos.to_dict() for pos in positions]
+        })
+    except Exception as e:
         return jsonify({
             'success': False,
-            'message': f'测试失败: {str(e)}'
-        }), 400
+            'message': f'获取岗位列表失败: {str(e)}'
+        }), 500
+
+@app.route('/api/positions', methods=['POST'])
+def create_position():
+    """创建岗位"""
+    try:
+        data = request.json
+        position_name = data.get('position_name', '').strip()
+        
+        if not position_name:
+            return jsonify({
+                'success': False,
+                'message': '岗位名称不能为空'
+            }), 400
+        
+        session = get_db_session()
+        position = Position(
+            position_name=position_name,
+            work_content=data.get('work_content', '').strip() or None,
+            job_requirements=data.get('job_requirements', '').strip() or None,
+            core_requirements=data.get('core_requirements', '').strip() or None
+        )
+        session.add(position)
+        session.commit()
+        position_id = position.id
+        session.close()
+        
+        return jsonify({
+            'success': True,
+            'message': '岗位创建成功',
+            'data': position.to_dict()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'创建岗位失败: {str(e)}'
+        }), 500
+
+@app.route('/api/positions/<int:position_id>', methods=['GET'])
+def get_position(position_id):
+    """获取单个岗位详情"""
+    try:
+        session = get_db_session()
+        position = session.query(Position).filter(Position.id == position_id).first()
+        session.close()
+        
+        if not position:
+            return jsonify({
+                'success': False,
+                'message': '岗位不存在'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'data': position.to_dict()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取岗位详情失败: {str(e)}'
+        }), 500
+
+@app.route('/api/positions/<int:position_id>', methods=['PUT'])
+def update_position(position_id):
+    """更新岗位"""
+    try:
+        data = request.json
+        position_name = data.get('position_name', '').strip()
+        
+        if not position_name:
+            return jsonify({
+                'success': False,
+                'message': '岗位名称不能为空'
+            }), 400
+        
+        session = get_db_session()
+        position = session.query(Position).filter(Position.id == position_id).first()
+        
+        if not position:
+            session.close()
+            return jsonify({
+                'success': False,
+                'message': '岗位不存在'
+            }), 404
+        
+        position.position_name = position_name
+        position.work_content = data.get('work_content', '').strip() or None
+        position.job_requirements = data.get('job_requirements', '').strip() or None
+        position.core_requirements = data.get('core_requirements', '').strip() or None
+        position.update_time = datetime.now()
+        
+        session.commit()
+        session.close()
+        
+        return jsonify({
+            'success': True,
+            'message': '岗位更新成功',
+            'data': position.to_dict()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'更新岗位失败: {str(e)}'
+        }), 500
+
+@app.route('/api/positions/<int:position_id>', methods=['DELETE'])
+def delete_position(position_id):
+    """删除岗位"""
+    try:
+        session = get_db_session()
+        position = session.query(Position).filter(Position.id == position_id).first()
+        
+        if not position:
+            session.close()
+            return jsonify({
+                'success': False,
+                'message': '岗位不存在'
+            }), 404
+        
+        session.delete(position)
+        session.commit()
+        session.close()
+        
+        return jsonify({
+            'success': True,
+            'message': '岗位删除成功'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'删除岗位失败: {str(e)}'
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
