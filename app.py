@@ -50,6 +50,10 @@ def process_resume_async(resume_id, file_path):
         if not raw_text:
             raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
         
+        # 检测文件类型
+        file_ext = os.path.splitext(file_path)[1].lower()
+        is_word_file = file_ext in ['.doc', '.docx']
+        
         # 检查是否启用AI（从配置或请求参数）
         ai_enabled = app.config.get('AI_ENABLED', True)
         ai_api_key = app.config.get('AI_API_KEY', '')
@@ -95,9 +99,9 @@ def process_resume_async(resume_id, file_path):
         ai_result = None
         if ai_enabled and ai_api_key and ai_extractor:
             try:
-                ai_result = ai_extractor.extract_with_ai(text)
+                ai_result = ai_extractor.extract_with_ai(text, is_word_file=is_word_file)
                 if ai_result:
-                    print(f"AI辅助信息提取成功（模型: {ai_model}），提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
+                    print(f"AI辅助信息提取成功（模型: {ai_model}，Word格式: {is_word_file}），提取到 {len([k for k, v in ai_result.items() if v])} 个字段")
             except Exception as e:
                 print(f"AI辅助信息提取失败（模型: {ai_model}），继续使用规则提取: {e}")
         
@@ -192,67 +196,98 @@ def index():
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
-    """文件上传接口"""
+    """文件上传接口（支持多文件上传）"""
     if 'file' not in request.files:
         return jsonify({'success': False, 'message': '没有文件'}), 400
     
-    file = request.files['file']
-    if file.filename == '':
+    # 获取所有上传的文件
+    files = request.files.getlist('file')
+    if not files or all(f.filename == '' for f in files):
         return jsonify({'success': False, 'message': '未选择文件'}), 400
     
-    if file and allowed_file(file.filename):
-        original_name = file.filename
-        name_part, ext = os.path.splitext(original_name)
-        ext = ext.lower()
-        safe_name = secure_filename(name_part)
-        if not safe_name:
-            safe_name = 'resume'
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_')
-        filename = f"{timestamp}{safe_name}{ext}"
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
+    # 获取AI配置（如果前端提供了）
+    ai_config = request.form.get('ai_config')
+    if ai_config:
+        try:
+            ai_config_data = json.loads(ai_config)
+            # 更新临时配置（仅用于本次处理）
+            if ai_config_data.get('ai_api_key'):
+                app.config['AI_API_KEY'] = ai_config_data['ai_api_key']
+            if ai_config_data.get('ai_api_base'):
+                app.config['AI_API_BASE'] = ai_config_data['ai_api_base']
+            if ai_config_data.get('ai_model'):
+                app.config['AI_MODEL'] = ai_config_data['ai_model']
+            if 'ai_enabled' in ai_config_data:
+                app.config['AI_ENABLED'] = ai_config_data['ai_enabled']
+        except:
+            pass  # 如果解析失败，使用默认配置
+    
+    uploaded_count = 0
+    failed_files = []
+    resume_ids = []
+    
+    # 处理每个文件
+    for file in files:
+        if file.filename == '':
+            continue
         
-        # 获取AI配置（如果前端提供了）
-        ai_config = request.form.get('ai_config')
-        if ai_config:
-            try:
-                ai_config_data = json.loads(ai_config)
-                # 更新临时配置（仅用于本次处理）
-                if ai_config_data.get('ai_api_key'):
-                    app.config['AI_API_KEY'] = ai_config_data['ai_api_key']
-                if ai_config_data.get('ai_api_base'):
-                    app.config['AI_API_BASE'] = ai_config_data['ai_api_base']
-                if ai_config_data.get('ai_model'):
-                    app.config['AI_MODEL'] = ai_config_data['ai_model']
-                if 'ai_enabled' in ai_config_data:
-                    app.config['AI_ENABLED'] = ai_config_data['ai_enabled']
-            except:
-                pass  # 如果解析失败，使用默认配置
+        if not allowed_file(file.filename):
+            failed_files.append(file.filename)
+            continue
         
-        # 创建数据库记录
-        db = get_db_session()
-        resume = Resume(
-            file_name=file.filename,
-            file_path=file_path,
-            parse_status='pending'
-        )
-        db.add(resume)
-        db.commit()
-        resume_id = resume.id
-        db.close()
-        
-        # 异步处理
-        thread = threading.Thread(target=process_resume_async, args=(resume_id, file_path))
-        thread.daemon = True
-        thread.start()
-        
+        try:
+            original_name = file.filename
+            name_part, ext = os.path.splitext(original_name)
+            ext = ext.lower()
+            safe_name = secure_filename(name_part)
+            if not safe_name:
+                safe_name = 'resume'
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')  # 添加微秒确保唯一性
+            filename = f"{timestamp}{safe_name}{ext}"
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            file.save(file_path)
+            
+            # 创建数据库记录
+            db = get_db_session()
+            resume = Resume(
+                file_name=file.filename,
+                file_path=file_path,
+                parse_status='pending'
+            )
+            db.add(resume)
+            db.commit()
+            resume_id = resume.id
+            db.close()
+            
+            # 异步处理
+            thread = threading.Thread(target=process_resume_async, args=(resume_id, file_path))
+            thread.daemon = True
+            thread.start()
+            
+            uploaded_count += 1
+            resume_ids.append(resume_id)
+        except Exception as e:
+            print(f"文件 {file.filename} 上传失败: {e}")
+            failed_files.append(file.filename)
+    
+    # 返回结果
+    if uploaded_count > 0:
+        message = f'成功上传 {uploaded_count} 个文件，正在解析...'
+        if failed_files:
+            message += f'，{len(failed_files)} 个文件上传失败'
         return jsonify({
             'success': True,
-            'message': '上传成功，正在解析...',
-            'resume_id': resume_id
+            'message': message,
+            'uploaded_count': uploaded_count,
+            'failed_count': len(failed_files),
+            'failed_files': failed_files,
+            'resume_ids': resume_ids
         })
-    
-    return jsonify({'success': False, 'message': '不支持的文件格式'}), 400
+    else:
+        return jsonify({
+            'success': False,
+            'message': f'所有文件上传失败：{", ".join(failed_files) if failed_files else "不支持的文件格式"}'
+        }), 400
 
 @app.route('/api/resumes', methods=['GET'])
 def get_resumes():

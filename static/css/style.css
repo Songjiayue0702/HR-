@@ -381,7 +381,7 @@ body {
 .upload-area {
     border: 3px dashed #667eea;
     border-radius: 8px;
-    padding: 40px;
+    padding: 12px 20px;
     text-align: center;
     cursor: pointer;
     transition: all 0.3s;
@@ -399,15 +399,17 @@ body {
 }
 
 .upload-icon {
-    width: 64px;
-    height: 64px;
+    width: 32px;
+    height: 32px;
     color: #667eea;
-    margin-bottom: 20px;
+    margin-bottom: 6px;
 }
 
 .upload-content p {
-    margin: 10px 0;
+    margin: 3px 0;
     color: #666;
+    font-size: 13px;
+    line-height: 1.4;
 }
 
 .upload-link {

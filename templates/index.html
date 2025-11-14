@@ -71,7 +71,7 @@
                                 <line x1="12" y1="3" x2="12" y2="15"></line>
                             </svg>
                             <p>拖拽文件到此处或<span class="upload-link">点击上传</span></p>
-                            <p class="upload-hint">支持 PDF、Word 格式，最大 10MB</p>
+                            <p class="upload-hint">支持 PDF、Word 格式，最大 10MB，可同时上传多个文件</p>
                         </div>
                         <input type="file" id="fileInput" multiple accept=".pdf,.doc,.docx" style="display: none;">
                     </div>
@@ -119,7 +119,6 @@
                                     <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
                                     <th onclick="sortTable('applied_position')">应聘岗位 ↕</th>
                                     <th>身份验证码</th>
-                                    <th>查重</th>
                                     <th onclick="sortTable('name')">姓名 ↕</th>
                                     <th onclick="sortTable('gender')">性别 ↕</th>
                                     <th onclick="sortTable('age')">年龄 ↕</th>
@@ -129,6 +128,7 @@
                                     <th onclick="sortTable('highest_education')">学历 ↕</th>
                                     <th>毕业学校</th>
                                     <th>专业</th>
+                                    <th>查重</th>
                                     <th>状态</th>
                                     <th>操作</th>
                                 </tr>

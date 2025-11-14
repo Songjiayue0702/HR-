@@ -73,7 +73,11 @@ function handleDrop(e) {
 
 function handleFileSelect(e) {
     const files = e.target.files;
-    uploadFiles(files);
+    if (files && files.length > 0) {
+        uploadFiles(files);
+    }
+    // 清空input，允许重复选择相同文件
+    e.target.value = '';
 }
 
 // 上传文件
@@ -108,7 +112,13 @@ function uploadFiles(files) {
     .then(data => {
         if (data.success) {
             progressFill.style.width = '100%';
-            progressText.textContent = '上传成功，正在解析...';
+            const fileCount = files.length;
+            const uploadedCount = data.uploaded_count || fileCount;
+            if (fileCount > 1) {
+                progressText.textContent = `成功上传 ${uploadedCount}/${fileCount} 个文件，正在解析...`;
+            } else {
+                progressText.textContent = '上传成功，正在解析...';
+            }
             // 立即刷新列表，显示新上传的简历
             loadResumes();
             // 2秒后隐藏进度条，但继续自动刷新直到解析完成
@@ -282,7 +292,6 @@ function displayResumes(resumes) {
             <td><input type="checkbox" value="${resume.id}" ${isSelected ? 'checked' : ''} ${parseStatus !== 'success' ? 'disabled' : ''} onchange="toggleResume(${resume.id}, this)"></td>
             <td>${escapeHtml(resume.applied_position) || '-'}</td>
             <td>${identityCode}</td>
-            <td>${duplicateDisplay}</td>
             <td>${escapeHtml(resume.name) || '-'}</td>
             <td>${escapeHtml(resume.gender) || '-'}</td>
             <td>${resume.age || '-'}</td>
@@ -292,6 +301,7 @@ function displayResumes(resumes) {
             <td>${escapeHtml(resume.highest_education) || '-'}</td>
             <td>${escapeHtml(resume.school) || '-'}</td>
             <td>${escapeHtml(resume.major) || '-'}</td>
+            <td>${duplicateDisplay}</td>
             <td>${statusDisplay}</td>
             <td>
                 <button class="${viewButtonClass}" ${viewButtonDisabled} onclick="viewDetail(${resume.id})">查看/编辑</button>
