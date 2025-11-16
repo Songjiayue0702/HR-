@@ -8,6 +8,7 @@ let selectedResumes = new Set();
 let currentResumeData = null;
 let aiConfigStatus = null; // AI配置状态缓存
 let interviewedResumeIds = new Set(); // 已邀约面试的简历ID集合
+let selectedInterviews = new Set();   // 面试流程列表中选中的行ID
 
 function escapeHtml(value) {
     if (value === null || value === undefined) {
@@ -1169,7 +1170,14 @@ function loadInterviews() {
 
     tbody.innerHTML = '<tr><td colspan="6" class="loading">加载中...</td></tr>';
 
-    fetch('/api/interviews')
+    const searchInput = document.getElementById('interviewSearchInput');
+    const search = searchInput ? (searchInput.value || '').trim() : '';
+    const params = new URLSearchParams();
+    if (search) {
+        params.append('search', search);
+    }
+
+    fetch(`/api/interviews?${params.toString()}`)
         .then(response => response.json())
         .then(result => {
             if (result.success) {
@@ -1179,6 +1187,8 @@ function loadInterviews() {
                     return;
                 }
                 tbody.innerHTML = list.map(item => {
+                    const isSelected = selectedInterviews.has(item.id);
+                    const identityCode = escapeHtml(item.identity_code || '-');
                     const name = escapeHtml(item.name || '-');
                     const position = escapeHtml(item.applied_position || '-');
                     const status = escapeHtml(item.status || '待面试');
@@ -1191,6 +1201,8 @@ function loadInterviews() {
                         : '<span>-</span>';
                     return `
                         <tr>
+                            <td><input type="checkbox" value="${item.id}" ${isSelected ? 'checked' : ''} onchange="toggleInterview(${item.id}, this)"></td>
+                            <td>${identityCode}</td>
                             <td>${name}</td>
                             <td>${position}</td>
                             <td>${scoreHtml}</td>
@@ -1208,6 +1220,77 @@ function loadInterviews() {
             console.error('加载面试流程失败:', error);
             tbody.innerHTML = '<tr><td colspan="6" class="loading">加载失败，请稍后重试</td></tr>';
         });
+}
+
+// 面试流程选择/导出相关
+function toggleInterview(id, checkbox) {
+    if (checkbox.checked) {
+        selectedInterviews.add(id);
+    } else {
+        selectedInterviews.delete(id);
+    }
+}
+
+function toggleSelectAllInterviews() {
+    const selectAll = document.getElementById('selectAllInterviews');
+    const tbody = document.getElementById('interviewTableBody');
+    if (!tbody || !selectAll) return;
+    const checkboxes = tbody.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = selectAll.checked;
+        const id = parseInt(cb.value, 10);
+        if (selectAll.checked) {
+            selectedInterviews.add(id);
+        } else {
+            selectedInterviews.delete(id);
+        }
+    });
+}
+
+function exportSelectedInterviews() {
+    if (selectedInterviews.size === 0) {
+        alert('请先选择要导出的面试记录');
+        return;
+    }
+    exportInterviews(Array.from(selectedInterviews));
+}
+
+function exportAllInterviews() {
+    exportInterviews([]);
+}
+
+function exportInterviews(ids) {
+    fetch('/api/interviews/export', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ interview_ids: ids })
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.message || `导出失败，状态码: ${response.status}`);
+            }).catch(() => {
+                throw new Error(`导出失败，状态码: ${response.status}`);
+            });
+        }
+        return response.blob();
+    })
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `面试流程导出_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    })
+    .catch(error => {
+        console.error('导出面试流程失败:', error);
+        alert(`导出失败：${error.message || '未知错误'}`);
+    });
 }
 
 // 根据匹配分数返回颜色
@@ -1926,6 +2009,14 @@ function displayResumeSelector(resumes) {
     }
     
     list.innerHTML = resumes.map(resume => {
+        const identityCode = (() => {
+            if (!resume.name) return '-';
+            const phone = resume.phone || '';
+            if (phone && phone.length >= 4) {
+                return escapeHtml(resume.name + phone.slice(-4));
+            }
+            return escapeHtml(resume.name);
+        })();
         const name = escapeHtml(resume.name || '未命名');
         const school = escapeHtml(resume.school || '未知学校');
         const major = escapeHtml(resume.major || '未知专业');
@@ -1962,7 +2053,7 @@ function displayResumeSelector(resumes) {
         return `
             <div class="resume-selector-item" onclick="selectResumeForAnalysis(${resume.id})" data-resume-id="${resume.id}">
                 <div class="resume-selector-item-header">
-                    <div class="resume-selector-item-name">${name}</div>
+                    <div class="resume-selector-item-name">${identityCode}</div>
                     ${matchBadgeHtml}
                 </div>
                 <div class="resume-selector-item-info">${school} | ${major}</div>

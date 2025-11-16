@@ -184,10 +184,21 @@
                     <div class="interview-header">
                         <p>这里展示所有已“邀约面试”的候选人，可查看匹配度得分并维护面试流程。</p>
                     </div>
+                    <!-- 搜索与导出区域，与简历上传模块视图保持一致 -->
+                    <section class="filter-section">
+                        <div class="filter-row">
+                            <input type="text" id="interviewSearchInput" class="search-input" placeholder="搜索姓名、岗位..." />
+                            <button class="btn btn-primary" onclick="loadInterviews()">搜索</button>
+                            <button class="btn btn-secondary" onclick="exportSelectedInterviews()">导出选中</button>
+                            <button class="btn btn-secondary" onclick="exportAllInterviews()">导出全部</button>
+                        </div>
+                    </section>
                     <div class="table-container">
                         <table class="resume-table" id="interviewTable">
                             <thead>
                                 <tr>
+                                    <th><input type="checkbox" id="selectAllInterviews" onchange="toggleSelectAllInterviews()"></th>
+                                    <th>身份验证码</th>
                                     <th>候选人姓名</th>
                                     <th>应聘岗位</th>
                                     <th>简历匹配度</th>

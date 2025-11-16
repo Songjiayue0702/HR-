@@ -291,3 +291,91 @@ def export_resumes_to_excel(resumes):
     
     return file_path
 
+
+def export_interviews_to_excel(interviews, resume_map=None):
+    """导出面试流程到Excel
+
+    :param interviews: Interview 对象列表
+    :param resume_map: 可选，{resume_id: Resume} 映射，用于生成身份验证码等信息
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "面试流程"
+
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+
+    headers = [
+        "身份验证码", "姓名", "应聘岗位", "当前状态",
+        "一面面试官", "一面时间", "一面结果", "一面评价",
+        "二面面试官", "二面时间", "二面结果", "二面评价",
+        "三面面试官", "三面时间", "三面结果", "三面评价",
+        "是否发放Offer", "Offer发放日期", "拟入职架构", "拟入职日期",
+        "是否已入职", "实际入职日期", "入职架构",
+        "最后修改时间",
+    ]
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col)
+        cell.value = header
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    for row_idx, iv in enumerate(interviews, 2):
+        # 身份验证码：姓名+手机号后四位（来自简历）
+        identity_code = ""
+        if resume_map:
+            res = resume_map.get(iv.resume_id)
+            if res and res.name:
+                phone = res.phone or ""
+                if phone and len(phone) >= 4:
+                    identity_code = res.name + phone[-4:]
+                else:
+                    identity_code = res.name
+
+        ws.cell(row=row_idx, column=1, value=identity_code)
+        ws.cell(row=row_idx, column=2, value=iv.name or "")
+        ws.cell(row=row_idx, column=3, value=iv.applied_position or "")
+        ws.cell(row=row_idx, column=4, value=iv.status or "")
+
+        ws.cell(row=row_idx, column=5, value=iv.round1_interviewer or "")
+        ws.cell(row=row_idx, column=6, value=iv.round1_time or "")
+        ws.cell(row=row_idx, column=7, value=iv.round1_result or "")
+        ws.cell(row=row_idx, column=8, value=iv.round1_comment or "")
+
+        ws.cell(row=row_idx, column=9, value=iv.round2_interviewer or "")
+        ws.cell(row=row_idx, column=10, value=iv.round2_time or "")
+        ws.cell(row=row_idx, column=11, value=iv.round2_result or "")
+        ws.cell(row=row_idx, column=12, value=iv.round2_comment or "")
+
+        ws.cell(row=row_idx, column=13, value=iv.round3_interviewer or "")
+        ws.cell(row=row_idx, column=14, value=iv.round3_time or "")
+        ws.cell(row=row_idx, column=15, value=iv.round3_result or "")
+        ws.cell(row=row_idx, column=16, value=iv.round3_comment or "")
+
+        ws.cell(row=row_idx, column=17, value="是" if iv.offer_issued else "否")
+        ws.cell(row=row_idx, column=18, value=iv.offer_date or "")
+        ws.cell(row=row_idx, column=19, value=iv.offer_department or "")
+        ws.cell(row=row_idx, column=20, value=iv.offer_onboard_plan_date or "")
+
+        ws.cell(row=row_idx, column=21, value="是" if iv.onboard else "否")
+        ws.cell(row=row_idx, column=22, value=iv.onboard_date or "")
+        ws.cell(row=row_idx, column=23, value=iv.onboard_department or "")
+
+        ws.cell(
+            row=row_idx,
+            column=24,
+            value=iv.update_time.strftime("%Y-%m-%d %H:%M:%S") if iv.update_time else "",
+        )
+
+    # 调整列宽
+    for col in range(1, len(headers) + 1):
+        ws.column_dimensions[chr(ord("A") + col - 1)].width = 18
+
+    filename = f"interviews_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    file_path = os.path.join(Config.EXPORT_FOLDER, filename)
+    wb.save(file_path)
+
+    return file_path
+

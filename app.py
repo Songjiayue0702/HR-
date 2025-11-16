@@ -13,6 +13,7 @@ from utils.info_extractor import InfoExtractor
 from utils.api_integration import APIIntegration
 from utils.ai_extractor import AIExtractor
 from utils.duplicate_checker import check_duplicate
+from utils.export import export_resumes_to_excel, export_interviews_to_excel
 import threading
 
 app = Flask(__name__, 
@@ -500,8 +501,6 @@ def export_single(resume_id):
 @app.route('/api/export/batch', methods=['POST'])
 def export_batch():
     """批量导出"""
-    from utils.export import export_resumes_to_excel
-    
     data = request.json
     resume_ids = data.get('resume_ids', [])
     
@@ -518,11 +517,32 @@ def export_batch():
 
 @app.route('/api/interviews', methods=['GET'])
 def list_interviews():
-    """获取面试流程列表"""
+    """获取面试流程列表，可按姓名/岗位搜索"""
     session = get_db_session()
     try:
-        interviews = session.query(Interview).order_by(Interview.update_time.desc()).all()
-        data = [i.to_dict() for i in interviews]
+        search = (request.args.get('search') or '').strip()
+        # 关联简历表以便生成身份验证码
+        query = session.query(Interview, Resume).join(Resume, Interview.resume_id == Resume.id)
+        if search:
+            like = f"%{search}%"
+            query = query.filter(
+                (Interview.name.like(like)) |
+                (Interview.applied_position.like(like))
+            )
+        rows = query.order_by(Interview.update_time.desc()).all()
+        data = []
+        for iv, res in rows:
+            d = iv.to_dict()
+            # 身份验证码：姓名+手机号后四位
+            identity_code = ''
+            if res.name:
+                phone = res.phone or ''
+                if phone and len(phone) >= 4:
+                    identity_code = res.name + phone[-4:]
+                else:
+                    identity_code = res.name
+            d['identity_code'] = identity_code
+            data.append(d)
         return jsonify({'success': True, 'data': data})
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取面试列表失败: {str(e)}'}), 500
@@ -763,6 +783,38 @@ def upload_interview_doc(interview_id):
         return jsonify({'success': False, 'message': f'上传录音失败: {str(e)}'}), 500
     finally:
         session.close()
+
+
+@app.route('/api/interviews/export', methods=['POST'])
+def export_interviews():
+    """导出面试流程：选中或全部"""
+    try:
+        data = request.json or {}
+        interview_ids = data.get('interview_ids', [])
+
+        session = get_db_session()
+        if interview_ids:
+            interviews = session.query(Interview).filter(Interview.id.in_(interview_ids)).all()
+        else:
+            interviews = session.query(Interview).order_by(Interview.update_time.desc()).all()
+
+        # 构造简历映射，用于导出时生成身份验证码
+        resume_ids = [iv.resume_id for iv in interviews]
+        resumes = session.query(Resume).filter(Resume.id.in_(resume_ids)).all() if resume_ids else []
+        resume_map = {r.id: r for r in resumes}
+        session.close()
+
+        if not interviews:
+            return jsonify({'success': False, 'message': '没有可导出的面试记录'}), 400
+
+        file_path = export_interviews_to_excel(interviews, resume_map)
+        return send_file(
+            file_path,
+            as_attachment=True,
+            download_name=f'面试流程导出_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'导出失败: {str(e)}'}), 500
 
 
 @app.route('/api/interviews/<int:interview_id>/analyze-doc', methods=['POST'])
@@ -1274,6 +1326,30 @@ def analyze_resume_match(resume_id):
                     'suggestions': []
                 }
             
+            # 对匹配得分进行“温和放宽”，避免评分过于严苛
+            # 原始得分区间 0-100，转换为约 50-100 的区间，更贴近日常使用场景
+            try:
+                raw_score = analysis_result.get('match_score')
+                if raw_score is None:
+                    raw_score = 60
+                raw_score = float(raw_score)
+                # 简单线性放宽：new = raw * 0.7 + 30，限制在 [50, 100]
+                new_score = int(max(50, min(100, raw_score * 0.7 + 30)))
+                analysis_result['match_score'] = new_score
+
+                # 根据调整后的得分重新划分匹配等级
+                # ≥80：高匹配度；≥60：中匹配度；<60：低匹配度
+                if new_score >= 80:
+                    level = '高度匹配'
+                elif new_score >= 60:
+                    level = '中等匹配'
+                else:
+                    level = '低度匹配'
+                analysis_result['match_level'] = level
+            except Exception:
+                # 若转换失败，则保持原始结果
+                pass
+
             # 同步匹配结果到面试流程（如有对应的面试记录）
             try:
                 session_sync = get_db_session()
