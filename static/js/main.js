@@ -1363,6 +1363,66 @@ function downloadInterviewAnalysisPdf(interviewId, round) {
     });
 }
 
+// 加载岗位列表用于数据统计筛选
+function loadPositionsForStats() {
+    const select = document.getElementById('statsPosition');
+    if (!select) return;
+
+    // 如果已经加载过选项，则不重复加载
+    if (select.dataset.loaded === '1') return;
+
+    fetch('/api/positions')
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) {
+                console.error('加载岗位失败:', result.message);
+                return;
+            }
+            const positions = result.data || [];
+            positions.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.position_name;
+                opt.textContent = p.position_name;
+                select.appendChild(opt);
+            });
+            select.dataset.loaded = '1';
+        })
+        .catch(err => {
+            console.error('加载岗位失败:', err);
+        });
+}
+
+// 加载数据统计
+function loadStatistics() {
+    const startInput = document.getElementById('statsStartDate');
+    const endInput = document.getElementById('statsEndDate');
+    const positionSelect = document.getElementById('statsPosition');
+
+    const params = new URLSearchParams();
+    if (startInput && startInput.value) params.append('start_date', startInput.value);
+    if (endInput && endInput.value) params.append('end_date', endInput.value);
+    if (positionSelect && positionSelect.value) params.append('position', positionSelect.value);
+
+    fetch(`/api/statistics?${params.toString()}`)
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) {
+                alert(result.message || '统计失败，请稍后再试');
+                return;
+            }
+            const data = result.data || {};
+            document.getElementById('statsResumeCount').textContent = data.resume_count ?? '-';
+            document.getElementById('statsInterviewCount').textContent = data.interview_count ?? '-';
+            document.getElementById('statsPassCount').textContent = data.pass_count ?? '-';
+            document.getElementById('statsOfferCount').textContent = data.offer_count ?? '-';
+            document.getElementById('statsOnboardCount').textContent = data.onboard_count ?? '-';
+        })
+        .catch(err => {
+            console.error('加载统计数据失败:', err);
+            alert('统计失败，请稍后再试');
+        });
+}
+
 // 根据匹配分数返回颜色
 function getScoreColor(score) {
     if (score === null || score === undefined) return '#ccc';
@@ -1410,7 +1470,7 @@ function openInterviewModal(interviewId) {
                 <div class="section-header">
                     <h4>一面</h4>
                     <div>
-                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 1)">面试反馈报告</button>
+                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 1)">下载面试反馈报告</button>
                         <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存一面</button>
                     </div>
                 </div>
@@ -1455,7 +1515,7 @@ function openInterviewModal(interviewId) {
                 <div class="section-header">
                     <h4>二面</h4>
                     <div>
-                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 2)">面试反馈报告</button>
+                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 2)">下载面试反馈报告</button>
                         <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存二面</button>
                     </div>
                 </div>
@@ -1500,7 +1560,7 @@ function openInterviewModal(interviewId) {
                 <div class="section-header">
                     <h4>三面</h4>
                     <div>
-                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 3)">面试反馈报告</button>
+                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 3)">下载面试反馈报告</button>
                         <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存三面</button>
                     </div>
                 </div>
@@ -2036,6 +2096,9 @@ function switchModule(moduleName) {
             loadPositions();
         } else if (moduleName === 'interview') {
             loadInterviews();
+        } else if (moduleName === 'stats') {
+            loadPositionsForStats();
+            loadStatistics();
         }
     }
 }

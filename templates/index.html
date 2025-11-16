@@ -34,6 +34,12 @@
                         </a>
                     </li>
                     <li>
+                        <a href="#" class="nav-item" data-module="stats" onclick="switchModule('stats'); return false;">
+                            <span class="nav-icon">📈</span>
+                            <span class="nav-text">数据统计</span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="#" class="nav-item" data-module="positions" onclick="switchModule('positions'); return false;">
                             <span class="nav-icon">💼</span>
                             <span class="nav-text">岗位目录</span>
@@ -57,7 +63,7 @@
         <main class="main-content">
             <!-- 页面标题 -->
             <header class="page-header">
-                <h1 class="page-title">智能简历系统</h1>
+                <h1 class="page-title">面试系统</h1>
             </header>
             
             <!-- 模块1：简历上传 -->
@@ -213,6 +219,61 @@
                                 </tr>
                             </tbody>
                         </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 模块3.5：数据统计 -->
+            <div id="module-stats" class="module" style="display: none;">
+                <header class="module-header">
+                    <h2>数据统计</h2>
+                </header>
+
+                <section class="stats-section">
+                    <div class="filter-section">
+                        <div class="filter-row">
+                            <label style="margin-right:8px;">开始日期：</label>
+                            <input type="date" id="statsStartDate" class="form-input" style="max-width:160px;margin-right:16px;">
+                            <label style="margin-right:8px;">结束日期：</label>
+                            <input type="date" id="statsEndDate" class="form-input" style="max-width:160px;margin-right:16px;">
+
+                            <label style="margin-right:8px;">岗位：</label>
+                            <select id="statsPosition" class="filter-select" style="max-width:220px;margin-right:16px;">
+                                <option value="">全部岗位</option>
+                            </select>
+
+                            <button class="btn btn-primary" onclick="loadStatistics()">统计</button>
+                        </div>
+                    </div>
+
+                    <div class="stats-content">
+                        <div class="stats-cards">
+                            <div class="stats-card">
+                                <div class="stats-card-title">简历数</div>
+                                <div class="stats-card-value" id="statsResumeCount">-</div>
+                                <div class="stats-card-desc">按简历上传时间统计</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-title">到面数</div>
+                                <div class="stats-card-value" id="statsInterviewCount">-</div>
+                                <div class="stats-card-desc">按一面时间统计（有一面时间视为到面）</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-title">通过数</div>
+                                <div class="stats-card-value" id="statsPassCount">-</div>
+                                <div class="stats-card-desc">按状态为通过/已发offer/已入职统计</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-title">Offer数</div>
+                                <div class="stats-card-value" id="statsOfferCount">-</div>
+                                <div class="stats-card-desc">按Offer发放日期统计</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-title">入职数</div>
+                                <div class="stats-card-value" id="statsOnboardCount">-</div>
+                                <div class="stats-card-desc">按实际入职日期统计</div>
+                            </div>
+                        </div>
                     </div>
                 </section>
             </div>

@@ -16,6 +16,7 @@ from utils.duplicate_checker import check_duplicate
 from utils.export import export_resumes_to_excel, export_interviews_to_excel
 from utils.export_pdf import export_resume_analysis_to_pdf, export_interview_round_analysis_to_pdf
 import threading
+from sqlalchemy import and_
 
 app = Flask(__name__, 
             template_folder='templates',
@@ -195,6 +196,126 @@ def process_resume_async(resume_id, file_path):
 def index():
     """首页"""
     return render_template('index.html')
+
+
+@app.route('/api/statistics', methods=['GET'])
+def get_statistics():
+    """
+    获取数据统计
+
+    查询参数：
+    - start_date: 开始日期（YYYY-MM-DD）
+    - end_date: 结束日期（YYYY-MM-DD）
+    - position: 岗位名称（可选，为空则统计全部岗位）
+
+    统计内容：
+    - resume_count: 简历数（按简历上传时间统计）
+    - interview_count: 到面数（按一面时间统计，有一面时间视为到面）
+    - pass_count: 通过数（按状态为“面试通过/已发offer/已入职”等统计）
+    - offer_count: offer数（按offer发放时间统计）
+    - onboard_count: 入职数（按入职时间统计）
+    """
+    session = get_db_session()
+    try:
+        start_date_str = request.args.get('start_date', '').strip()
+        end_date_str = request.args.get('end_date', '').strip()
+        position = request.args.get('position', '').strip()
+
+        # 解析日期
+        start_dt = None
+        end_dt = None
+        if start_date_str:
+            try:
+                start_dt = datetime.strptime(start_date_str, '%Y-%m-%d')
+            except ValueError:
+                return jsonify({'success': False, 'message': '开始日期格式错误，应为YYYY-MM-DD'}), 400
+        if end_date_str:
+            try:
+                # 结束日期取当天 23:59:59
+                end_dt = datetime.strptime(end_date_str, '%Y-%m-%d')
+                end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            except ValueError:
+                return jsonify({'success': False, 'message': '结束日期格式错误，应为YYYY-MM-DD'}), 400
+
+        # 1) 简历数（按上传时间）
+        resume_query = session.query(Resume)
+        if start_dt is not None:
+            resume_query = resume_query.filter(Resume.upload_time >= start_dt)
+        if end_dt is not None:
+            resume_query = resume_query.filter(Resume.upload_time <= end_dt)
+        if position:
+            resume_query = resume_query.filter(Resume.applied_position == position)
+        resume_count = resume_query.count()
+
+        # 2) 到面数（有一面时间视为到面，round1_time 非空）
+        interview_query = session.query(Interview)
+        if position:
+            interview_query = interview_query.filter(Interview.applied_position == position)
+
+        # 一面时间是字符串 YYYY-MM-DD，所以用字符串范围过滤
+        if start_date_str:
+            interview_query = interview_query.filter(
+                Interview.round1_time.isnot(None),
+                Interview.round1_time >= start_date_str
+            )
+        if end_date_str:
+            interview_query = interview_query.filter(
+                Interview.round1_time <= end_date_str
+            )
+        interview_count = interview_query.count()
+
+        # 3) 通过数（状态为“面试通过/已发offer/已入职”）
+        pass_statuses = ['面试通过', '已发offer', '已入职']
+        pass_query = session.query(Interview).filter(Interview.status.in_(pass_statuses))
+        if position:
+            pass_query = pass_query.filter(Interview.applied_position == position)
+        # 通过数暂不按时间字段细分，统一按 create_time 范围过滤
+        if start_dt is not None:
+            pass_query = pass_query.filter(Interview.create_time >= start_dt)
+        if end_dt is not None:
+            pass_query = pass_query.filter(Interview.create_time <= end_dt)
+        pass_count = pass_query.count()
+
+        # 4) Offer 数（按 offer_date 字符串日期）
+        offer_query = session.query(Interview).filter(
+            Interview.offer_issued == 1,
+            Interview.offer_date.isnot(None),
+            Interview.offer_date != ''
+        )
+        if position:
+            offer_query = offer_query.filter(Interview.applied_position == position)
+        if start_date_str:
+            offer_query = offer_query.filter(Interview.offer_date >= start_date_str)
+        if end_date_str:
+            offer_query = offer_query.filter(Interview.offer_date <= end_date_str)
+        offer_count = offer_query.count()
+
+        # 5) 入职数（按 onboard_date 字符串日期）
+        onboard_query = session.query(Interview).filter(
+            Interview.onboard == 1,
+            Interview.onboard_date.isnot(None),
+            Interview.onboard_date != ''
+        )
+        if position:
+            onboard_query = onboard_query.filter(Interview.applied_position == position)
+        if start_date_str:
+            onboard_query = onboard_query.filter(Interview.onboard_date >= start_date_str)
+        if end_date_str:
+            onboard_query = onboard_query.filter(Interview.onboard_date <= end_date_str)
+        onboard_count = onboard_query.count()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'resume_count': resume_count,
+                'interview_count': interview_count,
+                'pass_count': pass_count,
+                'offer_count': offer_count,
+                'onboard_count': onboard_count,
+            }
+        })
+    finally:
+        session.close()
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():

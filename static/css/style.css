@@ -20,7 +20,7 @@ body {
 /* 左侧侧边栏 */
 .sidebar {
     width: 200px;
-    background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    background: rgb(60, 77, 159);
     color: white;
     position: fixed;
     left: 0;
@@ -491,22 +491,24 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: rgb(60, 77, 159);
+    color: #ffffff;
+    border: 1px solid rgb(60, 77, 159);
 }
 
 .btn-primary:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 4px 12px rgba(60, 77, 159, 0.4);
 }
 
 .btn-secondary {
-    background: #6c757d;
-    color: white;
+    background: rgb(60, 77, 159);
+    color: #ffffff;
+    border: 1px solid rgb(60, 77, 159);
 }
 
 .btn-secondary:hover {
-    background: #5a6268;
+    background: rgb(60, 77, 159);
 }
 
 .btn-danger {
@@ -537,18 +539,19 @@ body {
 }
 
 .resume-table th {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    color: white;
+    background: rgb(60, 77, 159);
+    color: #ffffff;
     padding: 12px;
     text-align: left;
     font-weight: 600;
     font-size: 14px;
     cursor: pointer;
     user-select: none;
+    border: 1px solid #ffffff;
 }
 
 .resume-table th:hover {
-    background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+    background: rgb(60, 77, 159);
 }
 
 .resume-table td {
@@ -754,14 +757,64 @@ body {
 }
 
 .interview-doc-link {
-    font-size: 12px;
-    color: #666;
+    font-size: 14px;
+    color: #333;
     margin-left: 8px;
 }
 
 .interview-doc-right .btn {
-    padding: 6px 10px;
+    padding: 10px 20px;
+    font-size: 14px;
+}
+
+/* 面试流程 - 文档上传控件样式 */
+.interview-doc-left .btn {
+    padding: 6px 14px; /* 缩小上传按钮高度与整体视觉更协调 */
+    font-size: 14px;
+}
+
+.interview-doc-left input[type="file"] {
+    font-size: 14px;
+    padding: 8px 0;
+}
+
+/* 数据统计模块 */
+.stats-section {
+    margin-top: 10px;
+}
+
+.stats-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 16px;
+}
+
+.stats-card {
+    flex: 1 1 180px;
+    min-width: 180px;
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.12);
+    padding: 16px 20px;
+}
+
+.stats-card-title {
+    font-size: 14px;
+    color: #64748b;
+    margin-bottom: 8px;
+}
+
+.stats-card-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: #0f172a;
+    margin-bottom: 6px;
+}
+
+.stats-card-desc {
     font-size: 12px;
+    color: #94a3b8;
 }
 
 .close {
