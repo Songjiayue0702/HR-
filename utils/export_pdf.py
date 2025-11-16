@@ -1,0 +1,254 @@
+"""
+PDF 导出工具
+
+用于导出简历分析报告：
+- 应聘岗位
+- 基本信息
+- 教育信息
+- 工作经历
+- 简历匹配度分析
+"""
+
+import os
+from datetime import datetime
+from typing import Dict, Any, List
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+from config import Config
+
+# 全局中文字体名称
+CH_FONT_NAME = "SimSun"
+
+
+def _register_chinese_font() -> str:
+    """
+    注册中文字体，返回可用的字体名称。
+    优先使用常见的 Windows 中文字体（宋体 / 黑体 / 微软雅黑）。
+    """
+    global CH_FONT_NAME
+
+    # 已注册则直接返回
+    try:
+        pdfmetrics.getFont(CH_FONT_NAME)
+        return CH_FONT_NAME
+    except KeyError:
+        pass
+
+    font_candidates = [
+        ("SimSun", r"C:\Windows\Fonts\simsun.ttc"),
+        ("SimSun", r"C:\Windows\Fonts\simsun.ttf"),
+        ("SimHei", r"C:\Windows\Fonts\simhei.ttf"),
+        ("MSYH", r"C:\Windows\Fonts\msyh.ttc"),
+        ("MSYH", r"C:\Windows\Fonts\msyh.ttf"),
+    ]
+
+    for name, path in font_candidates:
+        if os.path.exists(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+                CH_FONT_NAME = name
+                return CH_FONT_NAME
+            except Exception:
+                continue
+
+    # 如果找不到中文字体，只能退回默认 Helvetica（中文会显示为方块）
+    CH_FONT_NAME = "Helvetica"
+    return CH_FONT_NAME
+
+
+def _ensure_export_folder() -> str:
+    """确保导出目录存在并返回路径"""
+    export_folder = getattr(Config, "EXPORT_FOLDER", "exports")
+    if not os.path.exists(export_folder):
+        os.makedirs(export_folder, exist_ok=True)
+    return export_folder
+
+
+def _draw_wrapped_text(
+    c: canvas.Canvas,
+    text: str,
+    x: int,
+    y: int,
+    max_width: int,
+    leading: int = 16,
+) -> int:
+    """
+    在 PDF 上绘制自动换行的文本，并返回新的 y 坐标
+    """
+    if not text:
+        return y
+
+    font_name = CH_FONT_NAME
+
+    current_line = ""
+    for ch in text:
+        if ch == "\n":
+            c.drawString(x, y, current_line)
+            y -= leading
+            current_line = ""
+            continue
+
+        if pdfmetrics.stringWidth(current_line + ch, font_name, 11) > max_width:
+            c.drawString(x, y, current_line)
+            y -= leading
+            current_line = ch
+        else:
+            current_line += ch
+
+    if current_line:
+        c.drawString(x, y, current_line)
+        y -= leading
+
+    return y
+
+
+def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> str:
+    """
+    导出简历分析报告为 PDF
+
+    Args:
+        resume: Resume 模型实例
+        analysis: 匹配分析结果字典（可为空）
+
+    Returns:
+        生成的 PDF 文件路径
+    """
+    export_folder = _ensure_export_folder()
+    _register_chinese_font()
+
+    filename = f"resume_analysis_{resume.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    file_path = os.path.join(export_folder, filename)
+
+    c = canvas.Canvas(file_path, pagesize=A4)
+    width, height = A4
+
+    margin_left = 50
+    margin_right = 50
+    max_text_width = width - margin_left - margin_right
+
+    y = height - 60
+
+    # 标题
+    c.setFont(CH_FONT_NAME, 16)
+    c.drawString(margin_left, y, "简历分析报告")
+    y -= 30
+
+    c.setFont(CH_FONT_NAME, 11)
+
+    def draw_section(title: str):
+        nonlocal y
+        if y < 80:
+            c.showPage()
+            c.setFont(CH_FONT_NAME, 11)
+            y = height - 60
+        c.setFont(CH_FONT_NAME, 12)
+        c.drawString(margin_left, y, title)
+        y -= 18
+        c.setFont(CH_FONT_NAME, 11)
+
+    # 一、应聘岗位
+    draw_section("一、应聘岗位")
+    applied_position = getattr(resume, "applied_position", "") or "-"
+    y = _draw_wrapped_text(c, f"应聘岗位：{applied_position}", margin_left, y, max_text_width)
+    y -= 10
+
+    # 二、基本信息
+    draw_section("二、基本信息")
+    basic_lines = [
+        f"姓名：{getattr(resume, 'name', '') or '-'}",
+        f"性别：{getattr(resume, 'gender', '') or '-'}",
+        f"出生年份：{getattr(resume, 'birth_year', '') or '-'}",
+        f"年龄：{getattr(resume, 'age', '') or '-'}",
+        f"手机号：{getattr(resume, 'phone', '') or '-'}",
+        f"邮箱：{getattr(resume, 'email', '') or '-'}",
+    ]
+    for line in basic_lines:
+        y = _draw_wrapped_text(c, line, margin_left, y, max_text_width)
+    y -= 10
+
+    # 三、教育信息
+    draw_section("三、教育信息")
+    edu_lines = [
+        f"最高学历：{getattr(resume, 'highest_education', '') or '-'}",
+        f"毕业学校：{getattr(resume, 'school', '') or '-'}",
+        f"专业：{getattr(resume, 'major', '') or '-'}",
+    ]
+    for line in edu_lines:
+        y = _draw_wrapped_text(c, line, margin_left, y, max_text_width)
+    y -= 10
+
+    # 四、工作经历
+    draw_section("四、工作经历")
+    work_exps: List[Dict[str, Any]] = getattr(resume, "work_experience", None) or []
+    if not work_exps:
+        y = _draw_wrapped_text(c, "暂无工作经历", margin_left, y, max_text_width)
+    else:
+        for idx, exp in enumerate(work_exps, start=1):
+            company = exp.get("company") or "-"
+            position = exp.get("position") or "-"
+            start_year = exp.get("start_year")
+            end_year = exp.get("end_year")
+
+            if start_year and end_year:
+                time_range = f"{start_year} - {end_year}"
+            elif start_year and not end_year:
+                time_range = f"{start_year} - 至今"
+            elif not start_year and end_year:
+                time_range = f"至 {end_year}"
+            else:
+                time_range = "-"
+
+            line = f"{idx}. {company} | {position} | {time_range}"
+            y = _draw_wrapped_text(c, line, margin_left, y, max_text_width)
+    y -= 10
+
+    # 五、简历匹配度分析
+    draw_section("五、简历匹配度分析")
+    if analysis:
+        match_score = analysis.get("match_score", None)
+        match_level = analysis.get("match_level", "")
+        detailed = analysis.get("detailed_analysis", "") or ""
+        strengths = analysis.get("strengths") or []
+        weaknesses = analysis.get("weaknesses") or []
+        suggestions = analysis.get("suggestions") or []
+
+        if match_score is not None:
+            y = _draw_wrapped_text(c, f"匹配度分数：{match_score}", margin_left, y, max_text_width)
+        if match_level:
+            y = _draw_wrapped_text(c, f"匹配等级：{match_level}", margin_left, y, max_text_width)
+        y -= 5
+
+        if detailed:
+            y = _draw_wrapped_text(c, "详细分析：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, detailed, margin_left + 20, y, max_text_width - 20)
+            y -= 5
+
+        if strengths:
+            y = _draw_wrapped_text(c, "优势：", margin_left, y, max_text_width)
+            for s in strengths:
+                y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
+            y -= 5
+
+        if weaknesses:
+            y = _draw_wrapped_text(c, "不足：", margin_left, y, max_text_width)
+            for w in weaknesses:
+                y = _draw_wrapped_text(c, f"• {w}", margin_left + 20, y, max_text_width - 20)
+            y -= 5
+
+        if suggestions:
+            y = _draw_wrapped_text(c, "改进建议：", margin_left, y, max_text_width)
+            for s in suggestions:
+                y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
+    else:
+        y = _draw_wrapped_text(c, "暂无匹配度分析结果。请在系统中先执行一次匹配分析。", margin_left, y, max_text_width)
+
+    c.showPage()
+    c.save()
+
+    return file_path
+
+

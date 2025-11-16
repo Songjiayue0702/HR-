@@ -168,28 +168,18 @@ class AIExtractor:
             return None
             
         try:
-            # 智能处理长文本，避免简单截断导致JSON格式内容不全
-            # 目标：**让AI尽可能看到完整的JSON结构**
-            max_length = 40000  # 支持页数较多的简历（具体上限由模型本身的上下文长度决定）
-            
-            if len(text) > max_length:
-                # 如果是完整 JSON（以 "{" 开头），尽量不截断，只尝试压缩格式
-                text_stripped = text.lstrip()
-                if text_stripped.startswith('{'):
-                    try:
-                        import json
-                        # 先解析再用紧凑格式重写，保留全部字段和条目
-                        data = json.loads(text_stripped)
-                        compact_json = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
-                        text = compact_json
-                        # 不再按字符数截断，让模型自己处理过长输入的情况
-                    except Exception:
-                        # 如果解析失败，退回普通文本截取逻辑
-                        text = self._smart_truncate_text(text, max_length)
-                else:
-                    # 非 JSON 文本：采用智能截取，保留关键信息区域
-                    text = self._smart_truncate_text(text, max_length)
-            
+            # 目标：**尽量让AI看到完整的JSON结构，不再按字符数截断**
+            # 如果文本本身就是合法JSON（以 "{" 开头），只做“压缩格式”，不丢任何字段
+            text_stripped = text.lstrip()
+            if text_stripped.startswith('{'):
+                try:
+                    data = json.loads(text_stripped)
+                    # 使用紧凑格式，减少无意义空白，但保留全部内容
+                    text = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+                except Exception:
+                    # 解析失败则按原样使用完整文本，不再做截断
+                    text = text
+
             prompt = self._build_prompt(text, is_word_file=is_word_file)
             response = self._call_ai_api(prompt)
             
