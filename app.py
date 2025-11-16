@@ -670,6 +670,22 @@ def update_interview(interview_id):
         interview.round2_comment = data.get('round2_comment')
         interview.round3_comment = data.get('round3_comment')
 
+        # AI 分析结果（只读展示，但需要持久化）
+        interview.round1_ai_result = data.get('round1_ai_result')
+        interview.round2_ai_result = data.get('round2_ai_result')
+        interview.round3_ai_result = data.get('round3_ai_result')
+
+        # 应聘岗位（同时同步到简历）
+        applied_position = data.get('applied_position')
+        if applied_position is not None:
+            interview.applied_position = applied_position or None
+            try:
+                resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+                if resume:
+                    resume.applied_position = applied_position or None
+            except Exception as _:
+                pass
+
         # Offer 与入职信息
         interview.offer_issued = 1 if data.get('offer_issued') else 0
         interview.offer_date = data.get('offer_date')

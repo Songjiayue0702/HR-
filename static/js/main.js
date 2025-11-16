@@ -458,7 +458,9 @@ function displayDetail(resume) {
                 <input type="text" value="${escapeHtml(resume.parse_time || '')}" disabled>
             </label>
             <label>应聘岗位
-                <input id="editAppliedPosition" type="text" value="${escapeHtml(resume.applied_position || '')}">
+                <select id="editAppliedPosition" class="form-select">
+                    <option value="">请选择岗位</option>
+                </select>
             </label>
         </div>
         <div class="form-grid">
@@ -609,6 +611,9 @@ function displayDetail(resume) {
         </div>
     `;
     modal.style.display = 'block';
+    
+    // 加载岗位下拉选项
+    populatePositionSelect('editAppliedPosition', resume.applied_position || '');
     
     // 添加全部工作经历表格的编辑事件监听
     setupWorkExperienceEditListeners();
@@ -1177,7 +1182,7 @@ function loadInterviews() {
                     const name = escapeHtml(item.name || '-');
                     const position = escapeHtml(item.applied_position || '-');
                     const status = escapeHtml(item.status || '待面试');
-                    const time = item.create_time ? escapeHtml(item.create_time.replace('T', ' ').slice(0, 19)) : '-';
+                    const time = item.update_time ? escapeHtml(item.update_time.replace('T', ' ').slice(0, 19)) : '-';
                     const score = item.match_score !== null && item.match_score !== undefined ? item.match_score : null;
                     const level = escapeHtml(item.match_level || '');
                     const color = getScoreColor(score);
@@ -1239,7 +1244,9 @@ function openInterviewModal(interviewId) {
                     </div>
                     <div class="detail-item">
                         <label>应聘岗位：</label>
-                        <span>${escapeHtml(data.applied_position || '-')}</span>
+                        <select id="interviewAppliedPosition" class="form-select">
+                            <option value="">请选择岗位</option>
+                        </select>
                     </div>
                     <div class="detail-item">
                         <label>当前状态：</label>
@@ -1286,7 +1293,7 @@ function openInterviewModal(interviewId) {
                 </div>
                 <div class="form-group">
                     <label>一面AI分析结果：</label>
-                    <textarea id="round1_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly></textarea>
+                    <textarea id="round1_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly>${escapeHtml(data.round1_ai_result || '')}</textarea>
                 </div>
 
                 <div class="section-header">
@@ -1328,7 +1335,7 @@ function openInterviewModal(interviewId) {
                 </div>
                 <div class="form-group">
                     <label>二面AI分析结果：</label>
-                    <textarea id="round2_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly></textarea>
+                    <textarea id="round2_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly>${escapeHtml(data.round2_ai_result || '')}</textarea>
                 </div>
 
                 <div class="section-header">
@@ -1374,6 +1381,10 @@ function openInterviewModal(interviewId) {
                         <button class="btn btn-primary" onclick="analyzeInterviewDoc(${data.id}, 3)">AI分析</button>
                     </div>
                 </div>
+                <div class="form-group">
+                    <label>三面AI分析结果：</label>
+                    <textarea id="round3_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly>${escapeHtml(data.round3_ai_result || '')}</textarea>
+                </div>
 
                 <div class="section-header">
                     <h4>Offer与入职</h4>
@@ -1414,10 +1425,6 @@ function openInterviewModal(interviewId) {
                         <input type="text" id="onboard_department" class="form-input" value="${escapeHtml(data.onboard_department || '')}">
                     </div>
                 </div>
-                <div class="form-group">
-                    <label>三面AI分析结果：</label>
-                    <textarea id="round3_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly></textarea>
-                </div>
 
                 <div class="modal-actions">
                     <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存</button>
@@ -1426,9 +1433,8 @@ function openInterviewModal(interviewId) {
             `;
 
             modal.style.display = 'block';
-            // 底部额外区域不再使用，仅保持隐藏
-            const extra = document.getElementById('interviewModalExtraActions');
-            if (extra) extra.style.display = 'none';
+            // 填充应聘岗位下拉
+            populatePositionSelect('interviewAppliedPosition', data.applied_position || '');
 
             // 将当前 interviewId 存到上传函数可用的位置
             window.currentInterviewIdForUpload = data.id;
@@ -1505,6 +1511,7 @@ function onRoundResultChange() {
 // 保存面试流程详情
 function saveInterview(interviewId) {
     const payload = {
+        applied_position: document.getElementById('interviewAppliedPosition')?.value || null,
         round1_interviewer: document.getElementById('round1_interviewer')?.value || null,
         round1_time: document.getElementById('round1_time')?.value || null,
         round1_result: document.getElementById('round1_result')?.value || null,
@@ -1518,6 +1525,9 @@ function saveInterview(interviewId) {
         round1_comment: document.getElementById('round1_comment')?.value || null,
         round2_comment: document.getElementById('round2_comment')?.value || null,
         round3_comment: document.getElementById('round3_comment')?.value || null,
+        round1_ai_result: document.getElementById('round1_ai_result')?.value || null,
+        round2_ai_result: document.getElementById('round2_ai_result')?.value || null,
+        round3_ai_result: document.getElementById('round3_ai_result')?.value || null,
         offer_issued: document.getElementById('offer_issued')?.checked || false,
         offer_date: document.getElementById('offer_date')?.value || null,
         offer_department: document.getElementById('offer_department')?.value || null,
@@ -1538,7 +1548,6 @@ function saveInterview(interviewId) {
     .then(result => {
         if (result.success) {
             alert('保存成功');
-            closeInterviewModal();
             loadInterviews();
         } else {
             alert(`保存失败：${result.message || '未知错误'}`);
@@ -2172,7 +2181,7 @@ function displayAnalysisDetail(resume) {
     });
 }
 
-// 加载岗位列表用于分析模块
+// 加载岗位列表用于分析模块 / 通用下拉
 function loadPositionsForAnalysis() {
     return fetch('/api/positions')
         .then(response => response.json())
@@ -2187,6 +2196,22 @@ function loadPositionsForAnalysis() {
             console.error('加载岗位列表失败:', error);
             return [];
         });
+}
+
+// 通用：填充岗位下拉选项
+function populatePositionSelect(selectId, selectedName) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    loadPositionsForAnalysis().then(positions => {
+        const current = selectedName || '';
+        let optionsHtml = '<option value="">请选择岗位</option>';
+        positions.forEach(pos => {
+            const name = pos.position_name || '';
+            const selected = name === current ? 'selected' : '';
+            optionsHtml += `<option value="${escapeHtml(name)}" ${selected}>${escapeHtml(name)}</option>`;
+        });
+        select.innerHTML = optionsHtml;
+    });
 }
 
 // 应聘岗位变化时的处理

@@ -182,6 +182,11 @@ class Interview(Base):
     round2_doc_path = Column(String(500))  # 二面文档
     round3_doc_path = Column(String(500))  # 三面文档
 
+    # AI 分析结果（按轮次）
+    round1_ai_result = Column(Text)
+    round2_ai_result = Column(Text)
+    round3_ai_result = Column(Text)
+
     # Offer 与入职信息
     offer_issued = Column(Integer, default=0)  # 是否发放offer：0 否，1 是
     offer_date = Column(String(50))            # offer 发放日期
@@ -219,6 +224,9 @@ class Interview(Base):
             'round1_doc_path': self.round1_doc_path,
             'round2_doc_path': self.round2_doc_path,
             'round3_doc_path': self.round3_doc_path,
+            'round1_ai_result': self.round1_ai_result,
+            'round2_ai_result': self.round2_ai_result,
+            'round3_ai_result': self.round3_ai_result,
             'offer_issued': self.offer_issued,
             'offer_date': self.offer_date,
             'offer_department': self.offer_department,
@@ -286,6 +294,12 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN round2_doc_path VARCHAR(500)")
     if 'round3_doc_path' not in i_columns:
         add_cols.append("ADD COLUMN round3_doc_path VARCHAR(500)")
+    if 'round1_ai_result' not in i_columns:
+        add_cols.append("ADD COLUMN round1_ai_result TEXT")
+    if 'round2_ai_result' not in i_columns:
+        add_cols.append("ADD COLUMN round2_ai_result TEXT")
+    if 'round3_ai_result' not in i_columns:
+        add_cols.append("ADD COLUMN round3_ai_result TEXT")
     if 'offer_issued' not in i_columns:
         add_cols.append("ADD COLUMN offer_issued INTEGER DEFAULT 0")
     if 'offer_date' not in i_columns:
