@@ -1293,6 +1293,76 @@ function exportInterviews(ids) {
     });
 }
 
+// 下载简历分析PDF报告（简历分析详情页）
+function downloadAnalysisPdf(resumeId) {
+    fetch(`/api/resumes/${resumeId}/analysis-pdf`, {
+        method: 'POST'
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.message || `导出失败，状态码: ${response.status}`);
+            }).catch(() => {
+                throw new Error(`导出失败，状态码: ${response.status}`);
+            });
+        }
+        return response.blob();
+    })
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `简历分析报告_${resumeId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    })
+    .catch(error => {
+        console.error('下载简历分析PDF失败:', error);
+        alert(`下载失败：${error.message || '未知错误'}`);
+    });
+}
+
+// 下载单轮面试AI分析PDF
+function downloadInterviewAnalysisPdf(interviewId, round) {
+    const textarea = document.getElementById(`round${round}_ai_result`);
+    const analysisText = textarea ? textarea.value : '';
+
+    fetch(`/api/interviews/${interviewId}/analysis-pdf`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ round, analysis_text: analysisText })
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(data => {
+                throw new Error(data.message || `导出失败，状态码: ${response.status}`);
+            }).catch(() => {
+                throw new Error(`导出失败，状态码: ${response.status}`);
+            });
+        }
+        return response.blob();
+    })
+    .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const roundName = round === 1 ? '一面' : round === 2 ? '二面' : '三面';
+        a.href = url;
+        a.download = `${roundName}面试反馈报告_${interviewId}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    })
+    .catch(error => {
+        console.error('下载面试AI分析PDF失败:', error);
+        alert(`下载失败：${error.message || '未知错误'}`);
+    });
+}
+
 // 根据匹配分数返回颜色
 function getScoreColor(score) {
     if (score === null || score === undefined) return '#ccc';
@@ -1339,7 +1409,10 @@ function openInterviewModal(interviewId) {
                 
                 <div class="section-header">
                     <h4>一面</h4>
-                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存一面</button>
+                    <div>
+                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 1)">面试反馈报告</button>
+                        <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存一面</button>
+                    </div>
                 </div>
                 <div class="form-grid">
                     <div class="detail-item">
@@ -1381,7 +1454,10 @@ function openInterviewModal(interviewId) {
 
                 <div class="section-header">
                     <h4>二面</h4>
-                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存二面</button>
+                    <div>
+                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 2)">面试反馈报告</button>
+                        <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存二面</button>
+                    </div>
                 </div>
                 <div class="form-grid">
                     <div class="detail-item">
@@ -1423,7 +1499,10 @@ function openInterviewModal(interviewId) {
 
                 <div class="section-header">
                     <h4>三面</h4>
-                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存三面</button>
+                    <div>
+                        <button class="btn btn-secondary" style="margin-right:8px;" onclick="downloadInterviewAnalysisPdf(${data.id}, 3)">面试反馈报告</button>
+                        <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存三面</button>
+                    </div>
                 </div>
                 <div class="form-grid">
                     <div class="detail-item">
@@ -2244,6 +2323,13 @@ function displayAnalysisDetail(resume) {
                 <div class="detail-item" style="margin-top: 15px;">
                     <label>工龄：</label>
                     <span>${workYears !== null && workYears >= 0 ? workYears + '年' : '-'}</span>
+                </div>
+            </div>
+
+            <div class="detail-section">
+                <h3>下载分析报告</h3>
+                <div class="detail-item">
+                    <button class="btn btn-secondary" onclick="downloadAnalysisPdf(${resume.id})">下载PDF报告</button>
                 </div>
             </div>
             

@@ -14,6 +14,7 @@ from utils.api_integration import APIIntegration
 from utils.ai_extractor import AIExtractor
 from utils.duplicate_checker import check_duplicate
 from utils.export import export_resumes_to_excel, export_interviews_to_excel
+from utils.export_pdf import export_resume_analysis_to_pdf, export_interview_round_analysis_to_pdf
 import threading
 
 app = Flask(__name__, 
@@ -515,6 +516,139 @@ def export_batch():
     return send_file(file_path, as_attachment=True, download_name=f'简历批量导出_{datetime.now().strftime("%Y%m%d")}.xlsx')
 
 
+@app.route('/api/resumes/<int:resume_id>/analysis-pdf', methods=['POST'])
+def export_resume_analysis_pdf(resume_id):
+    """导出简历分析详情为PDF（基本信息、教育信息、工作经历、简历匹配度分析）"""
+    session = get_db_session()
+    try:
+        resume = session.query(Resume).filter(Resume.id == resume_id).first()
+        if not resume:
+            return jsonify({'success': False, 'message': '简历不存在'}), 404
+
+        applied_position = (resume.applied_position or '').strip()
+        analysis = None
+
+        # 如果有应聘岗位且AI可用，则在导出前实时执行一次匹配分析，保证PDF中的匹配度内容是最新的
+        try:
+            if applied_position:
+                # 获取岗位信息
+                position = session.query(Position).filter(Position.position_name == applied_position).first()
+                if position:
+                    ai_enabled = app.config.get('AI_ENABLED', True)
+                    ai_api_key = app.config.get('AI_API_KEY', '')
+                    ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+                    ai_api_base = app.config.get('AI_API_BASE', '')
+
+                    if ai_enabled and ai_api_key:
+                        ai_extractor = AIExtractor(
+                            api_key=ai_api_key,
+                            api_base=ai_api_base if ai_api_base else None,
+                            model=ai_model
+                        )
+
+                        resume_info = f"""
+姓名：{resume.name or '未知'}
+性别：{resume.gender or '未知'}
+年龄：{resume.age or '未知'}
+学历：{resume.highest_education or '未知'}
+毕业学校：{resume.school or '未知'}
+专业：{resume.major or '未知'}
+工龄：{resume.earliest_work_year and (datetime.now().year - resume.earliest_work_year) or '未知'}年
+工作经历：{json.dumps(resume.work_experience or [], ensure_ascii=False, indent=2)}
+"""
+
+                        position_info = f"""
+岗位名称：{position.position_name}
+工作内容：{position.work_content or '未填写'}
+任职资格：{position.job_requirements or '未填写'}
+核心需求：{position.core_requirements or '未填写'}
+"""
+
+                        prompt = f"""请分析以下简历与岗位的匹配度，并给出详细的分析报告。
+
+【简历信息】
+{resume_info}
+
+【岗位要求】
+{position_info}
+
+请从以下维度进行分析：
+1. 教育背景匹配度（学历、学校、专业）
+2. 工作经验匹配度（工作年限、工作内容、岗位相关性）
+3. 技能匹配度（根据工作经历推断的技能）
+4. 综合匹配度评分（0-100分）
+
+请以JSON格式返回分析结果，格式如下：
+{{
+    "match_score": 85,
+    "match_level": "高度匹配",
+    "detailed_analysis": "详细的分析说明...",
+    "strengths": ["优势1", "优势2"],
+    "weaknesses": ["不足1", "不足2"],
+    "suggestions": ["建议1", "建议2"]
+}}
+
+其中：
+- match_score: 匹配度分数（0-100）
+- match_level: 匹配等级（高度匹配/中等匹配/低度匹配）
+- detailed_analysis: 详细分析说明（200-500字）
+- strengths: 优势匹配点列表
+- weaknesses: 不足匹配点列表
+- suggestions: 改进建议列表
+
+请只返回JSON格式，不要包含其他文字说明。"""
+
+                        response_text = ai_extractor._call_ai_api(prompt)
+
+                        # 解析JSON
+                        import re
+                        try:
+                            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                            if json_match:
+                                analysis = json.loads(json_match.group())
+                            else:
+                                analysis = json.loads(response_text)
+                        except json.JSONDecodeError:
+                            analysis = {
+                                'match_score': 50,
+                                'match_level': '中等匹配',
+                                'detailed_analysis': response_text[:500] if len(response_text) > 500 else response_text,
+                                'strengths': [],
+                                'weaknesses': [],
+                                'suggestions': []
+                            }
+
+                        # 对得分做同样的“放宽”与等级划分，保持与页面一致
+                        try:
+                            raw_score = analysis.get('match_score')
+                            if raw_score is None:
+                                raw_score = 60
+                            raw_score = float(raw_score)
+                            new_score = int(max(50, min(100, raw_score * 0.7 + 30)))
+                            analysis['match_score'] = new_score
+
+                            if new_score >= 80:
+                                level = '高度匹配'
+                            elif new_score >= 60:
+                                level = '中等匹配'
+                            else:
+                                level = '低度匹配'
+                            analysis['match_level'] = level
+                        except Exception:
+                            pass
+        except Exception as _:
+            # 匹配度分析失败时，不影响PDF导出，只是不带匹配信息
+            analysis = None
+
+        file_path = export_resume_analysis_to_pdf(resume, analysis)
+        download_name = f"简历分析报告_{resume.name or resume_id}.pdf"
+        return send_file(file_path, as_attachment=True, download_name=download_name)
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'导出分析报告失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
 @app.route('/api/interviews', methods=['GET'])
 def list_interviews():
     """获取面试流程列表，可按姓名/岗位搜索"""
@@ -952,6 +1086,46 @@ def analyze_interview_doc(interview_id):
 
     except Exception as e:
         return jsonify({'success': False, 'message': f'分析请求失败: {str(e)}'}), 500
+
+
+@app.route('/api/interviews/<int:interview_id>/analysis-pdf', methods=['POST'])
+def export_interview_round_analysis_pdf(interview_id):
+    """导出单轮面试AI分析结果为PDF"""
+    try:
+        data = request.json or {}
+        round_str = str(data.get('round') or '')
+        if round_str not in ('1', '2', '3'):
+            return jsonify({'success': False, 'message': '缺少或错误的轮次参数'}), 400
+
+        session = get_db_session()
+        try:
+            interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        finally:
+            session.close()
+
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+
+        # 选择对应轮的AI分析文本（优先使用数据库中的内容，如为空则尝试使用前端传来的analysis_text）
+        client_text = data.get('analysis_text') or ''
+        if round_str == '1':
+            analysis_text = interview.round1_ai_result or client_text
+            round_name = '一面'
+        elif round_str == '2':
+            analysis_text = interview.round2_ai_result or client_text
+            round_name = '二面'
+        else:
+            analysis_text = interview.round3_ai_result or client_text
+            round_name = '三面'
+
+        if not analysis_text:
+            return jsonify({'success': False, 'message': '当前轮次暂无AI分析结果，请先执行AI分析'}), 400
+
+        file_path = export_interview_round_analysis_to_pdf(interview, round_name, analysis_text)
+        download_name = f'{round_name}面试反馈报告_{interview.name or interview_id}.pdf'
+        return send_file(file_path, as_attachment=True, download_name=download_name)
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'导出AI分析报告失败: {str(e)}'}), 500
 
 @app.route('/api/ai/config', methods=['GET'])
 def get_ai_config():

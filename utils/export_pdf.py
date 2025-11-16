@@ -252,3 +252,123 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
     return file_path
 
 
+def export_interview_round_analysis_to_pdf(interview, round_name: str, analysis_text: str) -> str:
+    """
+    导出单轮面试反馈报告为 PDF
+
+    内容顺序：
+    1. 候选人信息
+    2. 本轮面试详情（面试官、时间、是否通过、面试评价）
+    3. AI 分析结果
+
+    Args:
+        interview: Interview 模型实例
+        round_name: '一面'/'二面'/'三面'
+        analysis_text: 已生成的 AI 分析文本
+    """
+    export_folder = _ensure_export_folder()
+    _register_chinese_font()
+
+    filename = f"interview_{interview.id}_{round_name}_面试反馈报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    file_path = os.path.join(export_folder, filename)
+
+    c = canvas.Canvas(file_path, pagesize=A4)
+    width, height = A4
+
+    margin_left = 50
+    margin_right = 50
+    max_text_width = width - margin_left - margin_right
+
+    y = height - 60
+
+    c.setFont(CH_FONT_NAME, 16)
+    c.drawString(margin_left, y, f"{round_name}面试反馈报告")
+    y -= 30
+
+    c.setFont(CH_FONT_NAME, 11)
+
+    # 一、候选人信息
+    c.setFont(CH_FONT_NAME, 12)
+    c.drawString(margin_left, y, "一、候选人信息")
+    y -= 18
+    c.setFont(CH_FONT_NAME, 11)
+
+    basic_lines = [
+        f"姓名：{getattr(interview, 'name', '') or '-'}",
+        f"应聘岗位：{getattr(interview, 'applied_position', '') or '-'}",
+        f"当前流程状态：{getattr(interview, 'status', '') or '-'}",
+        f"简历匹配度：{getattr(interview, 'match_score', '') if getattr(interview, 'match_score', None) is not None else '-'}",
+    ]
+    for line in basic_lines:
+        y = _draw_wrapped_text(c, line, margin_left, y, max_text_width)
+    y -= 12
+
+    # 二、本轮面试详情
+    c.setFont(CH_FONT_NAME, 12)
+    c.drawString(margin_left, y, "二、本轮面试详情")
+    y -= 18
+    c.setFont(CH_FONT_NAME, 11)
+
+    # 按轮次取字段
+    interviewer = "-"
+    time_str = "-"
+    result = "-"
+    comment = ""
+
+    if round_name == "一面":
+        interviewer = getattr(interview, "round1_interviewer", "") or "-"
+        time_val = getattr(interview, "round1_time", None)
+        time_str = (str(time_val)[:10] if time_val else "-")
+        result = getattr(interview, "round1_result", "") or "未填写"
+        comment = getattr(interview, "round1_comment", "") or ""
+    elif round_name == "二面":
+        interviewer = getattr(interview, "round2_interviewer", "") or "-"
+        time_val = getattr(interview, "round2_time", None)
+        time_str = (str(time_val)[:10] if time_val else "-")
+        result = getattr(interview, "round2_result", "") or "未填写"
+        comment = getattr(interview, "round2_comment", "") or ""
+    else:  # 三面
+        interviewer = getattr(interview, "round3_interviewer", "") or "-"
+        time_val = getattr(interview, "round3_time", None)
+        time_str = (str(time_val)[:10] if time_val else "-")
+        result = getattr(interview, "round3_result", "") or "未填写"
+        comment = getattr(interview, "round3_comment", "") or ""
+
+    detail_lines = [
+        f"面试轮次：{round_name}",
+        f"面试官：{interviewer}",
+        f"面试时间：{time_str}",
+        f"面试结果：{result}",
+    ]
+    for line in detail_lines:
+        y = _draw_wrapped_text(c, line, margin_left, y, max_text_width)
+
+    if comment:
+        y = _draw_wrapped_text(c, "面试评价：", margin_left, y, max_text_width)
+        y = _draw_wrapped_text(c, comment, margin_left + 20, y, max_text_width - 20)
+    else:
+        y = _draw_wrapped_text(c, "面试评价：暂无填写", margin_left, y, max_text_width)
+    y -= 12
+
+    # 三、AI 分析结果
+    c.setFont(CH_FONT_NAME, 12)
+    c.drawString(margin_left, y, "三、AI 分析结果")
+    y -= 18
+    c.setFont(CH_FONT_NAME, 11)
+
+    if analysis_text:
+        y = _draw_wrapped_text(c, analysis_text, margin_left, y, max_text_width)
+    else:
+        y = _draw_wrapped_text(
+            c,
+            "暂无AI分析结果，请先在系统中执行该轮面试的AI分析。",
+            margin_left,
+            y,
+            max_text_width,
+        )
+
+    c.showPage()
+    c.save()
+
+    return file_path
+
