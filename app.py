@@ -7,7 +7,7 @@ import os
 import json
 from datetime import datetime
 from config import Config
-from models import get_db_session, Resume, Position
+from models import get_db_session, Resume, Position, Interview
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.api_integration import APIIntegration
@@ -515,6 +515,376 @@ def export_batch():
     file_path = export_resumes_to_excel(resumes)
     return send_file(file_path, as_attachment=True, download_name=f'简历批量导出_{datetime.now().strftime("%Y%m%d")}.xlsx')
 
+
+@app.route('/api/interviews', methods=['GET'])
+def list_interviews():
+    """获取面试流程列表"""
+    session = get_db_session()
+    try:
+        interviews = session.query(Interview).order_by(Interview.update_time.desc()).all()
+        data = [i.to_dict() for i in interviews]
+        return jsonify({'success': True, 'data': data})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'获取面试列表失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews', methods=['POST'])
+def create_interview():
+    """
+    创建一条面试流程记录
+    请求体: { "resume_id": 123 }
+    自动带入当前简历的姓名和应聘岗位
+    """
+    try:
+        data = request.json or {}
+        resume_id = data.get('resume_id')
+        match_score = data.get('match_score')
+        match_level = data.get('match_level')
+        if not resume_id:
+            return jsonify({'success': False, 'message': '缺少简历ID'}), 400
+
+        session = get_db_session()
+        try:
+            resume = session.query(Resume).filter(Resume.id == resume_id).first()
+            if not resume:
+                return jsonify({'success': False, 'message': '简历不存在'}), 404
+
+            interview = Interview(
+                resume_id=resume.id,
+                name=resume.name or '',
+                applied_position=resume.applied_position or '',
+                match_score=match_score,
+                match_level=match_level
+            )
+            session.add(interview)
+            session.commit()
+
+            return jsonify({'success': True, 'data': interview.to_dict()})
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'创建面试记录失败: {str(e)}'}), 500
+
+
+def _calc_interview_status(interview: Interview) -> str:
+    """
+    根据各轮结果 + Offer/入职信息 计算面试流程状态
+    基本规则：
+    1. 优先级：已入职 > 已发offer > 轮次结果
+    2. 轮次结果：
+       - 默认：待面试
+       - 一面 result 未通过：一面面试未通过
+       - 一面通过，二面未填：一面面试通过
+       - 二面 result 未通过：二面面试未通过
+       - 二面通过，round3_enabled=0：面试通过
+       - 二面通过，round3_enabled=1 且三面未填：二面面试通过
+       - 三面 result 未通过：三面面试未通过
+       - 三面 result 通过：面试通过
+    3. Offer 与入职：
+       - 如果 onboard=1 且实际入职日期、入职架构填写完整：状态为“已入职”
+       - 否则，如果 offer_issued=1 且 Offer 发放日期、拟入职架构、拟入职日期填写完整：状态为“已发offer”
+    """
+    # 先处理入职/offer状态（最高优先级）
+    if interview.onboard and interview.onboard_date and interview.onboard_department:
+        return '已入职'
+
+    if interview.offer_issued and interview.offer_date and interview.offer_department and interview.offer_onboard_plan_date:
+        return '已发offer'
+
+    # 以下为原有轮次状态计算逻辑
+    # 一面
+    if interview.round1_result:
+        if interview.round1_result == '未通过':
+            return '一面面试未通过'
+        elif interview.round1_result == '通过':
+            # 看二面
+            if not interview.round2_result:
+                return '一面面试通过'
+    else:
+        return '待面试'
+
+    # 二面
+    if interview.round2_result:
+        if interview.round2_result == '未通过':
+            return '二面面试未通过'
+        elif interview.round2_result == '通过':
+            if not interview.round3_enabled:
+                return '面试通过'
+            # 有三面
+            if not interview.round3_result:
+                return '二面面试通过'
+    else:
+        return '一面面试通过'
+
+    # 三面
+    if interview.round3_result:
+        if interview.round3_result == '未通过':
+            return '三面面试未通过'
+        elif interview.round3_result == '通过':
+            return '面试通过'
+
+    return interview.status or '待面试'
+
+
+@app.route('/api/interviews/<int:interview_id>', methods=['GET'])
+def get_interview(interview_id):
+    """获取单条面试记录详情"""
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        return jsonify({'success': True, 'data': interview.to_dict()})
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/<int:interview_id>', methods=['PUT'])
+def update_interview(interview_id):
+    """更新面试流程详情"""
+    data = request.json or {}
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+
+        # 更新各轮信息
+        interview.round1_interviewer = data.get('round1_interviewer')
+        interview.round1_time = data.get('round1_time')
+        interview.round1_result = data.get('round1_result')
+
+        interview.round2_interviewer = data.get('round2_interviewer')
+        interview.round2_time = data.get('round2_time')
+        interview.round2_result = data.get('round2_result')
+
+        interview.round3_enabled = 1 if data.get('round3_enabled') else 0
+        interview.round3_interviewer = data.get('round3_interviewer')
+        interview.round3_time = data.get('round3_time')
+        interview.round3_result = data.get('round3_result')
+
+        # 分轮次面试评价
+        interview.round1_comment = data.get('round1_comment')
+        interview.round2_comment = data.get('round2_comment')
+        interview.round3_comment = data.get('round3_comment')
+
+        # Offer 与入职信息
+        interview.offer_issued = 1 if data.get('offer_issued') else 0
+        interview.offer_date = data.get('offer_date')
+        interview.offer_department = data.get('offer_department')
+        interview.offer_onboard_plan_date = data.get('offer_onboard_plan_date')
+
+        interview.onboard = 1 if data.get('onboard') else 0
+        interview.onboard_date = data.get('onboard_date')
+        interview.onboard_department = data.get('onboard_department')
+
+        # 自动计算状态
+        interview.status = _calc_interview_status(interview)
+
+        session.commit()
+        return jsonify({'success': True, 'data': interview.to_dict()})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'更新面试记录失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/resume-ids', methods=['GET'])
+def get_interview_resume_ids():
+    """返回所有已邀约面试的 resume_id 列表，用于前端标记“已邀约”"""
+    session = get_db_session()
+    try:
+        ids = session.query(Interview.resume_id).distinct().all()
+        id_list = [row[0] for row in ids]
+        return jsonify({'success': True, 'data': id_list})
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/<int:interview_id>/upload-doc', methods=['POST'])
+def upload_interview_doc(interview_id):
+    """上传面试文档（录音逐字稿等），按轮次区分"""
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'message': '未找到上传文件'}), 400
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'success': False, 'message': '文件名为空'}), 400
+
+        # 轮次：1/2/3
+        round_str = request.form.get('round')
+        if round_str not in ('1', '2', '3'):
+            return jsonify({'success': False, 'message': '缺少或错误的轮次参数'}), 400
+
+        # 保存到上传目录
+        upload_folder = os.path.join(app.static_folder, 'interview_docs')
+        os.makedirs(upload_folder, exist_ok=True)
+        filename = secure_filename(f"interview_{interview_id}_round{round_str}_{file.filename}")
+        file_path = os.path.join(upload_folder, filename)
+        file.save(file_path)
+
+        # 保存相对路径（供前端访问）
+        rel_path = f"interview_docs/{filename}"
+        if round_str == '1':
+            interview.round1_doc_path = rel_path
+        elif round_str == '2':
+            interview.round2_doc_path = rel_path
+        else:
+            interview.round3_doc_path = rel_path
+        session.commit()
+
+        return jsonify({'success': True, 'data': interview.to_dict()})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'上传录音失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/<int:interview_id>/analyze-doc', methods=['POST'])
+def analyze_interview_doc(interview_id):
+    """
+    使用AI对面试文档（录音逐字稿等）进行分析
+    请求体: { "round": 1|2|3 }
+    """
+    try:
+        data = request.json or {}
+        round_str = str(data.get('round') or '')
+        if round_str not in ('1', '2', '3'):
+            return jsonify({'success': False, 'message': '缺少或错误的轮次参数'}), 400
+
+        session = get_db_session()
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            session.close()
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+
+        # 选择对应轮次的文档路径
+        doc_path = None
+        if round_str == '1':
+            doc_path = interview.round1_doc_path
+        elif round_str == '2':
+            doc_path = interview.round2_doc_path
+        else:
+            doc_path = interview.round3_doc_path
+
+        if not doc_path:
+            session.close()
+            return jsonify({'success': False, 'message': '当前轮次暂无文档可供分析'}), 400
+
+        file_path = os.path.join(app.static_folder, doc_path)
+        if not os.path.exists(file_path):
+            session.close()
+            return jsonify({'success': False, 'message': '文档文件不存在，请重新上传'}), 400
+
+        # 提取文档文本
+        try:
+            doc_text = extract_text(file_path)
+        except Exception as e:
+            session.close()
+            return jsonify({'success': False, 'message': f'文档内容提取失败: {str(e)}'}), 500
+
+        if not doc_text:
+            session.close()
+            return jsonify({'success': False, 'message': '文档内容为空，无法分析'}), 400
+
+        # 检查AI配置
+        ai_enabled = app.config.get('AI_ENABLED', True)
+        ai_api_key = app.config.get('AI_API_KEY', '')
+        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+        ai_api_base = app.config.get('AI_API_BASE', '')
+
+        if not ai_enabled or not ai_api_key:
+            session.close()
+            return jsonify({'success': False, 'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'}), 400
+
+        # 使用AI进行面试文档分析
+        from utils.ai_extractor import AIExtractor
+        ai_extractor = AIExtractor(
+            api_key=ai_api_key,
+            api_base=ai_api_base if ai_api_base else None,
+            model=ai_model
+        )
+
+        # 读取岗位信息（用于结合岗位要求分析）
+        position_info_text = ""
+        try:
+            resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+            if resume and resume.applied_position:
+                position = session.query(Position).filter(Position.position_name == resume.applied_position).first()
+                if position:
+                    position_info_text = f"""
+【岗位信息】
+岗位名称：{position.position_name}
+工作内容：{position.work_content or '未填写'}
+任职资格：{position.job_requirements or '未填写'}
+核心需求：{position.core_requirements or '未填写'}
+"""
+        except Exception as _:
+            position_info_text = ""
+
+        # 构建分析提示词
+        round_name = {'1': '一面', '2': '二面', '3': '三面'}[round_str]
+        prompt = f"""请你作为一名资深HR，根据以下【{round_name}面试录音逐字稿】内容，以及岗位要求，对候选人的表现进行专业分析。
+
+{position_info_text}
+
+【分析要求】：
+1. 用 3-5 条要点总结候选人的核心优点（专业能力、沟通表达、思维方式、价值观等）。
+2. 用 3-5 条要点指出候选人的主要不足或风险点。
+3. 给出一个综合评价结论（适合/可考虑/不太适合），并简要说明原因。
+4. 结合上面的岗位信息，特别指出候选人与岗位在关键要求上的高度匹配点和明显不匹配点。
+5. 给出5个可用于下一轮面试的重点追问问题，问题要结合本轮表现和岗位要求设计。
+
+【面试逐字稿】：
+{doc_text}
+
+请用中文输出，采用以下JSON格式返回（不要包含额外解释文字）：
+{{
+  "summary": "整体概括（3-5句话）",
+  "strengths": ["优点1", "优点2"],
+  "weaknesses": ["不足1", "不足2"],
+  "conclusion": "综合结论，例如：总体匹配度较高，建议进入下一轮/可以考虑/不太适合等",
+  "next_questions": ["下一轮追问问题1", "下一轮追问问题2"]
+}}"""
+
+        try:
+            response_text = ai_extractor._call_ai_api(prompt)
+
+            # 解析JSON
+            import re
+            try:
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    analysis = json.loads(json_match.group())
+                else:
+                    analysis = json.loads(response_text)
+            except json.JSONDecodeError:
+                analysis = {
+                    'summary': response_text[:500] if len(response_text) > 500 else response_text,
+                    'strengths': [],
+                    'weaknesses': [],
+                    'conclusion': '',
+                    'next_questions': []
+                }
+
+            session.close()
+            return jsonify({'success': True, 'data': analysis})
+        except Exception as e:
+            session.close()
+            return jsonify({'success': False, 'message': f'AI分析失败: {str(e)}'}), 500
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'分析请求失败: {str(e)}'}), 500
+
 @app.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
     """获取AI配置（不返回密钥）"""
@@ -887,6 +1257,20 @@ def analyze_resume_match(resume_id):
                     'weaknesses': [],
                     'suggestions': []
                 }
+            
+            # 同步匹配结果到面试流程（如有对应的面试记录）
+            try:
+                session_sync = get_db_session()
+                interviews = session_sync.query(Interview).filter(Interview.resume_id == resume_id).all()
+                if interviews:
+                    for it in interviews:
+                        it.match_score = analysis_result.get('match_score')
+                        it.match_level = analysis_result.get('match_level')
+                    session_sync.commit()
+                session_sync.close()
+            except Exception as sync_err:
+                # 不影响主流程，仅打印日志
+                print(f"同步匹配结果到面试流程失败: {sync_err}")
             
             return jsonify({
                 'success': True,

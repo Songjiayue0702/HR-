@@ -28,6 +28,12 @@
                         </a>
                     </li>
                     <li>
+                        <a href="#" class="nav-item" data-module="interview" onclick="switchModule('interview'); return false;">
+                            <span class="nav-icon">📅</span>
+                            <span class="nav-text">面试流程</span>
+                        </a>
+                    </li>
+                    <li>
                         <a href="#" class="nav-item" data-module="positions" onclick="switchModule('positions'); return false;">
                             <span class="nav-icon">💼</span>
                             <span class="nav-text">岗位目录</span>
@@ -168,7 +174,48 @@
                 </div>
             </div>
 
-            <!-- 模块3：设置 -->
+            <!-- 模块3：面试流程 -->
+            <div id="module-interview" class="module" style="display: none;">
+                <header class="module-header">
+                    <h2>面试流程</h2>
+                </header>
+
+                <section class="interview-section">
+                    <div class="interview-header">
+                        <p>这里展示所有已“邀约面试”的候选人，可查看匹配度得分并维护面试流程。</p>
+                    </div>
+                    <div class="table-container">
+                        <table class="resume-table" id="interviewTable">
+                            <thead>
+                                <tr>
+                                    <th>候选人姓名</th>
+                                    <th>应聘岗位</th>
+                                    <th>匹配度</th>
+                                    <th>流程状态</th>
+                                    <th>邀约时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="interviewTableBody">
+                                <tr>
+                                    <td colspan="6" class="loading">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+
+            <!-- 面试流程详情模态框 -->
+            <div class="modal" id="interviewModal" style="display: none;">
+                <div class="modal-content" style="max-width: 900px;">
+                    <span class="close" onclick="closeInterviewModal()">&times;</span>
+                    <h3>面试流程详情</h3>
+                    <div id="interviewModalBody"></div>
+                    <div class="modal-actions" id="interviewModalExtraActions" style="margin-top: 10px; display:none;"></div>
+                </div>
+            </div>
+
             <!-- 模块4：岗位目录 -->
             <div id="module-positions" class="module" style="display: none;">
                 <header class="module-header">

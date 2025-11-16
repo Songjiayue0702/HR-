@@ -741,6 +741,29 @@ body {
     margin-top: 20px;
 }
 
+/* 面试流程 - 文档与AI分析区域 */
+.interview-doc-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.interview-doc-left {
+    flex: 1;
+}
+
+.interview-doc-link {
+    font-size: 12px;
+    color: #666;
+    margin-left: 8px;
+}
+
+.interview-doc-right .btn {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
 .close {
     position: absolute;
     right: 20px;
@@ -766,6 +789,24 @@ body {
     font-weight: bold;
     color: #333;
     margin-bottom: 5px;
+}
+
+/* 面试流程详情 - 分段标题 */
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 15px;
+    margin-bottom: 5px;
+}
+
+.section-header h4 {
+    margin: 0;
+}
+
+.section-header .btn {
+    padding: 4px 10px;
+    font-size: 12px;
 }
 
 /* 工作经历部分样式 */

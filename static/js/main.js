@@ -7,6 +7,7 @@ let sortOrder = 'desc';
 let selectedResumes = new Set();
 let currentResumeData = null;
 let aiConfigStatus = null; // AI配置状态缓存
+let interviewedResumeIds = new Set(); // 已邀约面试的简历ID集合
 
 function escapeHtml(value) {
     if (value === null || value === undefined) {
@@ -41,6 +42,18 @@ document.addEventListener('DOMContentLoaded', function() {
     checkAIStatus().then(() => {
         updateAIStatusDisplay();
     });
+
+    // 加载已邀约面试的简历ID
+    fetch('/api/interviews/resume-ids')
+        .then(response => response.json())
+        .then(result => {
+            if (result.success && Array.isArray(result.data)) {
+                interviewedResumeIds = new Set(result.data);
+            }
+        })
+        .catch(err => {
+            console.error('加载已邀约面试简历列表失败:', err);
+        });
 });
 
 // 初始化上传功能
@@ -283,6 +296,7 @@ function displayResumes(resumes) {
             statusDisplay = '<span class="status-unknown">未知</span>';
         }
         
+        const alreadyInvited = interviewedResumeIds.has(resume.id);
         // 如果状态不是success，禁用查看/编辑按钮
         const viewButtonDisabled = parseStatus !== 'success' ? 'disabled' : '';
         const viewButtonClass = parseStatus !== 'success' ? 'btn btn-small btn-view btn-disabled' : 'btn btn-small btn-view';
@@ -305,6 +319,11 @@ function displayResumes(resumes) {
             <td>${statusDisplay}</td>
             <td>
                 <button class="${viewButtonClass}" ${viewButtonDisabled} onclick="viewDetail(${resume.id})">查看/编辑</button>
+                <button class="btn btn-small ${alreadyInvited ? 'btn-success' : 'btn-secondary'}" 
+                    ${parseStatus !== 'success' || alreadyInvited ? 'disabled' : ''} 
+                    onclick="inviteInterview(${resume.id})">
+                    ${alreadyInvited ? '已邀约面试' : '邀约面试'}
+                </button>
             </td>
         </tr>
     `;
@@ -1086,6 +1105,543 @@ function exportAll() {
     }
 }
 
+// =======================
+// 面试流程相关功能
+// =======================
+
+// 从简历（列表或分析）发起邀约面试
+function inviteInterview(resumeId) {
+    if (!resumeId) return;
+    if (!confirm('确认将该候选人加入“面试流程”吗？')) {
+        return;
+    }
+    // 尝试从匹配度缓存中带上当前岗位的匹配结果
+    let match_score = null;
+    let match_level = null;
+    const resumeCards = document.querySelectorAll(`.resume-selector-item[data-resume-id="${resumeId}"]`);
+    // 这里只是保障字段存在，真正的分数以后台已有记录为准，如果没有缓存也不影响使用
+
+    fetch('/api/interviews', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ resume_id: resumeId, match_score, match_level })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('已加入面试流程');
+            interviewedResumeIds.add(resumeId);
+            // 触发当前模块的刷新，以更新按钮状态
+            const urlParams = new URLSearchParams(window.location.search);
+            const module = urlParams.get('module') || 'upload';
+            if (module === 'upload') {
+                loadResumes(currentPage);
+            } else if (module === 'analysis') {
+                loadResumesForAnalysis();
+            } else if (module === 'interview') {
+                loadInterviews();
+            }
+            const moduleInterview = document.getElementById('module-interview');
+            if (moduleInterview && moduleInterview.classList.contains('active')) {
+                loadInterviews();
+            }
+        } else {
+            alert(`操作失败：${result.message || '未知错误'}`);
+        }
+    })
+    .catch(error => {
+        console.error('邀约面试失败:', error);
+        alert('操作失败，请稍后再试');
+    });
+}
+
+// 加载面试流程列表
+function loadInterviews() {
+    const tbody = document.getElementById('interviewTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="6" class="loading">加载中...</td></tr>';
+
+    fetch('/api/interviews')
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const list = result.data || [];
+                if (list.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="loading">暂无面试记录</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = list.map(item => {
+                    const name = escapeHtml(item.name || '-');
+                    const position = escapeHtml(item.applied_position || '-');
+                    const status = escapeHtml(item.status || '待面试');
+                    const time = item.create_time ? escapeHtml(item.create_time.replace('T', ' ').slice(0, 19)) : '-';
+                    const score = item.match_score !== null && item.match_score !== undefined ? item.match_score : null;
+                    const level = escapeHtml(item.match_level || '');
+                    const color = getScoreColor(score);
+                    const scoreHtml = score !== null
+                        ? `<span class="match-score-dot" style="background:${color};"></span><span>${score}${level ? ' 分（' + level + '）' : ''}</span>`
+                        : '<span>-</span>';
+                    return `
+                        <tr>
+                            <td>${name}</td>
+                            <td>${position}</td>
+                            <td>${scoreHtml}</td>
+                            <td>${status}</td>
+                            <td>${time}</td>
+                            <td><button class="btn btn-small btn-primary" onclick="openInterviewModal(${item.id})">填写/查看</button></td>
+                        </tr>
+                    `;
+                }).join('');
+            } else {
+                tbody.innerHTML = `<tr><td colspan="6" class="loading">加载失败：${escapeHtml(result.message || '未知错误')}</td></tr>`;
+            }
+        })
+        .catch(error => {
+            console.error('加载面试流程失败:', error);
+            tbody.innerHTML = '<tr><td colspan="6" class="loading">加载失败，请稍后重试</td></tr>';
+        });
+}
+
+// 根据匹配分数返回颜色
+function getScoreColor(score) {
+    if (score === null || score === undefined) return '#ccc';
+    if (score >= 80) return '#28a745'; // 绿
+    if (score >= 60) return '#ffc107'; // 黄
+    return '#dc3545'; // 红
+}
+
+// 打开面试详情模态框
+function openInterviewModal(interviewId) {
+    fetch(`/api/interviews/${interviewId}`)
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) {
+                alert(result.message || '加载失败');
+                return;
+            }
+            const data = result.data;
+            const modal = document.getElementById('interviewModal');
+            const body = document.getElementById('interviewModalBody');
+            if (!modal || !body) return;
+
+            const round1Result = data.round1_result || '';
+            const round2Result = data.round2_result || '';
+            const round3Enabled = !!data.round3_enabled;
+
+            body.innerHTML = `
+                <div class="form-grid">
+                    <div class="detail-item">
+                        <label>候选人姓名：</label>
+                        <span>${escapeHtml(data.name || '-')}</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>应聘岗位：</label>
+                        <span>${escapeHtml(data.applied_position || '-')}</span>
+                    </div>
+                    <div class="detail-item">
+                        <label>当前状态：</label>
+                        <span>${escapeHtml(data.status || '待面试')}</span>
+                    </div>
+                </div>
+                
+                <div class="section-header">
+                    <h4>一面</h4>
+                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存一面</button>
+                </div>
+                <div class="form-grid">
+                    <div class="detail-item">
+                        <label>一面面试官：</label>
+                        <input type="text" id="round1_interviewer" class="form-input" value="${escapeHtml(data.round1_interviewer || '')}">
+                    </div>
+                    <div class="detail-item">
+                        <label>一面时间：</label>
+                        <input type="date" id="round1_time" class="form-input" placeholder="例如：2025-03-10" value="${escapeHtml((data.round1_time || '').slice(0,10))}">
+                    </div>
+                    <div class="detail-item">
+                        <label>一面结果：</label>
+                        <select id="round1_result" class="form-select" onchange="onRoundResultChange()">
+                            <option value="">未填写</option>
+                            <option value="通过" ${round1Result === '通过' ? 'selected' : ''}>通过</option>
+                            <option value="未通过" ${round1Result === '未通过' ? 'selected' : ''}>未通过</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>一面评价：</label>
+                    <textarea id="round1_comment" class="form-textarea" rows="3" placeholder="请输入一面评价">${escapeHtml(data.round1_comment || '')}</textarea>
+                </div>
+                <div class="form-group interview-doc-row">
+                    <div class="interview-doc-left">
+                        <label>一面文档（录音逐字稿等）：</label>
+                        <input type="file" id="round1DocFile" accept=".pdf,.doc,.docx,.txt">
+                        <button class="btn btn-secondary" onclick="uploadInterviewDoc(1)">上传</button>
+                        <span id="round1DocLink" class="interview-doc-link">${data.round1_doc_path ? `当前文档：<a href="/static/${escapeHtml(data.round1_doc_path)}" target="_blank">查看</a>` : '当前暂无文档'}</span>
+                    </div>
+                    <div class="interview-doc-right">
+                        <button class="btn btn-primary" onclick="analyzeInterviewDoc(${data.id}, 1)">AI分析</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>一面AI分析结果：</label>
+                    <textarea id="round1_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly></textarea>
+                </div>
+
+                <div class="section-header">
+                    <h4>二面</h4>
+                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存二面</button>
+                </div>
+                <div class="form-grid">
+                    <div class="detail-item">
+                        <label>二面面试官：</label>
+                        <input type="text" id="round2_interviewer" class="form-input" value="${escapeHtml(data.round2_interviewer || '')}">
+                    </div>
+                    <div class="detail-item">
+                        <label>二面时间：</label>
+                        <input type="date" id="round2_time" class="form-input" placeholder="例如：2025-03-12" value="${escapeHtml((data.round2_time || '').slice(0,10))}">
+                    </div>
+                    <div class="detail-item">
+                        <label>二面结果：</label>
+                        <select id="round2_result" class="form-select" onchange="onRoundResultChange()">
+                            <option value="">未填写</option>
+                            <option value="通过" ${round2Result === '通过' ? 'selected' : ''}>通过</option>
+                            <option value="未通过" ${round2Result === '未通过' ? 'selected' : ''}>未通过</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>二面评价：</label>
+                    <textarea id="round2_comment" class="form-textarea" rows="3" placeholder="请输入二面评价">${escapeHtml(data.round2_comment || '')}</textarea>
+                </div>
+                <div class="form-group interview-doc-row">
+                    <div class="interview-doc-left">
+                        <label>二面文档（录音逐字稿等）：</label>
+                        <input type="file" id="round2DocFile" accept=".pdf,.doc,.docx,.txt">
+                        <button class="btn btn-secondary" onclick="uploadInterviewDoc(2)">上传</button>
+                        <span id="round2DocLink" class="interview-doc-link">${data.round2_doc_path ? `当前文档：<a href="/static/${escapeHtml(data.round2_doc_path)}" target="_blank">查看</a>` : '当前暂无文档'}</span>
+                    </div>
+                    <div class="interview-doc-right">
+                        <button class="btn btn-primary" onclick="analyzeInterviewDoc(${data.id}, 2)">AI分析</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>二面AI分析结果：</label>
+                    <textarea id="round2_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly></textarea>
+                </div>
+
+                <div class="section-header">
+                    <h4>三面</h4>
+                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存三面</button>
+                </div>
+                <div class="form-grid">
+                    <div class="detail-item">
+                        <label>
+                            <input type="checkbox" id="round3_enabled" ${round3Enabled ? 'checked' : ''} onchange="onRoundResultChange()">
+                            是否有三面
+                        </label>
+                    </div>
+                    <div class="detail-item">
+                        <label>三面面试官：</label>
+                        <input type="text" id="round3_interviewer" class="form-input" value="${escapeHtml(data.round3_interviewer || '')}">
+                    </div>
+                    <div class="detail-item">
+                        <label>三面时间：</label>
+                        <input type="date" id="round3_time" class="form-input" placeholder="例如：2025-03-15" value="${escapeHtml((data.round3_time || '').slice(0,10))}">
+                    </div>
+                    <div class="detail-item">
+                        <label>三面结果：</label>
+                        <select id="round3_result" class="form-select" onchange="onRoundResultChange()">
+                            <option value="">未填写</option>
+                            <option value="通过" ${data.round3_result === '通过' ? 'selected' : ''}>通过</option>
+                            <option value="未通过" ${data.round3_result === '未通过' ? 'selected' : ''}>未通过</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>三面评价：</label>
+                    <textarea id="round3_comment" class="form-textarea" rows="3" placeholder="请输入三面评价">${escapeHtml(data.round3_comment || '')}</textarea>
+                </div>
+                <div class="form-group interview-doc-row">
+                    <div class="interview-doc-left">
+                        <label>三面文档（录音逐字稿等）：</label>
+                        <input type="file" id="round3DocFile" accept=".pdf,.doc,.docx,.txt">
+                        <button class="btn btn-secondary" onclick="uploadInterviewDoc(3)">上传</button>
+                        <span id="round3DocLink" class="interview-doc-link">${data.round3_doc_path ? `当前文档：<a href="/static/${escapeHtml(data.round3_doc_path)}" target="_blank">查看</a>` : '当前暂无文档'}</span>
+                    </div>
+                    <div class="interview-doc-right">
+                        <button class="btn btn-primary" onclick="analyzeInterviewDoc(${data.id}, 3)">AI分析</button>
+                    </div>
+                </div>
+
+                <div class="section-header">
+                    <h4>Offer与入职</h4>
+                </div>
+                <div class="form-grid">
+                    <div class="detail-item">
+                        <label>
+                            <input type="checkbox" id="offer_issued" ${data.offer_issued ? 'checked' : ''}>
+                            是否发放Offer
+                        </label>
+                    </div>
+                    <div class="detail-item">
+                        <label>Offer发放日期：</label>
+                        <input type="date" id="offer_date" class="form-input" placeholder="例如：2025-05-20" value="${escapeHtml((data.offer_date || '').slice(0,10))}">
+                    </div>
+                    <div class="detail-item">
+                        <label>拟入职架构：</label>
+                        <input type="text" id="offer_department" class="form-input" value="${escapeHtml(data.offer_department || '')}">
+                    </div>
+                    <div class="detail-item">
+                        <label>拟入职日期：</label>
+                        <input type="date" id="offer_onboard_plan_date" class="form-input" placeholder="例如：2025-06-01" value="${escapeHtml((data.offer_onboard_plan_date || '').slice(0,10))}">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="detail-item">
+                        <label>
+                            <input type="checkbox" id="onboard" ${data.onboard ? 'checked' : ''}>
+                            是否已入职
+                        </label>
+                    </div>
+                    <div class="detail-item">
+                        <label>实际入职日期：</label>
+                        <input type="date" id="onboard_date" class="form-input" placeholder="例如：2025-06-10" value="${escapeHtml((data.onboard_date || '').slice(0,10))}">
+                    </div>
+                    <div class="detail-item">
+                        <label>入职架构：</label>
+                        <input type="text" id="onboard_department" class="form-input" value="${escapeHtml(data.onboard_department || '')}">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>三面AI分析结果：</label>
+                    <textarea id="round3_ai_result" class="form-textarea" rows="4" placeholder="点击上方AI分析后将在此展示结果" readonly></textarea>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="btn btn-primary" onclick="saveInterview(${data.id})">保存</button>
+                    <button class="btn btn-secondary" onclick="closeInterviewModal()">关闭</button>
+                </div>
+            `;
+
+            modal.style.display = 'block';
+            // 底部额外区域不再使用，仅保持隐藏
+            const extra = document.getElementById('interviewModalExtraActions');
+            if (extra) extra.style.display = 'none';
+
+            // 将当前 interviewId 存到上传函数可用的位置
+            window.currentInterviewIdForUpload = data.id;
+            onRoundResultChange(); // 初始化控件启用状态
+        })
+        .catch(error => {
+            console.error('加载面试详情失败:', error);
+            alert('加载失败，请稍后再试');
+        });
+}
+
+function closeInterviewModal() {
+    const modal = document.getElementById('interviewModal');
+    const body = document.getElementById('interviewModalBody');
+    if (modal) modal.style.display = 'none';
+    if (body) body.innerHTML = '';
+}
+
+// 根据一面/二面结果控制后续字段是否可填
+function onRoundResultChange() {
+    const r1Result = document.getElementById('round1_result')?.value || '';
+    const r2Result = document.getElementById('round2_result')?.value || '';
+    const r3Enabled = document.getElementById('round3_enabled')?.checked || false;
+
+    // 二面仅当一面结果为通过时可填
+    const r2Fields = ['round2_interviewer', 'round2_time', 'round2_result']
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    const r2Disabled = r1Result !== '通过';
+    r2Fields.forEach(el => el.disabled = r2Disabled);
+
+    // 三面仅当二面结果为通过且勾选“有三面”时可填
+    const r3Fields = ['round3_interviewer', 'round3_time', 'round3_result']
+        .map(id => document.getElementById(id))
+        .filter(Boolean);
+    const r3Disabled = !(r2Result === '通过' && r3Enabled);
+    r3Fields.forEach(el => el.disabled = r3Disabled);
+
+    // Offer 与入职信息：
+    // 1）仅当最终结果“面试通过”时，Offer部分可填写
+    // 2）仅当Offer信息填写完整时，入职部分可填写
+    const r3Result = document.getElementById('round3_result')?.value || '';
+    const finalPass = (r3Result === '通过') || (r2Result === '通过' && !r3Enabled);
+
+    const offerIssuedEl = document.getElementById('offer_issued');
+    const offerDateEl = document.getElementById('offer_date');
+    const offerDeptEl = document.getElementById('offer_department');
+    const offerPlanDateEl = document.getElementById('offer_onboard_plan_date');
+
+    const onboardEl = document.getElementById('onboard');
+    const onboardDateEl = document.getElementById('onboard_date');
+    const onboardDeptEl = document.getElementById('onboard_department');
+
+    // Offer部分：只有在最终通过时才可编辑
+    const offerDisabled = !finalPass;
+    [offerIssuedEl, offerDateEl, offerDeptEl, offerPlanDateEl].forEach(el => {
+        if (el) el.disabled = offerDisabled;
+    });
+
+    // 判断Offer信息是否完整（用于控制入职部分）
+    const offerIssued = offerIssuedEl && offerIssuedEl.checked;
+    const offerDate = offerDateEl && offerDateEl.value.trim();
+    const offerDept = offerDeptEl && offerDeptEl.value.trim();
+    const offerPlanDate = offerPlanDateEl && offerPlanDateEl.value.trim();
+    const offerComplete = finalPass && offerIssued && offerDate && offerDept && offerPlanDate;
+
+    // 入职部分：只有在Offer信息完整时才可编辑
+    const onboardDisabled = !offerComplete;
+    [onboardEl, onboardDateEl, onboardDeptEl].forEach(el => {
+        if (el) el.disabled = onboardDisabled;
+    });
+}
+
+// 保存面试流程详情
+function saveInterview(interviewId) {
+    const payload = {
+        round1_interviewer: document.getElementById('round1_interviewer')?.value || null,
+        round1_time: document.getElementById('round1_time')?.value || null,
+        round1_result: document.getElementById('round1_result')?.value || null,
+        round2_interviewer: document.getElementById('round2_interviewer')?.value || null,
+        round2_time: document.getElementById('round2_time')?.value || null,
+        round2_result: document.getElementById('round2_result')?.value || null,
+        round3_enabled: document.getElementById('round3_enabled')?.checked || false,
+        round3_interviewer: document.getElementById('round3_interviewer')?.value || null,
+        round3_time: document.getElementById('round3_time')?.value || null,
+        round3_result: document.getElementById('round3_result')?.value || null,
+        round1_comment: document.getElementById('round1_comment')?.value || null,
+        round2_comment: document.getElementById('round2_comment')?.value || null,
+        round3_comment: document.getElementById('round3_comment')?.value || null,
+        offer_issued: document.getElementById('offer_issued')?.checked || false,
+        offer_date: document.getElementById('offer_date')?.value || null,
+        offer_department: document.getElementById('offer_department')?.value || null,
+        offer_onboard_plan_date: document.getElementById('offer_onboard_plan_date')?.value || null,
+        onboard: document.getElementById('onboard')?.checked || false,
+        onboard_date: document.getElementById('onboard_date')?.value || null,
+        onboard_department: document.getElementById('onboard_department')?.value || null,
+    };
+
+    fetch(`/api/interviews/${interviewId}`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('保存成功');
+            closeInterviewModal();
+            loadInterviews();
+        } else {
+            alert(`保存失败：${result.message || '未知错误'}`);
+        }
+    })
+    .catch(error => {
+        console.error('保存面试详情失败:', error);
+        alert('保存失败，请稍后再试');
+    });
+}
+
+// 上传面试文档（按轮次）
+function uploadInterviewDoc(round) {
+    const fileInput = document.getElementById(`round${round}DocFile`);
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        alert('请先选择要上传的文件');
+        return;
+    }
+    const interviewId = window.currentInterviewIdForUpload;
+    if (!interviewId) {
+        alert('未找到当前面试记录');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('round', String(round));
+
+    fetch(`/api/interviews/${interviewId}/upload-doc`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('上传成功');
+            const data = result.data;
+            if (round === 1 && data.round1_doc_path) {
+                const linkSpan = document.getElementById('round1DocLink');
+                if (linkSpan) {
+                    linkSpan.innerHTML = `当前文档：<a href="/static/${escapeHtml(data.round1_doc_path)}" target="_blank">查看</a>`;
+                }
+            } else if (round === 2 && data.round2_doc_path) {
+                const linkSpan = document.getElementById('round2DocLink');
+                if (linkSpan) {
+                    linkSpan.innerHTML = `当前文档：<a href="/static/${escapeHtml(data.round2_doc_path)}" target="_blank">查看</a>`;
+                }
+            } else if (round === 3 && data.round3_doc_path) {
+                const linkSpan = document.getElementById('round3DocLink');
+                if (linkSpan) {
+                    linkSpan.innerHTML = `当前文档：<a href="/static/${escapeHtml(data.round3_doc_path)}" target="_blank">查看</a>`;
+                }
+            }
+        } else {
+            alert(`上传失败：${result.message || '未知错误'}`);
+        }
+    })
+    .catch(error => {
+        console.error('上传失败:', error);
+        alert('上传失败，请稍后再试');
+    });
+}
+
+// 调用AI分析面试文档
+function analyzeInterviewDoc(interviewId, round) {
+    fetch(`/api/interviews/${interviewId}/analyze-doc`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ round })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const data = result.data || {};
+            const summary = data.summary || '';
+            const strengths = (data.strengths || []).join('\n- ');
+            const weaknesses = (data.weaknesses || []).join('\n- ');
+            const conclusion = data.conclusion || '';
+            const nextQuestions = (data.next_questions || []).join('\n- ');
+            let msg = '';
+            if (summary) msg += `【整体概括】\n${summary}\n\n`;
+            if (strengths) msg += `【优势】\n- ${strengths}\n\n`;
+            if (weaknesses) msg += `【不足】\n- ${weaknesses}\n\n`;
+            if (conclusion) msg += `【综合结论】\n${conclusion}\n\n`;
+            if (nextQuestions) msg += `【下一轮推荐追问问题】\n- ${nextQuestions}`;
+            const textarea = document.getElementById(`round${round}_ai_result`);
+            if (textarea) {
+                textarea.value = msg || '分析完成，但未返回可用内容';
+            } else {
+                alert(msg || '分析完成，但未返回可用内容');
+            }
+        } else {
+            alert(result.message || 'AI分析失败');
+        }
+    })
+    .catch(error => {
+        console.error('AI分析文档失败:', error);
+        alert('AI分析失败，请稍后再试');
+    });
+}
+
 // 点击模态框外部关闭
 window.onclick = function(event) {
     const modal = document.getElementById('detailModal');
@@ -1307,6 +1863,8 @@ function switchModule(moduleName) {
             loadAIConfig();
         } else if (moduleName === 'positions') {
             loadPositions();
+        } else if (moduleName === 'interview') {
+            loadInterviews();
         }
     }
 }
@@ -1365,6 +1923,7 @@ function displayResumeSelector(resumes) {
         const appliedPosition = escapeHtml(resume.applied_position || '未填写');
         const status = resume.parse_status || 'pending';
         const statusClass = status === 'success' ? 'success' : status === 'processing' ? 'processing' : 'pending';
+        const alreadyInvited = interviewedResumeIds.has(resume.id);
         
         // 获取匹配度色块
         let matchBadgeHtml = '';
@@ -1401,6 +1960,12 @@ function displayResumeSelector(resumes) {
                 <div class="resume-selector-item-info">应聘岗位：${appliedPosition}</div>
                 <div class="resume-selector-item-info" style="margin-top: 4px;">
                     <span class="status-${statusClass}">${getStatusText(status)}</span>
+                    <button class="btn btn-link btn-small" 
+                        ${alreadyInvited ? 'disabled' : ''}
+                        onclick="event.stopPropagation(); ${alreadyInvited ? '' : `inviteInterview(${resume.id})`}"
+                        style="color: ${alreadyInvited ? '#28a745' : '#007bff'};">
+                        ${alreadyInvited ? '已邀约面试' : '邀约面试'}
+                    </button>
                 </div>
             </div>
         `;

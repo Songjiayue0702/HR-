@@ -141,16 +141,169 @@ class Position(Base):
             'update_time': self.update_time.isoformat() if self.update_time else None
         }
 
-# 确保positions表存在
+class Interview(Base):
+    """面试流程数据模型"""
+    __tablename__ = 'interviews'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    resume_id = Column(Integer, nullable=False)  # 关联的简历ID
+    name = Column(String(100))  # 候选人姓名（冗余，便于直接显示）
+    applied_position = Column(String(200))  # 应聘岗位（冗余）
+
+    # 简历匹配度
+    match_score = Column(Integer)  # 匹配度分数
+    match_level = Column(String(50))  # 匹配等级（高度匹配/中等匹配/低度匹配等）
+
+    # 面试流程状态（根据各轮结果自动推导）
+    status = Column(String(50), default='待面试')
+
+    # 一面
+    round1_interviewer = Column(String(100))
+    round1_time = Column(String(50))  # 直接存字符串，前端控制格式
+    round1_result = Column(String(50))  # 通过/未通过/待定 等
+
+    # 二面
+    round2_interviewer = Column(String(100))
+    round2_time = Column(String(50))
+    round2_result = Column(String(50))
+
+    # 三面
+    round3_enabled = Column(Integer, default=0)  # 0: 无三面, 1: 有三面
+    round3_interviewer = Column(String(100))
+    round3_time = Column(String(50))
+    round3_result = Column(String(50))
+
+    # 分轮次面试评价与文档（录音逐字稿等）
+    round1_comment = Column(Text)
+    round2_comment = Column(Text)
+    round3_comment = Column(Text)
+
+    round1_doc_path = Column(String(500))  # 一面文档（录音逐字稿等）
+    round2_doc_path = Column(String(500))  # 二面文档
+    round3_doc_path = Column(String(500))  # 三面文档
+
+    # Offer 与入职信息
+    offer_issued = Column(Integer, default=0)  # 是否发放offer：0 否，1 是
+    offer_date = Column(String(50))            # offer 发放日期
+    offer_department = Column(String(200))     # 拟入职架构
+    offer_onboard_plan_date = Column(String(50))  # 拟入职日期
+
+    onboard = Column(Integer, default=0)       # 是否入职：0 否，1 是
+    onboard_date = Column(String(50))          # 实际入职日期
+    onboard_department = Column(String(200))   # 入职架构
+    create_time = Column(DateTime, default=datetime.now)
+    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'resume_id': self.resume_id,
+            'name': self.name,
+            'applied_position': self.applied_position,
+            'match_score': self.match_score,
+            'match_level': self.match_level,
+            'status': self.status,
+            'round1_interviewer': self.round1_interviewer,
+            'round1_time': self.round1_time,
+            'round1_result': self.round1_result,
+            'round2_interviewer': self.round2_interviewer,
+            'round2_time': self.round2_time,
+            'round2_result': self.round2_result,
+            'round3_enabled': self.round3_enabled,
+            'round3_interviewer': self.round3_interviewer,
+            'round3_time': self.round3_time,
+            'round3_result': self.round3_result,
+            'round1_comment': self.round1_comment,
+            'round2_comment': self.round2_comment,
+            'round3_comment': self.round3_comment,
+            'round1_doc_path': self.round1_doc_path,
+            'round2_doc_path': self.round2_doc_path,
+            'round3_doc_path': self.round3_doc_path,
+            'offer_issued': self.offer_issued,
+            'offer_date': self.offer_date,
+            'offer_department': self.offer_department,
+            'offer_onboard_plan_date': self.offer_onboard_plan_date,
+            'onboard': self.onboard,
+            'onboard_date': self.onboard_date,
+            'onboard_department': self.onboard_department,
+            'create_time': self.create_time.isoformat() if self.create_time else None,
+            'update_time': self.update_time.isoformat() if self.update_time else None,
+        }
+
+# 确保表存在
 Base.metadata.create_all(engine)
 
-# 检查positions表是否存在，如果不存在则创建
+# 检查positions/interviews表是否存在，如果不存在则创建；并做简单列补全
 with engine.connect() as conn:
     try:
         conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
-    except:
-        # 表不存在，创建表
+    except Exception:
         Position.__table__.create(engine)
+
+    # interviews 表
+    try:
+        conn.execute(text("SELECT 1 FROM interviews LIMIT 1"))
+    except Exception:
+        Interview.__table__.create(engine)
+
+    # 简单列补全（避免老库缺少新字段）
+    result = conn.execute(text("PRAGMA table_info(interviews)"))
+    i_columns = {row[1] for row in result}
+    add_cols = []
+    if 'match_score' not in i_columns:
+        add_cols.append("ADD COLUMN match_score INTEGER")
+    if 'match_level' not in i_columns:
+        add_cols.append("ADD COLUMN match_level VARCHAR(50)")
+    if 'round1_interviewer' not in i_columns:
+        add_cols.append("ADD COLUMN round1_interviewer VARCHAR(100)")
+    if 'round1_time' not in i_columns:
+        add_cols.append("ADD COLUMN round1_time VARCHAR(50)")
+    if 'round1_result' not in i_columns:
+        add_cols.append("ADD COLUMN round1_result VARCHAR(50)")
+    if 'round2_interviewer' not in i_columns:
+        add_cols.append("ADD COLUMN round2_interviewer VARCHAR(100)")
+    if 'round2_time' not in i_columns:
+        add_cols.append("ADD COLUMN round2_time VARCHAR(50)")
+    if 'round2_result' not in i_columns:
+        add_cols.append("ADD COLUMN round2_result VARCHAR(50)")
+    if 'round3_enabled' not in i_columns:
+        add_cols.append("ADD COLUMN round3_enabled INTEGER DEFAULT 0")
+    if 'round3_interviewer' not in i_columns:
+        add_cols.append("ADD COLUMN round3_interviewer VARCHAR(100)")
+    if 'round3_time' not in i_columns:
+        add_cols.append("ADD COLUMN round3_time VARCHAR(50)")
+    if 'round3_result' not in i_columns:
+        add_cols.append("ADD COLUMN round3_result VARCHAR(50)")
+    if 'round1_comment' not in i_columns:
+        add_cols.append("ADD COLUMN round1_comment TEXT")
+    if 'round2_comment' not in i_columns:
+        add_cols.append("ADD COLUMN round2_comment TEXT")
+    if 'round3_comment' not in i_columns:
+        add_cols.append("ADD COLUMN round3_comment TEXT")
+    if 'round1_doc_path' not in i_columns:
+        add_cols.append("ADD COLUMN round1_doc_path VARCHAR(500)")
+    if 'round2_doc_path' not in i_columns:
+        add_cols.append("ADD COLUMN round2_doc_path VARCHAR(500)")
+    if 'round3_doc_path' not in i_columns:
+        add_cols.append("ADD COLUMN round3_doc_path VARCHAR(500)")
+    if 'offer_issued' not in i_columns:
+        add_cols.append("ADD COLUMN offer_issued INTEGER DEFAULT 0")
+    if 'offer_date' not in i_columns:
+        add_cols.append("ADD COLUMN offer_date VARCHAR(50)")
+    if 'offer_department' not in i_columns:
+        add_cols.append("ADD COLUMN offer_department VARCHAR(200)")
+    if 'offer_onboard_plan_date' not in i_columns:
+        add_cols.append("ADD COLUMN offer_onboard_plan_date VARCHAR(50)")
+    if 'onboard' not in i_columns:
+        add_cols.append("ADD COLUMN onboard INTEGER DEFAULT 0")
+    if 'onboard_date' not in i_columns:
+        add_cols.append("ADD COLUMN onboard_date VARCHAR(50)")
+    if 'onboard_department' not in i_columns:
+        add_cols.append("ADD COLUMN onboard_department VARCHAR(200)")
+
+    for clause in add_cols:
+        conn.execute(text(f"ALTER TABLE interviews {clause}"))
+
     conn.commit()
 
 def get_db_session():
