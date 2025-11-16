@@ -169,16 +169,25 @@ class AIExtractor:
             
         try:
             # 智能处理长文本，避免简单截断导致JSON格式内容不全
-            max_length = 40000  # 进一步增加长度限制，支持页数较多的简历（GPT-4等模型支持更长的输入）
+            # 目标：**让AI尽可能看到完整的JSON结构**
+            max_length = 40000  # 支持页数较多的简历（具体上限由模型本身的上下文长度决定）
             
             if len(text) > max_length:
-                # 检查是否是JSON格式的文本
-                text_stripped = text.strip()
-                if text_stripped.startswith('{') or '"工作经历"' in text or '"教育经历"' in text or '"教育背景"' in text:
-                    # 对于JSON格式，尝试智能提取关键部分
-                    text = self._smart_truncate_json(text, max_length)
+                # 如果是完整 JSON（以 "{" 开头），尽量不截断，只尝试压缩格式
+                text_stripped = text.lstrip()
+                if text_stripped.startswith('{'):
+                    try:
+                        import json
+                        # 先解析再用紧凑格式重写，保留全部字段和条目
+                        data = json.loads(text_stripped)
+                        compact_json = json.dumps(data, ensure_ascii=False, separators=(',', ':'))
+                        text = compact_json
+                        # 不再按字符数截断，让模型自己处理过长输入的情况
+                    except Exception:
+                        # 如果解析失败，退回普通文本截取逻辑
+                        text = self._smart_truncate_text(text, max_length)
                 else:
-                    # 对于非JSON格式，采用智能截取，保留关键信息区域
+                    # 非 JSON 文本：采用智能截取，保留关键信息区域
                     text = self._smart_truncate_text(text, max_length)
             
             prompt = self._build_prompt(text, is_word_file=is_word_file)
@@ -1409,73 +1418,80 @@ def merge_extraction_results(rule_result: Dict[str, Any], ai_result: Optional[Di
     """
     融合规则提取和AI提取的结果
     
-    策略：
-    1. 优先使用规则提取的结果（更可靠）
-    2. 如果规则提取为空，使用AI提取的结果
-    3. 对于某些字段，如果AI结果更合理，则使用AI结果
+    新策略（按你的需求调整）：
+    1. **优先使用 AI 提取结果**（AI 作为主来源）
+    2. 当 AI 未连接 / 调用失败（ai_result 为空）时，退回使用规则结果
+    3. 规则结果用于“补充”AI缺失的字段，或在 AI 没给值时兜底
     
     Args:
         rule_result: 规则提取的结果
-        ai_result: AI提取的结果
+        ai_result: AI提取的结果（可能为None，表示未连接或调用失败）
         
     Returns:
         融合后的结果
     """
+    # 如果没有 AI 结果（未连接或调用失败），直接返回规则结果
     if not ai_result:
         return rule_result
-    
-    merged = rule_result.copy()
-    
-    # 姓名：如果规则提取为空或明显不合理，使用AI结果
-    if not merged.get('name') or merged.get('name') in ['地址', '邮箱', '手机', '电话']:
-        if ai_result.get('name'):
-            merged['name'] = ai_result['name']
-    
-    # 性别：如果规则提取为空，使用AI结果
-    if not merged.get('gender') and ai_result.get('gender'):
-        merged['gender'] = ai_result['gender']
-    
-    # 出生年份：如果规则提取为空，使用AI结果
-    if not merged.get('birth_year') and ai_result.get('birth_year'):
-        merged['birth_year'] = ai_result['birth_year']
-        # 重新计算年龄
-        from datetime import datetime
-        if merged['birth_year']:
-            merged['age'] = datetime.now().year - merged['birth_year']
-    
-    # 手机号：如果规则提取为空，使用AI结果
-    if not merged.get('phone') and ai_result.get('phone'):
-        merged['phone'] = ai_result['phone']
-    
-    # 邮箱：如果规则提取为空，使用AI结果
-    if not merged.get('email') and ai_result.get('email'):
-        merged['email'] = ai_result['email']
-    
-    # 学历：如果规则提取为空，使用AI结果
-    if not merged.get('highest_education') and ai_result.get('highest_education'):
-        merged['highest_education'] = ai_result['highest_education']
-    
-    # 学校：如果规则提取为空，使用AI结果
-    if not merged.get('school') and ai_result.get('school'):
-        merged['school'] = ai_result['school']
-    
-    # 专业：如果规则提取为空，使用AI结果
-    if not merged.get('major') and ai_result.get('major'):
-        merged['major'] = ai_result['major']
-    
-    # 工作经历：合并两个结果，去重并排序
-    rule_exps = merged.get('work_experience', [])
-    ai_exps = ai_result.get('work_experience', [])
-    
-    if ai_exps and (not rule_exps or len(rule_exps) < len(ai_exps)):
-        # 如果AI提取的工作经历更多，使用AI的结果
+
+    # 以 AI 结果为基础
+    merged: Dict[str, Any] = ai_result.copy()
+
+    # 把规则结果中 AI 没有给出的字段补上（兜底）
+    def fill_if_missing(key: str) -> None:
+        if not merged.get(key) and rule_result.get(key):
+            merged[key] = rule_result[key]
+
+    # 基本信息字段
+    fill_if_missing('name')
+    fill_if_missing('gender')
+    fill_if_missing('birth_year')
+    fill_if_missing('age')
+    fill_if_missing('phone')
+    fill_if_missing('email')
+
+    # 教育信息字段
+    fill_if_missing('highest_education')
+    fill_if_missing('school')
+    fill_if_missing('major')
+
+    # 其他可能存在的字段（例如 earliest_work_year 等）
+    fill_if_missing('earliest_work_year')
+    fill_if_missing('work_experience_years')
+
+    # 如果 AI 给出了出生年份，但没有年龄，则根据当前年份计算年龄
+    from datetime import datetime
+    if merged.get('birth_year') and not merged.get('age'):
+        try:
+            year = int(merged['birth_year'])
+            merged['age'] = datetime.now().year - year
+        except (ValueError, TypeError):
+            pass
+
+    # 工作经历：AI 优先，如果 AI 没有，则用规则的
+    ai_exps = merged.get('work_experience') or ai_result.get('work_experience') or []
+    rule_exps = rule_result.get('work_experience') or []
+
+    if ai_exps:
         merged['work_experience'] = ai_exps
-        # 重新计算最早工作年份
-        if ai_exps:
-            years = [exp.get('start_year') for exp in ai_exps if exp.get('start_year')]
-            if years:
-                merged['earliest_work_year'] = min(years)
-    
+    elif rule_exps:
+        merged['work_experience'] = rule_exps
+
+    # 根据最终的 work_experience 重新计算 earliest_work_year（如果可能）
+    exps = merged.get('work_experience') or []
+    years = [exp.get('start_year') for exp in exps if isinstance(exp, dict) and exp.get('start_year')]
+    if years:
+        try:
+            merged['earliest_work_year'] = min(int(y) for y in years)
+        except (ValueError, TypeError):
+            # 如果转换失败，保留原有的 earliest_work_year（如果有的话）
+            if 'earliest_work_year' not in merged and rule_result.get('earliest_work_year'):
+                merged['earliest_work_year'] = rule_result['earliest_work_year']
+
+    # raw_text 一般来自规则结果（InfoExtractor），AI 通常不会返回这个字段
+    if rule_result.get('raw_text') and not merged.get('raw_text'):
+        merged['raw_text'] = rule_result['raw_text']
+
     return merged
 
 
