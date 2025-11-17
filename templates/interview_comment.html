@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>面试评价填写</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .comment-container {
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 30px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .comment-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+        }
+        .comment-header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .info-section {
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        .info-item {
+            margin: 8px 0;
+            font-size: 16px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #333;
+            display: inline-block;
+            width: 120px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+        .form-input, .form-select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .form-textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 600px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        .submit-btn:hover {
+            background: #5568d3;
+        }
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .success-message {
+            padding: 15px;
+            background: #d4edda;
+            color: #155724;
+            border-radius: 4px;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="comment-container">
+        <div class="comment-header">
+            <h1>面试评价填写</h1>
+            <p style="color: #666;">请填写您的面试评价</p>
+        </div>
+        
+        <div class="info-section">
+            <div class="info-item">
+                <span class="info-label">候选人姓名：</span>
+                <span>{{ interview.name or '未知' }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">应聘岗位：</span>
+                <span>{{ interview.applied_position or '未填写' }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">面试轮次：</span>
+                <span>第{{ round }}轮面试</span>
+            </div>
+        </div>
+        
+        <form id="commentForm">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="interviewer">面试官：</label>
+                    <input type="text" id="interviewer" class="form-input" placeholder="请输入您的姓名" value="{{ current_interviewer }}">
+                </div>
+                <div class="form-group">
+                    <label for="time">面试时间：</label>
+                    <input type="date" id="time" class="form-input" value="{{ current_time[:10] if current_time else '' }}">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="result">面试结果：</label>
+                <select id="result" class="form-select">
+                    <option value="">请选择</option>
+                    <option value="通过" {% if current_result == '通过' %}selected{% endif %}>通过</option>
+                    <option value="未通过" {% if current_result == '未通过' %}selected{% endif %}>未通过</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="comment">面试评价：</label>
+                <textarea id="comment" class="form-textarea" placeholder="请输入您的面试评价...">{{ current_comment }}</textarea>
+            </div>
+            
+            <button type="submit" class="submit-btn" id="submitBtn">提交</button>
+        </form>
+        
+        <div id="successMessage" class="success-message" style="display: none;">
+            信息提交成功！感谢您的反馈。
+        </div>
+    </div>
+    
+    <script>
+        const token = '{{ token }}';
+        
+        document.getElementById('commentForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const interviewer = document.getElementById('interviewer').value.trim();
+            const time = document.getElementById('time').value;
+            const result = document.getElementById('result').value;
+            const comment = document.getElementById('comment').value.trim();
+            const submitBtn = document.getElementById('submitBtn');
+            const successMessage = document.getElementById('successMessage');
+            
+            if (!interviewer) {
+                alert('请输入面试官姓名');
+                return;
+            }
+            
+            if (!time) {
+                alert('请选择面试时间');
+                return;
+            }
+            
+            if (!result) {
+                alert('请选择面试结果');
+                return;
+            }
+            
+            if (!comment) {
+                alert('请输入面试评价');
+                return;
+            }
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            
+            fetch('/api/interview-comment/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    token: token,
+                    interviewer: interviewer,
+                    time: time,
+                    result: result,
+                    comment: comment
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    successMessage.style.display = 'block';
+                    submitBtn.style.display = 'none';
+                    document.getElementById('commentForm').style.display = 'none';
+                } else {
+                    alert('提交失败：' + (result.message || '未知错误'));
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '提交评价';
+                }
+            })
+            .catch(error => {
+                console.error('提交失败:', error);
+                alert('提交失败，请重试');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '提交评价';
+            });
+        });
+    </script>
+</body>
+</html>
+

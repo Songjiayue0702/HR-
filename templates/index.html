@@ -238,7 +238,7 @@
                             <input type="date" id="statsEndDate" class="form-input" style="max-width:160px;margin-right:16px;">
 
                             <label style="margin-right:8px;">岗位：</label>
-                            <select id="statsPosition" class="filter-select" style="max-width:220px;margin-right:16px;">
+                            <select id="statsPosition" class="filter-select" style="max-width:220px;margin-right:16px;" onchange="loadStatistics()">
                                 <option value="">全部岗位</option>
                             </select>
 
@@ -246,36 +246,20 @@
                         </div>
                     </div>
 
-                    <div class="stats-content">
-                        <div class="stats-cards">
-                            <div class="stats-card">
-                                <div class="stats-card-title">简历数</div>
-                                <div class="stats-card-value" id="statsResumeCount">-</div>
-                                <div class="stats-card-desc">按简历上传时间统计</div>
-                            </div>
-                            <div class="stats-card">
-                                <div class="stats-card-title">到面数</div>
-                                <div class="stats-card-value" id="statsInterviewCount">-</div>
-                                <div class="stats-card-desc">按一面时间统计（有一面时间视为到面）</div>
-                            </div>
-                            <div class="stats-card">
-                                <div class="stats-card-title">通过数</div>
-                                <div class="stats-card-value" id="statsPassCount">-</div>
-                                <div class="stats-card-desc">按状态为通过/已发offer/已入职统计</div>
-                            </div>
-                            <div class="stats-card">
-                                <div class="stats-card-title">Offer数</div>
-                                <div class="stats-card-value" id="statsOfferCount">-</div>
-                                <div class="stats-card-desc">按Offer发放日期统计</div>
-                            </div>
-                            <div class="stats-card">
-                                <div class="stats-card-title">入职数</div>
-                                <div class="stats-card-value" id="statsOnboardCount">-</div>
-                                <div class="stats-card-desc">按实际入职日期统计</div>
-                            </div>
-                        </div>
+                    <div class="stats-content" id="statsContent">
+                        <!-- 统计数据将动态生成 -->
                     </div>
                 </section>
+            </div>
+
+            <!-- 数据漏斗模态框 -->
+            <div id="funnelModal" class="modal" style="display: none;">
+                <div class="modal-content" style="max-width: 700px;">
+                    <span class="close" onclick="closeFunnelModal()">&times;</span>
+                    <div id="funnelModalBody">
+                        <!-- 数据漏斗内容将动态生成 -->
+                    </div>
+                </div>
             </div>
 
             <!-- 面试流程详情模态框 -->

@@ -1397,6 +1397,9 @@ function loadStatistics() {
     const startInput = document.getElementById('statsStartDate');
     const endInput = document.getElementById('statsEndDate');
     const positionSelect = document.getElementById('statsPosition');
+    const statsContent = document.getElementById('statsContent');
+
+    if (!statsContent) return;
 
     const params = new URLSearchParams();
     if (startInput && startInput.value) params.append('start_date', startInput.value);
@@ -1411,16 +1414,289 @@ function loadStatistics() {
                 return;
             }
             const data = result.data || {};
-            document.getElementById('statsResumeCount').textContent = data.resume_count ?? '-';
-            document.getElementById('statsInterviewCount').textContent = data.interview_count ?? '-';
-            document.getElementById('statsPassCount').textContent = data.pass_count ?? '-';
-            document.getElementById('statsOfferCount').textContent = data.offer_count ?? '-';
-            document.getElementById('statsOnboardCount').textContent = data.onboard_count ?? '-';
+            
+            // 如果选择了岗位，只显示该岗位的数据
+            if (data.position) {
+                const resumeCount = data.resume_count || 0;
+                const interviewCount = data.interview_count || 0;
+                const passCount = data.pass_count || 0;
+                const offerCount = data.offer_count || 0;
+                const onboardCount = data.onboard_count || 0;
+                
+                // 计算比例（以简历数为100%）
+                const interviewRate = resumeCount > 0 ? ((interviewCount / resumeCount) * 100).toFixed(1) : '0.0';
+                const passRate = resumeCount > 0 ? ((passCount / resumeCount) * 100).toFixed(1) : '0.0';
+                const offerRate = resumeCount > 0 ? ((offerCount / resumeCount) * 100).toFixed(1) : '0.0';
+                const onboardRate = resumeCount > 0 ? ((onboardCount / resumeCount) * 100).toFixed(1) : '0.0';
+                
+                statsContent.innerHTML = `
+                    <div class="stats-position-group">
+                        <div class="stats-position-title-wrapper">
+                            <h3 class="stats-position-title">${escapeHtml(data.position)}</h3>
+                            <button class="btn btn-sm btn-funnel" onclick="showFunnelModal('${escapeHtml(data.position)}', {resume_count: ${resumeCount}, interview_count: ${interviewCount}, pass_count: ${passCount}, offer_count: ${offerCount}, onboard_count: ${onboardCount}})">数据漏斗</button>
+                        </div>
+                        <div class="stats-cards">
+                            <div class="stats-card">
+                                <div class="stats-card-header">
+                                    <div class="stats-card-title">简历数</div>
+                                    <div class="stats-card-value">${data.resume_count ?? '-'}</div>
+                                </div>
+                                <div class="stats-card-desc">按简历上传时间统计</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-header">
+                                    <div class="stats-card-title">到面数</div>
+                                    <div class="stats-card-value">${data.interview_count ?? '-'}</div>
+                                </div>
+                                <div class="stats-card-desc">按一面时间统计（有一面时间视为到面）</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-header">
+                                    <div class="stats-card-title">通过数</div>
+                                    <div class="stats-card-value">${data.pass_count ?? '-'}</div>
+                                </div>
+                                <div class="stats-card-desc">按状态为通过/已发offer/已入职统计</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-header">
+                                    <div class="stats-card-title">Offer数</div>
+                                    <div class="stats-card-value">${data.offer_count ?? '-'}</div>
+                                </div>
+                                <div class="stats-card-desc">按Offer发放日期统计</div>
+                            </div>
+                            <div class="stats-card">
+                                <div class="stats-card-header">
+                                    <div class="stats-card-title">入职数</div>
+                                    <div class="stats-card-value">${data.onboard_count ?? '-'}</div>
+                                </div>
+                                <div class="stats-card-desc">按实际入职日期统计</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } else if (data.by_position && data.by_position.length > 0) {
+                // 按岗位分组显示
+                let html = '';
+                data.by_position.forEach((posData, index) => {
+                    const resumeCount = posData.resume_count || 0;
+                    const interviewCount = posData.interview_count || 0;
+                    const passCount = posData.pass_count || 0;
+                    const offerCount = posData.offer_count || 0;
+                    const onboardCount = posData.onboard_count || 0;
+                    
+                    // 计算比例（以简历数为100%）
+                    const interviewRate = resumeCount > 0 ? ((interviewCount / resumeCount) * 100).toFixed(1) : '0.0';
+                    const passRate = resumeCount > 0 ? ((passCount / resumeCount) * 100).toFixed(1) : '0.0';
+                    const offerRate = resumeCount > 0 ? ((offerCount / resumeCount) * 100).toFixed(1) : '0.0';
+                    const onboardRate = resumeCount > 0 ? ((onboardCount / resumeCount) * 100).toFixed(1) : '0.0';
+                    
+                    html += `
+                        <div class="stats-position-group">
+                            <div class="stats-position-title-wrapper">
+                                <h3 class="stats-position-title">${escapeHtml(posData.position)}</h3>
+                                <button class="btn btn-sm btn-funnel" onclick="showFunnelModal('${escapeHtml(posData.position)}', {resume_count: ${resumeCount}, interview_count: ${interviewCount}, pass_count: ${passCount}, offer_count: ${offerCount}, onboard_count: ${onboardCount}})">数据漏斗</button>
+                            </div>
+                            <div class="stats-cards">
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">简历数</div>
+                                        <div class="stats-card-value">${posData.resume_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按简历上传时间统计</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">到面数</div>
+                                        <div class="stats-card-value">${posData.interview_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按一面时间统计（有一面时间视为到面）</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">通过数</div>
+                                        <div class="stats-card-value">${posData.pass_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按状态为通过/已发offer/已入职统计</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">Offer数</div>
+                                        <div class="stats-card-value">${posData.offer_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按Offer发放日期统计</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">入职数</div>
+                                        <div class="stats-card-value">${posData.onboard_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按实际入职日期统计</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                // 如果有总计数据，也显示总计
+                if (data.total) {
+                    const totalResumeCount = data.total.resume_count || 0;
+                    const totalInterviewCount = data.total.interview_count || 0;
+                    const totalPassCount = data.total.pass_count || 0;
+                    const totalOfferCount = data.total.offer_count || 0;
+                    const totalOnboardCount = data.total.onboard_count || 0;
+                    
+                    // 计算比例（以简历数为100%）
+                    const totalInterviewRate = totalResumeCount > 0 ? ((totalInterviewCount / totalResumeCount) * 100).toFixed(1) : '0.0';
+                    const totalPassRate = totalResumeCount > 0 ? ((totalPassCount / totalResumeCount) * 100).toFixed(1) : '0.0';
+                    const totalOfferRate = totalResumeCount > 0 ? ((totalOfferCount / totalResumeCount) * 100).toFixed(1) : '0.0';
+                    const totalOnboardRate = totalResumeCount > 0 ? ((totalOnboardCount / totalResumeCount) * 100).toFixed(1) : '0.0';
+                    
+                    html += `
+                        <div class="stats-position-group" style="margin-top: 30px; padding-top: 30px; border-top: 2px solid #667eea;">
+                            <div class="stats-position-title-wrapper">
+                                <h3 class="stats-position-title">总计</h3>
+                                <button class="btn btn-sm btn-funnel" onclick="showFunnelModal('总计', {resume_count: ${totalResumeCount}, interview_count: ${totalInterviewCount}, pass_count: ${totalPassCount}, offer_count: ${totalOfferCount}, onboard_count: ${totalOnboardCount}})">数据漏斗</button>
+                            </div>
+                            <div class="stats-cards">
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">简历数</div>
+                                        <div class="stats-card-value">${data.total.resume_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按简历上传时间统计</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">到面数</div>
+                                        <div class="stats-card-value">${data.total.interview_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按一面时间统计（有一面时间视为到面）</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">通过数</div>
+                                        <div class="stats-card-value">${data.total.pass_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按状态为通过/已发offer/已入职统计</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">Offer数</div>
+                                        <div class="stats-card-value">${data.total.offer_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按Offer发放日期统计</div>
+                                </div>
+                                <div class="stats-card">
+                                    <div class="stats-card-header">
+                                        <div class="stats-card-title">入职数</div>
+                                        <div class="stats-card-value">${data.total.onboard_count ?? '-'}</div>
+                                    </div>
+                                    <div class="stats-card-desc">按实际入职日期统计</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                statsContent.innerHTML = html;
+            } else {
+                statsContent.innerHTML = '<div style="text-align: center; padding: 40px; color: #999;">暂无统计数据</div>';
+            }
         })
         .catch(err => {
             console.error('加载统计数据失败:', err);
             alert('统计失败，请稍后再试');
         });
+}
+
+// 显示数据漏斗模态框
+function showFunnelModal(positionName, data) {
+    const resumeCount = data.resume_count || 0;
+    const interviewCount = data.interview_count || 0;
+    const passCount = data.pass_count || 0;
+    const offerCount = data.offer_count || 0;
+    const onboardCount = data.onboard_count || 0;
+    
+    // 计算比例（以简历数为100%）
+    const interviewRate = resumeCount > 0 ? ((interviewCount / resumeCount) * 100).toFixed(1) : '0.0';
+    const passRate = resumeCount > 0 ? ((passCount / resumeCount) * 100).toFixed(1) : '0.0';
+    const offerRate = resumeCount > 0 ? ((offerCount / resumeCount) * 100).toFixed(1) : '0.0';
+    const onboardRate = resumeCount > 0 ? ((onboardCount / resumeCount) * 100).toFixed(1) : '0.0';
+    
+    const modal = document.getElementById('funnelModal');
+    const modalBody = document.getElementById('funnelModalBody');
+    if (!modal || !modalBody) return;
+    
+    modalBody.innerHTML = `
+        <div class="funnel-modal-header">
+            <h3>${escapeHtml(positionName)} - 数据漏斗</h3>
+        </div>
+        <div class="funnel-container">
+            <div class="funnel-item">
+                <div class="funnel-label">简历数</div>
+                <div class="funnel-bar-wrapper">
+                    <div class="funnel-bar" style="width: 100%; background: #667eea;">
+                        <span class="funnel-value">${resumeCount}</span>
+                        <span class="funnel-percent">100.0%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="funnel-item">
+                <div class="funnel-label">到面数</div>
+                <div class="funnel-bar-wrapper">
+                    <div class="funnel-bar" style="width: ${interviewRate}%; background: #48bb78;">
+                        <span class="funnel-value">${interviewCount}</span>
+                        <span class="funnel-percent">${interviewRate}%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="funnel-item">
+                <div class="funnel-label">通过数</div>
+                <div class="funnel-bar-wrapper">
+                    <div class="funnel-bar" style="width: ${passRate}%; background: #ed8936;">
+                        <span class="funnel-value">${passCount}</span>
+                        <span class="funnel-percent">${passRate}%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="funnel-item">
+                <div class="funnel-label">Offer数</div>
+                <div class="funnel-bar-wrapper">
+                    <div class="funnel-bar" style="width: ${offerRate}%; background: #9f7aea;">
+                        <span class="funnel-value">${offerCount}</span>
+                        <span class="funnel-percent">${offerRate}%</span>
+                    </div>
+                </div>
+            </div>
+            <div class="funnel-item">
+                <div class="funnel-label">入职数</div>
+                <div class="funnel-bar-wrapper">
+                    <div class="funnel-bar" style="width: ${onboardRate}%; background: #38b2ac;">
+                        <span class="funnel-value">${onboardCount}</span>
+                        <span class="funnel-percent">${onboardRate}%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    modal.style.display = 'block';
+}
+
+// 关闭数据漏斗模态框
+function closeFunnelModal() {
+    const modal = document.getElementById('funnelModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// 点击模态框外部关闭
+window.onclick = function(event) {
+    const funnelModal = document.getElementById('funnelModal');
+    if (event.target === funnelModal) {
+        closeFunnelModal();
+    }
 }
 
 // 根据匹配分数返回颜色
@@ -1448,9 +1724,19 @@ function openInterviewModal(interviewId) {
             const round1Result = data.round1_result || '';
             const round2Result = data.round2_result || '';
             const round3Enabled = !!data.round3_enabled;
+            
+            // 检查是否已有token，如果有则显示链接
+            const baseUrl = window.location.origin;
+            const round1Link = data.round1_comment_token ? `${baseUrl}/interview-comment?token=${data.round1_comment_token}` : '';
+            const round2Link = data.round2_comment_token ? `${baseUrl}/interview-comment?token=${data.round2_comment_token}` : '';
+            const round3Link = data.round3_comment_token ? `${baseUrl}/interview-comment?token=${data.round3_comment_token}` : '';
 
             body.innerHTML = `
                 <div class="form-grid">
+                    <div class="detail-item">
+                        <label>身份验证码：</label>
+                        <span>${escapeHtml(data.identity_code || '-')}</span>
+                    </div>
                     <div class="detail-item">
                         <label>候选人姓名：</label>
                         <span>${escapeHtml(data.name || '-')}</span>
@@ -1463,7 +1749,7 @@ function openInterviewModal(interviewId) {
                     </div>
                     <div class="detail-item">
                         <label>当前状态：</label>
-                        <span>${escapeHtml(data.status || '待面试')}</span>
+                        <span id="interviewStatusDisplay">${escapeHtml(data.status || '待面试')}</span>
                     </div>
                 </div>
                 
@@ -1494,7 +1780,17 @@ function openInterviewModal(interviewId) {
                 </div>
                 <div class="form-group">
                     <label>一面评价：</label>
-                    <textarea id="round1_comment" class="form-textarea" rows="3" placeholder="请输入一面评价">${escapeHtml(data.round1_comment || '')}</textarea>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <textarea id="round1_comment" class="form-textarea" rows="3" placeholder="请输入一面评价" style="flex: 1;">${escapeHtml(data.round1_comment || '')}</textarea>
+                        <button class="btn btn-secondary" onclick="generateCommentLink(${data.id}, 1)" title="生成邀请填写链接">邀请填写</button>
+                    </div>
+                    <div id="round1_link_display" style="display: ${round1Link ? 'block' : 'none'}; margin-top: 8px; padding: 8px; background: #f0f0f0; border-radius: 4px;">
+                        <label style="font-weight: bold;">填写链接：</label>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                            <input type="text" id="round1_link" value="${round1Link}" readonly style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn btn-small" onclick="copyLink('round1_link')">复制</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="form-group interview-doc-row">
                     <div class="interview-doc-left">
@@ -1539,7 +1835,17 @@ function openInterviewModal(interviewId) {
                 </div>
                 <div class="form-group">
                     <label>二面评价：</label>
-                    <textarea id="round2_comment" class="form-textarea" rows="3" placeholder="请输入二面评价">${escapeHtml(data.round2_comment || '')}</textarea>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <textarea id="round2_comment" class="form-textarea" rows="3" placeholder="请输入二面评价" style="flex: 1;">${escapeHtml(data.round2_comment || '')}</textarea>
+                        <button class="btn btn-secondary" onclick="generateCommentLink(${data.id}, 2)" title="生成邀请填写链接">邀请填写</button>
+                    </div>
+                    <div id="round2_link_display" style="display: ${round2Link ? 'block' : 'none'}; margin-top: 8px; padding: 8px; background: #f0f0f0; border-radius: 4px;">
+                        <label style="font-weight: bold;">填写链接：</label>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                            <input type="text" id="round2_link" value="${round2Link}" readonly style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn btn-small" onclick="copyLink('round2_link')">复制</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="form-group interview-doc-row">
                     <div class="interview-doc-left">
@@ -1590,7 +1896,17 @@ function openInterviewModal(interviewId) {
                 </div>
                 <div class="form-group">
                     <label>三面评价：</label>
-                    <textarea id="round3_comment" class="form-textarea" rows="3" placeholder="请输入三面评价">${escapeHtml(data.round3_comment || '')}</textarea>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                        <textarea id="round3_comment" class="form-textarea" rows="3" placeholder="请输入三面评价" style="flex: 1;">${escapeHtml(data.round3_comment || '')}</textarea>
+                        <button class="btn btn-secondary" onclick="generateCommentLink(${data.id}, 3)" title="生成邀请填写链接">邀请填写</button>
+                    </div>
+                    <div id="round3_link_display" style="display: ${round3Link ? 'block' : 'none'}; margin-top: 8px; padding: 8px; background: #f0f0f0; border-radius: 4px;">
+                        <label style="font-weight: bold;">填写链接：</label>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                            <input type="text" id="round3_link" value="${round3Link}" readonly style="flex: 1; padding: 6px; border: 1px solid #ddd; border-radius: 4px;">
+                            <button class="btn btn-small" onclick="copyLink('round3_link')">复制</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="form-group interview-doc-row">
                     <div class="interview-doc-left">
@@ -1770,7 +2086,35 @@ function saveInterview(interviewId) {
     .then(result => {
         if (result.success) {
             alert('保存成功');
+            // 刷新列表以同步状态
             loadInterviews();
+            // 重新加载详情数据，更新详情页的状态显示
+            fetch(`/api/interviews/${interviewId}`)
+                .then(response => response.json())
+                .then(detailResult => {
+                    if (detailResult.success) {
+                        // 更新详情页中的状态显示（使用ID选择器）
+                        const statusElement = document.getElementById('interviewStatusDisplay');
+                        if (statusElement) {
+                            statusElement.textContent = detailResult.data.status || '待面试';
+                        } else {
+                            // 如果ID不存在，尝试通过其他方式更新
+                            const allStatusElements = document.querySelectorAll('#interviewModalBody .detail-item');
+                            allStatusElements.forEach(item => {
+                                const label = item.querySelector('label');
+                                if (label && label.textContent.includes('当前状态')) {
+                                    const span = item.querySelector('span');
+                                    if (span) {
+                                        span.textContent = detailResult.data.status || '待面试';
+                                    }
+                                }
+                            });
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error('更新详情状态失败:', err);
+                });
         } else {
             alert(`保存失败：${result.message || '未知错误'}`);
         }
@@ -2784,37 +3128,39 @@ function displayPositions(positions) {
         return;
     }
     
-    let html = '<div class="positions-grid">';
+    let html = '<div class="positions-list-container">';
     positions.forEach(position => {
         const createTime = position.create_time ? new Date(position.create_time).toLocaleString('zh-CN') : '-';
         const updateTime = position.update_time ? new Date(position.update_time).toLocaleString('zh-CN') : '-';
         
         html += `
-            <div class="position-card">
-                <div class="position-card-header">
+            <div class="position-group">
+                <div class="position-name-header">
                     <h4 class="position-name">${escapeHtml(position.position_name || '未命名岗位')}</h4>
-                    <div class="position-actions">
-                        <button class="btn btn-sm btn-edit" onclick="editPosition(${position.id})" title="编辑">✏️</button>
-                        <button class="btn btn-sm btn-delete" onclick="deletePosition(${position.id})" title="删除">🗑️</button>
-                    </div>
                 </div>
-                <div class="position-card-body">
-                    <div class="position-field">
-                        <label>工作内容：</label>
-                        <div class="position-content">${escapeHtml(position.work_content || '未填写')}</div>
+                <div style="flex: 1; display: flex; flex-direction: column;">
+                    <div class="position-cards">
+                        <div class="position-info-card">
+                            <div class="position-info-title">工作内容</div>
+                            <div class="position-info-content">${escapeHtml(position.work_content || '未填写')}</div>
+                        </div>
+                        <div class="position-info-card">
+                            <div class="position-info-title">任职资格</div>
+                            <div class="position-info-content">${escapeHtml(position.job_requirements || '未填写')}</div>
+                        </div>
+                        <div class="position-info-card">
+                            <div class="position-info-title">核心需求</div>
+                            <div class="position-info-content">${escapeHtml(position.core_requirements || '未填写')}</div>
+                        </div>
+                        <div class="position-actions">
+                            <button class="btn btn-sm btn-edit" onclick="editPosition(${position.id})" title="编辑">✏️</button>
+                            <button class="btn btn-sm btn-delete" onclick="deletePosition(${position.id})" title="删除">🗑️</button>
+                        </div>
                     </div>
-                    <div class="position-field">
-                        <label>任职资格：</label>
-                        <div class="position-content">${escapeHtml(position.job_requirements || '未填写')}</div>
+                    <div class="position-footer">
+                        <span class="position-time">创建: ${createTime}</span>
+                        <span class="position-time">更新: ${updateTime}</span>
                     </div>
-                    <div class="position-field">
-                        <label>核心需求：</label>
-                        <div class="position-content">${escapeHtml(position.core_requirements || '未填写')}</div>
-                    </div>
-                </div>
-                <div class="position-card-footer">
-                    <span class="position-time">创建: ${createTime}</span>
-                    <span class="position-time">更新: ${updateTime}</span>
                 </div>
             </div>
         `;
@@ -2957,6 +3303,51 @@ function deletePosition(positionId) {
         console.error('删除岗位失败:', error);
         alert('删除失败，请重试');
     });
+}
+
+// 生成面试评价填写链接
+function generateCommentLink(interviewId, round) {
+    fetch(`/api/interviews/${interviewId}/comment-link/${round}`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const linkInput = document.getElementById(`round${round}_link`);
+            const linkDisplay = document.getElementById(`round${round}_link_display`);
+            if (linkInput && linkDisplay) {
+                const baseUrl = window.location.origin;
+                linkInput.value = `${baseUrl}/interview-comment?token=${result.data.token}`;
+                linkDisplay.style.display = 'block';
+            }
+        } else {
+            alert('生成链接失败：' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('生成链接失败:', error);
+        alert('生成链接失败，请重试');
+    });
+}
+
+// 复制链接
+function copyLink(inputId) {
+    const input = document.getElementById(inputId);
+    if (input) {
+        input.select();
+        input.setSelectionRange(0, 99999); // 兼容移动设备
+        try {
+            document.execCommand('copy');
+            alert('链接已复制到剪贴板');
+        } catch (err) {
+            // 使用现代API
+            navigator.clipboard.writeText(input.value).then(() => {
+                alert('链接已复制到剪贴板');
+            }).catch(() => {
+                alert('复制失败，请手动复制');
+            });
+        }
+    }
 }
 
 // 关闭岗位表单模态框

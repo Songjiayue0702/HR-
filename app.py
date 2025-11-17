@@ -5,6 +5,7 @@ from flask import Flask, render_template, request, jsonify, send_file
 from werkzeug.utils import secure_filename
 import os
 import json
+import secrets
 from datetime import datetime
 from config import Config
 from models import get_db_session, Resume, Position, Interview
@@ -304,14 +305,136 @@ def get_statistics():
             onboard_query = onboard_query.filter(Interview.onboard_date <= end_date_str)
         onboard_count = onboard_query.count()
 
+        # 如果指定了岗位，返回单个岗位的数据
+        if position:
+            return jsonify({
+                'success': True,
+                'data': {
+                    'position': position,
+                    'resume_count': resume_count,
+                    'interview_count': interview_count,
+                    'pass_count': pass_count,
+                    'offer_count': offer_count,
+                    'onboard_count': onboard_count,
+                }
+            })
+        
+        # 如果没有指定岗位，按岗位分组返回数据
+        from sqlalchemy import func
+        stats_by_position = []
+        
+        # 获取所有有数据的岗位（从简历和面试记录中）
+        all_positions = set()
+        # 从简历中获取岗位
+        resume_positions = session.query(Resume.applied_position).filter(
+            Resume.applied_position.isnot(None),
+            Resume.applied_position != ''
+        )
+        if start_dt is not None:
+            resume_positions = resume_positions.filter(Resume.upload_time >= start_dt)
+        if end_dt is not None:
+            resume_positions = resume_positions.filter(Resume.upload_time <= end_dt)
+        for pos in resume_positions.distinct():
+            if pos[0]:
+                all_positions.add(pos[0])
+        
+        # 从面试记录中获取岗位
+        interview_positions = session.query(Interview.applied_position).filter(
+            Interview.applied_position.isnot(None),
+            Interview.applied_position != ''
+        )
+        if start_date_str:
+            interview_positions = interview_positions.filter(
+                Interview.round1_time.isnot(None),
+                Interview.round1_time >= start_date_str
+            )
+        if end_date_str:
+            interview_positions = interview_positions.filter(
+                Interview.round1_time <= end_date_str
+            )
+        for pos in interview_positions.distinct():
+            if pos[0]:
+                all_positions.add(pos[0])
+        
+        # 为每个岗位计算统计数据
+        for pos_name in sorted(all_positions):
+            # 简历数
+            pos_resume_query = session.query(Resume).filter(Resume.applied_position == pos_name)
+            if start_dt is not None:
+                pos_resume_query = pos_resume_query.filter(Resume.upload_time >= start_dt)
+            if end_dt is not None:
+                pos_resume_query = pos_resume_query.filter(Resume.upload_time <= end_dt)
+            pos_resume_count = pos_resume_query.count()
+            
+            # 到面数
+            pos_interview_query = session.query(Interview).filter(Interview.applied_position == pos_name)
+            if start_date_str:
+                pos_interview_query = pos_interview_query.filter(
+                    Interview.round1_time.isnot(None),
+                    Interview.round1_time >= start_date_str
+                )
+            if end_date_str:
+                pos_interview_query = pos_interview_query.filter(Interview.round1_time <= end_date_str)
+            pos_interview_count = pos_interview_query.count()
+            
+            # 通过数
+            pos_pass_query = session.query(Interview).filter(
+                Interview.applied_position == pos_name,
+                Interview.status.in_(pass_statuses)
+            )
+            if start_dt is not None:
+                pos_pass_query = pos_pass_query.filter(Interview.create_time >= start_dt)
+            if end_dt is not None:
+                pos_pass_query = pos_pass_query.filter(Interview.create_time <= end_dt)
+            pos_pass_count = pos_pass_query.count()
+            
+            # Offer数
+            pos_offer_query = session.query(Interview).filter(
+                Interview.applied_position == pos_name,
+                Interview.offer_issued == 1,
+                Interview.offer_date.isnot(None),
+                Interview.offer_date != ''
+            )
+            if start_date_str:
+                pos_offer_query = pos_offer_query.filter(Interview.offer_date >= start_date_str)
+            if end_date_str:
+                pos_offer_query = pos_offer_query.filter(Interview.offer_date <= end_date_str)
+            pos_offer_count = pos_offer_query.count()
+            
+            # 入职数
+            pos_onboard_query = session.query(Interview).filter(
+                Interview.applied_position == pos_name,
+                Interview.onboard == 1,
+                Interview.onboard_date.isnot(None),
+                Interview.onboard_date != ''
+            )
+            if start_date_str:
+                pos_onboard_query = pos_onboard_query.filter(Interview.onboard_date >= start_date_str)
+            if end_date_str:
+                pos_onboard_query = pos_onboard_query.filter(Interview.onboard_date <= end_date_str)
+            pos_onboard_count = pos_onboard_query.count()
+            
+            stats_by_position.append({
+                'position': pos_name,
+                'resume_count': pos_resume_count,
+                'interview_count': pos_interview_count,
+                'pass_count': pos_pass_count,
+                'offer_count': pos_offer_count,
+                'onboard_count': pos_onboard_count,
+            })
+        
+        # 如果没有岗位数据，返回空数组
         return jsonify({
             'success': True,
             'data': {
-                'resume_count': resume_count,
-                'interview_count': interview_count,
-                'pass_count': pass_count,
-                'offer_count': offer_count,
-                'onboard_count': onboard_count,
+                'by_position': stats_by_position,
+                'total': {
+                    'resume_count': resume_count,
+                    'interview_count': interview_count,
+                    'pass_count': pass_count,
+                    'offer_count': offer_count,
+                    'onboard_count': onboard_count,
+                }
             }
         })
     finally:
@@ -569,6 +692,14 @@ def delete_resume(resume_id):
         db.close()
         return jsonify({'success': False, 'message': '简历不存在'}), 404
 
+    # 检查是否有关联的面试流程
+    interview_count = db.query(Interview).filter(Interview.resume_id == resume_id).count()
+    if interview_count > 0:
+        # 如果有关联的面试流程，提示用户（但不阻止删除）
+        # 面试流程记录会保留，但简历信息会丢失
+        # 面试流程中的冗余字段（name, applied_position）会保留
+        pass
+
     file_path = resume.file_path
     db.delete(resume)
     db.commit()
@@ -593,6 +724,9 @@ def delete_resumes_batch():
     if not resumes:
         db.close()
         return jsonify({'success': False, 'message': '没有找到匹配的简历'}), 404
+
+    # 检查是否有关联的面试流程（仅用于提示，不阻止删除）
+    interview_count = db.query(Interview).filter(Interview.resume_id.in_(resume_ids)).count()
 
     file_paths = [resume.file_path for resume in resumes]
     for resume in resumes:
@@ -776,8 +910,8 @@ def list_interviews():
     session = get_db_session()
     try:
         search = (request.args.get('search') or '').strip()
-        # 关联简历表以便生成身份验证码
-        query = session.query(Interview, Resume).join(Resume, Interview.resume_id == Resume.id)
+        # 关联简历表以便生成身份验证码（使用LEFT JOIN处理简历不存在的情况）
+        query = session.query(Interview, Resume).outerjoin(Resume, Interview.resume_id == Resume.id)
         if search:
             like = f"%{search}%"
             query = query.filter(
@@ -788,14 +922,32 @@ def list_interviews():
         data = []
         for iv, res in rows:
             d = iv.to_dict()
-            # 身份验证码：姓名+手机号后四位
-            identity_code = ''
-            if res.name:
-                phone = res.phone or ''
-                if phone and len(phone) >= 4:
-                    identity_code = res.name + phone[-4:]
-                else:
-                    identity_code = res.name
+            # 身份验证码：优先使用面试记录中存储的，如果为空则动态生成
+            identity_code = iv.identity_code
+            if not identity_code:
+                # 如果面试记录中没有存储身份验证码，动态生成
+                if res and res.name:
+                    # 简历存在，使用简历信息生成身份验证码
+                    phone = res.phone or ''
+                    if phone and len(phone) >= 4:
+                        identity_code = res.name + phone[-4:]
+                    else:
+                        identity_code = res.name
+                    # 同时更新候选人姓名为简历中的姓名，确保一致性
+                    d['name'] = res.name
+                    # 更新面试记录中的身份验证码（异步更新，不阻塞返回）
+                    try:
+                        iv.identity_code = identity_code
+                        session.commit()
+                    except:
+                        session.rollback()
+                elif iv.name:
+                    # 简历不存在，使用面试记录中的冗余姓名（无法获取手机号）
+                    identity_code = iv.name
+            else:
+                # 如果简历存在，同步更新候选人姓名以确保一致性
+                if res and res.name:
+                    d['name'] = res.name
             d['identity_code'] = identity_code
             data.append(d)
         return jsonify({'success': True, 'data': data})
@@ -826,10 +978,20 @@ def create_interview():
             if not resume:
                 return jsonify({'success': False, 'message': '简历不存在'}), 404
 
+            # 生成身份验证码：姓名+手机号后四位
+            identity_code = ''
+            if resume.name:
+                phone = resume.phone or ''
+                if phone and len(phone) >= 4:
+                    identity_code = resume.name + phone[-4:]
+                else:
+                    identity_code = resume.name
+            
             interview = Interview(
                 resume_id=resume.id,
                 name=resume.name or '',
                 applied_position=resume.applied_position or '',
+                identity_code=identity_code,
                 match_score=match_score,
                 match_level=match_level
             )
@@ -911,7 +1073,42 @@ def get_interview(interview_id):
         interview = session.query(Interview).filter(Interview.id == interview_id).first()
         if not interview:
             return jsonify({'success': False, 'message': '面试记录不存在'}), 404
-        return jsonify({'success': True, 'data': interview.to_dict()})
+        
+        data = interview.to_dict()
+        
+        # 身份验证码：优先使用面试记录中存储的，如果为空则动态生成
+        identity_code = interview.identity_code
+        if not identity_code:
+            # 尝试获取关联的简历信息以生成身份验证码
+            resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+            if resume:
+                # 简历存在，使用简历信息生成身份验证码
+                if resume.name:
+                    phone = resume.phone or ''
+                    if phone and len(phone) >= 4:
+                        identity_code = resume.name + phone[-4:]
+                    else:
+                        identity_code = resume.name
+                # 同时更新候选人姓名为简历中的姓名，确保一致性
+                data['name'] = resume.name
+                # 更新面试记录中的身份验证码
+                try:
+                    interview.identity_code = identity_code
+                    session.commit()
+                except:
+                    session.rollback()
+            else:
+                # 简历不存在，使用面试记录中的冗余姓名
+                identity_code = interview.name if interview.name else ''
+        else:
+            # 如果简历存在，同步更新候选人姓名以确保一致性
+            resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+            if resume and resume.name:
+                data['name'] = resume.name
+        
+        data['identity_code'] = identity_code
+        
+        return jsonify({'success': True, 'data': data})
     finally:
         session.close()
 
@@ -961,6 +1158,21 @@ def update_interview(interview_id):
             except Exception as _:
                 pass
 
+        # 同步更新身份验证码（如果简历存在）
+        try:
+            resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+            if resume and resume.name:
+                # 重新生成身份验证码
+                phone = resume.phone or ''
+                if phone and len(phone) >= 4:
+                    interview.identity_code = resume.name + phone[-4:]
+                else:
+                    interview.identity_code = resume.name
+                # 同时更新候选人姓名
+                interview.name = resume.name
+        except Exception as _:
+            pass
+
         # Offer 与入职信息
         interview.offer_issued = 1 if data.get('offer_issued') else 0
         interview.offer_date = data.get('offer_date')
@@ -971,8 +1183,26 @@ def update_interview(interview_id):
         interview.onboard_date = data.get('onboard_date')
         interview.onboard_department = data.get('onboard_department')
 
-        # 自动计算状态
+        # 自动计算状态（与身份验证码绑定）
+        # 状态包括：待面试、一面面试通过/未通过、二面面试通过/未通过、三面面试未通过、面试通过、已发offer、已入职
+        # 所有状态都与身份验证码绑定，确保通过身份验证码可以查询到完整的面试流程和最终状态
         interview.status = _calc_interview_status(interview)
+        
+        # 确保身份验证码与所有信息绑定（包括状态）
+        # 身份验证码作为唯一标识，绑定所有面试流程详情（各轮面试信息、评价、结果、Offer、入职）和最终状态
+        if not interview.identity_code:
+            try:
+                resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+                if resume and resume.name:
+                    phone = resume.phone or ''
+                    if phone and len(phone) >= 4:
+                        interview.identity_code = resume.name + phone[-4:]
+                    else:
+                        interview.identity_code = resume.name
+                elif interview.name:
+                    interview.identity_code = interview.name
+            except Exception as _:
+                pass
 
         session.commit()
         return jsonify({'success': True, 'data': interview.to_dict()})
@@ -985,12 +1215,201 @@ def update_interview(interview_id):
 
 @app.route('/api/interviews/resume-ids', methods=['GET'])
 def get_interview_resume_ids():
-    """返回所有已邀约面试的 resume_id 列表，用于前端标记“已邀约”"""
+    """返回所有已邀约面试的 resume_id 列表，用于前端标记"已邀约" """
     session = get_db_session()
     try:
         ids = session.query(Interview.resume_id).distinct().all()
         id_list = [row[0] for row in ids]
         return jsonify({'success': True, 'data': id_list})
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/by-identity', methods=['GET'])
+def get_interview_by_identity():
+    """通过身份验证码查询面试流程详情"""
+    identity_code = request.args.get('identity_code', '').strip()
+    if not identity_code:
+        return jsonify({'success': False, 'message': '缺少身份验证码'}), 400
+    
+    session = get_db_session()
+    try:
+        # 通过身份验证码查找面试记录
+        interview = session.query(Interview).filter(Interview.identity_code == identity_code).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '未找到对应的面试记录'}), 404
+        
+        data = interview.to_dict()
+        
+        # 如果简历存在，同步更新候选人姓名以确保一致性
+        resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+        if resume and resume.name:
+            data['name'] = resume.name
+        
+        return jsonify({'success': True, 'data': data})
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/<int:interview_id>/comment-link/<int:round>', methods=['POST'])
+def generate_comment_link(interview_id, round):
+    """生成面试评价填写链接"""
+    if round not in (1, 2, 3):
+        return jsonify({'success': False, 'message': '无效的轮次'}), 400
+    
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        
+        # 生成唯一token
+        token = secrets.token_urlsafe(32)
+        
+        # 保存token到对应字段
+        if round == 1:
+            interview.round1_comment_token = token
+        elif round == 2:
+            interview.round2_comment_token = token
+        else:
+            interview.round3_comment_token = token
+        
+        session.commit()
+        return jsonify({'success': True, 'data': {'token': token}})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'生成链接失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/interview-comment', methods=['GET'])
+def interview_comment_page():
+    """面试评价填写页面（公开页面）"""
+    token = request.args.get('token', '').strip()
+    if not token:
+        return render_template('error.html', message='缺少访问令牌'), 400
+    
+    session = get_db_session()
+    try:
+        # 查找对应的面试记录和轮次
+        interview = None
+        round_num = None
+        
+        interview1 = session.query(Interview).filter(Interview.round1_comment_token == token).first()
+        if interview1:
+            interview = interview1
+            round_num = 1
+        else:
+            interview2 = session.query(Interview).filter(Interview.round2_comment_token == token).first()
+            if interview2:
+                interview = interview2
+                round_num = 2
+            else:
+                interview3 = session.query(Interview).filter(Interview.round3_comment_token == token).first()
+                if interview3:
+                    interview = interview3
+                    round_num = 3
+        
+        if not interview:
+            return render_template('error.html', message='无效的访问令牌'), 404
+        
+        # 获取当前轮次的信息
+        current_comment = ''
+        current_interviewer = ''
+        current_time = ''
+        current_result = ''
+        
+        if round_num == 1:
+            current_comment = interview.round1_comment or ''
+            current_interviewer = interview.round1_interviewer or ''
+            current_time = interview.round1_time or ''
+            current_result = interview.round1_result or ''
+        elif round_num == 2:
+            current_comment = interview.round2_comment or ''
+            current_interviewer = interview.round2_interviewer or ''
+            current_time = interview.round2_time or ''
+            current_result = interview.round2_result or ''
+        else:
+            current_comment = interview.round3_comment or ''
+            current_interviewer = interview.round3_interviewer or ''
+            current_time = interview.round3_time or ''
+            current_result = interview.round3_result or ''
+        
+        return render_template('interview_comment.html', 
+                             interview=interview, 
+                             round=round_num,
+                             current_comment=current_comment,
+                             current_interviewer=current_interviewer,
+                             current_time=current_time,
+                             current_result=current_result,
+                             token=token)
+    finally:
+        session.close()
+
+
+@app.route('/api/interview-comment/submit', methods=['POST'])
+def submit_interview_comment():
+    """提交面试评价及相关信息"""
+    data = request.json or {}
+    token = data.get('token', '').strip()
+    interviewer = data.get('interviewer', '').strip()
+    time = data.get('time', '').strip()
+    result = data.get('result', '').strip()
+    comment = data.get('comment', '').strip()
+    
+    if not token:
+        return jsonify({'success': False, 'message': '缺少访问令牌'}), 400
+    
+    session = get_db_session()
+    try:
+        # 查找对应的面试记录和轮次
+        interview = None
+        round_num = None
+        
+        interview1 = session.query(Interview).filter(Interview.round1_comment_token == token).first()
+        if interview1:
+            interview = interview1
+            round_num = 1
+        else:
+            interview2 = session.query(Interview).filter(Interview.round2_comment_token == token).first()
+            if interview2:
+                interview = interview2
+                round_num = 2
+            else:
+                interview3 = session.query(Interview).filter(Interview.round3_comment_token == token).first()
+                if interview3:
+                    interview = interview3
+                    round_num = 3
+        
+        if not interview:
+            return jsonify({'success': False, 'message': '无效的访问令牌'}), 404
+        
+        # 保存当轮次的信息
+        if round_num == 1:
+            interview.round1_interviewer = interviewer
+            interview.round1_time = time
+            interview.round1_result = result
+            interview.round1_comment = comment
+        elif round_num == 2:
+            interview.round2_interviewer = interviewer
+            interview.round2_time = time
+            interview.round2_result = result
+            interview.round2_comment = comment
+        else:
+            interview.round3_interviewer = interviewer
+            interview.round3_time = time
+            interview.round3_result = result
+            interview.round3_comment = comment
+        
+        # 自动计算状态
+        interview.status = _calc_interview_status(interview)
+        
+        session.commit()
+        return jsonify({'success': True, 'message': '信息提交成功'})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'提交失败: {str(e)}'}), 500
     finally:
         session.close()
 

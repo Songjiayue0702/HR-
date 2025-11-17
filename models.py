@@ -149,6 +149,7 @@ class Interview(Base):
     resume_id = Column(Integer, nullable=False)  # 关联的简历ID
     name = Column(String(100))  # 候选人姓名（冗余，便于直接显示）
     applied_position = Column(String(200))  # 应聘岗位（冗余）
+    identity_code = Column(String(200))  # 身份验证码（冗余，用于绑定和查找）
 
     # 简历匹配度
     match_score = Column(Integer)  # 匹配度分数
@@ -181,6 +182,11 @@ class Interview(Base):
     round1_doc_path = Column(String(500))  # 一面文档（录音逐字稿等）
     round2_doc_path = Column(String(500))  # 二面文档
     round3_doc_path = Column(String(500))  # 三面文档
+    
+    # 面试评价填写链接token（用于生成邀请链接）
+    round1_comment_token = Column(String(100))  # 一面评价填写token
+    round2_comment_token = Column(String(100))  # 二面评价填写token
+    round3_comment_token = Column(String(100))  # 三面评价填写token
 
     # AI 分析结果（按轮次）
     round1_ai_result = Column(Text)
@@ -205,6 +211,7 @@ class Interview(Base):
             'resume_id': self.resume_id,
             'name': self.name,
             'applied_position': self.applied_position,
+            'identity_code': self.identity_code,
             'match_score': self.match_score,
             'match_level': self.match_level,
             'status': self.status,
@@ -224,6 +231,9 @@ class Interview(Base):
             'round1_doc_path': self.round1_doc_path,
             'round2_doc_path': self.round2_doc_path,
             'round3_doc_path': self.round3_doc_path,
+            'round1_comment_token': self.round1_comment_token,
+            'round2_comment_token': self.round2_comment_token,
+            'round3_comment_token': self.round3_comment_token,
             'round1_ai_result': self.round1_ai_result,
             'round2_ai_result': self.round2_ai_result,
             'round3_ai_result': self.round3_ai_result,
@@ -294,6 +304,12 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN round2_doc_path VARCHAR(500)")
     if 'round3_doc_path' not in i_columns:
         add_cols.append("ADD COLUMN round3_doc_path VARCHAR(500)")
+    if 'round1_comment_token' not in i_columns:
+        add_cols.append("ADD COLUMN round1_comment_token VARCHAR(100)")
+    if 'round2_comment_token' not in i_columns:
+        add_cols.append("ADD COLUMN round2_comment_token VARCHAR(100)")
+    if 'round3_comment_token' not in i_columns:
+        add_cols.append("ADD COLUMN round3_comment_token VARCHAR(100)")
     if 'round1_ai_result' not in i_columns:
         add_cols.append("ADD COLUMN round1_ai_result TEXT")
     if 'round2_ai_result' not in i_columns:
@@ -314,6 +330,8 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN onboard_date VARCHAR(50)")
     if 'onboard_department' not in i_columns:
         add_cols.append("ADD COLUMN onboard_department VARCHAR(200)")
+    if 'identity_code' not in i_columns:
+        add_cols.append("ADD COLUMN identity_code VARCHAR(200)")
 
     for clause in add_cols:
         conn.execute(text(f"ALTER TABLE interviews {clause}"))
