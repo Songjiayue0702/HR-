@@ -605,10 +605,16 @@ function displayDetail(resume) {
             <textarea rows="10" readonly>${escapeHtml(resume.raw_text || '')}</textarea>
         </label>
         <div class="modal-actions">
-            <button class="btn btn-primary" onclick="saveResume()">保存修改</button>
-            <button class="btn btn-secondary" onclick="exportSingle(${resume.id})">导出Excel</button>
-            <button class="btn btn-danger" onclick="deleteResume(${resume.id})">删除简历</button>
-            <button class="btn btn-secondary" onclick="closeModal()">关闭</button>
+            <div class="modal-actions-row">
+                <button class="btn btn-primary" onclick="saveResume()">保存修改</button>
+                <button class="btn btn-secondary" onclick="exportSingle(${resume.id})">导出Excel</button>
+                <button class="btn btn-danger" onclick="deleteResume(${resume.id})">删除简历</button>
+                <button class="btn btn-secondary" onclick="closeModal()">关闭</button>
+            </div>
+            <div class="modal-actions-row">
+                <button class="btn btn-secondary" onclick="previewResumeFile(${resume.id})">预览简历文件</button>
+                <button class="btn btn-secondary" onclick="downloadResumeFile(${resume.id})">下载简历文件</button>
+            </div>
         </div>
     `;
     modal.style.display = 'block';
@@ -997,6 +1003,70 @@ function deleteResume(id) {
 }
 
 // 导出功能
+// 预览简历文件
+function previewResumeFile(resumeId) {
+    // 获取简历信息以确定文件类型
+    fetch(`/api/resumes/${resumeId}`)
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success || !result.data) {
+                alert('获取简历信息失败');
+                return;
+            }
+            const resume = result.data;
+            const fileName = resume.file_name || '';
+            const fileExt = fileName.split('.').pop()?.toLowerCase() || '';
+            
+            const previewModal = document.getElementById('resumePreviewModal');
+            const previewContent = document.getElementById('resumePreviewContent');
+            
+            if (fileExt === 'pdf') {
+                // PDF文件：使用iframe预览（不触发下载）
+                previewContent.innerHTML = `<iframe src="/api/resumes/${resumeId}/download?download=false" style="width: 100%; height: 100%; border: none;"></iframe>`;
+            } else if (fileExt === 'doc' || fileExt === 'docx') {
+                // Word文件：提示下载后查看
+                previewContent.innerHTML = `
+                    <div style="text-align: center; padding: 40px;">
+                        <p style="font-size: 16px; margin-bottom: 20px;">Word文档无法在浏览器中直接预览</p>
+                        <p style="color: #666; margin-bottom: 30px;">请点击下方按钮下载后查看</p>
+                        <button class="btn btn-primary" onclick="downloadResumeFile(${resumeId})">下载文件</button>
+                    </div>
+                `;
+            } else {
+                previewContent.innerHTML = `
+                    <div style="text-align: center; padding: 40px;">
+                        <p style="font-size: 16px; color: #666;">不支持预览此文件类型</p>
+                        <button class="btn btn-primary" onclick="downloadResumeFile(${resumeId})" style="margin-top: 20px;">下载文件</button>
+                    </div>
+                `;
+            }
+            
+            previewModal.style.display = 'block';
+        })
+        .catch(error => {
+            console.error('获取简历信息失败:', error);
+            alert('获取简历信息失败，请稍后再试');
+        });
+}
+
+// 关闭简历预览模态框
+function closeResumePreviewModal() {
+    const previewModal = document.getElementById('resumePreviewModal');
+    if (previewModal) {
+        previewModal.style.display = 'none';
+        // 清空预览内容
+        const previewContent = document.getElementById('resumePreviewContent');
+        if (previewContent) {
+            previewContent.innerHTML = '';
+        }
+    }
+}
+
+// 下载简历原始文件
+function downloadResumeFile(resumeId) {
+    window.location.href = `/api/resumes/${resumeId}/download?download=true`;
+}
+
 function exportSingle(id) {
     window.location.href = `/api/export/${id}`;
 }
@@ -1118,14 +1188,27 @@ function exportAll() {
 // 从简历（列表或分析）发起邀约面试
 function inviteInterview(resumeId) {
     if (!resumeId) return;
-    if (!confirm('确认将该候选人加入“面试流程”吗？')) {
+    if (!confirm('确认将该候选人加入"面试流程"吗？')) {
         return;
     }
-    // 尝试从匹配度缓存中带上当前岗位的匹配结果
+    // 尝试从匹配度缓存中获取当前岗位的匹配结果
     let match_score = null;
     let match_level = null;
-    const resumeCards = document.querySelectorAll(`.resume-selector-item[data-resume-id="${resumeId}"]`);
-    // 这里只是保障字段存在，真正的分数以后台已有记录为准，如果没有缓存也不影响使用
+    
+    // 从简历分析模块的缓存中获取匹配度结果
+    if (typeof matchAnalysisCache !== 'undefined') {
+        // 获取当前选择的岗位
+        const positionSelect = document.getElementById('analysisPositionSelect');
+        const appliedPosition = positionSelect ? positionSelect.value : '';
+        if (appliedPosition) {
+            const cacheKey = `${resumeId}_${appliedPosition}`;
+            const cachedResult = matchAnalysisCache[cacheKey];
+            if (cachedResult) {
+                match_score = cachedResult.match_score;
+                match_level = cachedResult.match_level;
+            }
+        }
+    }
 
     fetch('/api/interviews', {
         method: 'POST',
@@ -1244,6 +1327,39 @@ function toggleSelectAllInterviews() {
         } else {
             selectedInterviews.delete(id);
         }
+    });
+}
+
+function deleteSelectedInterviews() {
+    if (selectedInterviews.size === 0) {
+        alert('请先选择要删除的面试记录');
+        return;
+    }
+    if (!confirm(`确定要删除选中的 ${selectedInterviews.size} 条面试记录吗？此操作不可撤销。`)) {
+        return;
+    }
+    fetch('/api/interviews/batch_delete', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            interview_ids: Array.from(selectedInterviews)
+        })
+    })
+    .then(response => response.json().then(data => ({ ok: response.ok, data })))
+    .then(({ ok, data }) => {
+        if (ok && data.success) {
+            alert('批量删除成功');
+            selectedInterviews.clear();
+            loadInterviews();
+        } else {
+            alert(`批量删除失败：${data.message || '未知错误'}`);
+        }
+    })
+    .catch(error => {
+        console.error('批量删除面试流程失败:', error);
+        alert('批量删除失败，请稍后再试');
     });
 }
 
@@ -1688,14 +1804,6 @@ function closeFunnelModal() {
     const modal = document.getElementById('funnelModal');
     if (modal) {
         modal.style.display = 'none';
-    }
-}
-
-// 点击模态框外部关闭
-window.onclick = function(event) {
-    const funnelModal = document.getElementById('funnelModal');
-    if (event.target === funnelModal) {
-        closeFunnelModal();
     }
 }
 
@@ -2179,6 +2287,45 @@ function uploadInterviewDoc(round) {
 
 // 调用AI分析面试文档
 function analyzeInterviewDoc(interviewId, round) {
+    // 获取按钮和文本域元素
+    // 通过查找包含onclick属性的按钮来获取按钮元素
+    const buttons = document.querySelectorAll(`button[onclick*="analyzeInterviewDoc(${interviewId}, ${round})"]`);
+    const analyzeBtn = buttons.length > 0 ? buttons[0] : null;
+    const textarea = document.getElementById(`round${round}_ai_result`);
+    const loadingId = `ai_loading_${interviewId}_${round}`;
+    
+    // 检查是否已有文档
+    const docLink = document.getElementById(`round${round}DocLink`);
+    if (!docLink || !docLink.textContent.includes('查看')) {
+        alert('请先上传面试文档（录音逐字稿等）');
+        return;
+    }
+    
+    // 显示加载状态
+    if (analyzeBtn) {
+        const originalText = analyzeBtn.textContent;
+        analyzeBtn.disabled = true;
+        analyzeBtn.innerHTML = '<span class="ai-loading-spinner"></span> AI分析中...';
+        analyzeBtn.classList.add('analyzing');
+    }
+    
+    // 在文本域上方显示加载提示
+    if (textarea) {
+        const loadingDiv = document.createElement('div');
+        loadingDiv.id = loadingId;
+        loadingDiv.className = 'ai-analysis-loading';
+        loadingDiv.innerHTML = `
+            <div class="ai-loading-content">
+                <div class="ai-loading-spinner-large"></div>
+                <p class="ai-loading-text">AI正在分析面试文档，请稍候...</p>
+                <p class="ai-loading-hint">这可能需要几秒钟到一分钟的时间</p>
+            </div>
+        `;
+        textarea.parentNode.insertBefore(loadingDiv, textarea);
+        textarea.value = '';
+        textarea.style.display = 'none';
+    }
+    
     fetch(`/api/interviews/${interviewId}/analyze-doc`, {
         method: 'POST',
         headers: {
@@ -2188,6 +2335,22 @@ function analyzeInterviewDoc(interviewId, round) {
     })
     .then(response => response.json())
     .then(result => {
+        // 移除加载状态
+        if (analyzeBtn) {
+            analyzeBtn.disabled = false;
+            analyzeBtn.textContent = 'AI分析';
+            analyzeBtn.classList.remove('analyzing');
+        }
+        
+        const loadingDiv = document.getElementById(loadingId);
+        if (loadingDiv) {
+            loadingDiv.remove();
+        }
+        
+        if (textarea) {
+            textarea.style.display = 'block';
+        }
+        
         if (result.success) {
             const data = result.data || {};
             const summary = data.summary || '';
@@ -2201,29 +2364,78 @@ function analyzeInterviewDoc(interviewId, round) {
             if (weaknesses) msg += `【不足】\n- ${weaknesses}\n\n`;
             if (conclusion) msg += `【综合结论】\n${conclusion}\n\n`;
             if (nextQuestions) msg += `【下一轮推荐追问问题】\n- ${nextQuestions}`;
-            const textarea = document.getElementById(`round${round}_ai_result`);
+            
             if (textarea) {
                 textarea.value = msg || '分析完成，但未返回可用内容';
+                // 添加成功提示动画
+                textarea.classList.add('analysis-success');
+                setTimeout(() => {
+                    textarea.classList.remove('analysis-success');
+                }, 2000);
             } else {
                 alert(msg || '分析完成，但未返回可用内容');
             }
         } else {
+            if (textarea) {
+                textarea.value = `分析失败：${result.message || '未知错误'}`;
+            }
             alert(result.message || 'AI分析失败');
         }
     })
     .catch(error => {
         console.error('AI分析文档失败:', error);
+        
+        // 移除加载状态
+        if (analyzeBtn) {
+            analyzeBtn.disabled = false;
+            analyzeBtn.textContent = 'AI分析';
+            analyzeBtn.classList.remove('analyzing');
+        }
+        
+        const loadingDiv = document.getElementById(loadingId);
+        if (loadingDiv) {
+            loadingDiv.remove();
+        }
+        
+        if (textarea) {
+            textarea.style.display = 'block';
+            textarea.value = '分析失败，请稍后再试';
+        }
+        
         alert('AI分析失败，请稍后再试');
     });
 }
 
-// 点击模态框外部关闭
-window.onclick = function(event) {
-    const modal = document.getElementById('detailModal');
-    if (event.target === modal) {
-        closeModal();
+// 统一的模态框点击外部关闭处理
+// 当点击模态框外部（背景）时关闭模态框，点击模态框内容区域不会关闭
+document.addEventListener('click', function(event) {
+    // 检查是否点击在模态框背景上（而不是模态框内容上）
+    // event.target是.modal元素，且不是.modal-content或其子元素
+    if (event.target.classList.contains('modal')) {
+        const modalId = event.target.id;
+        
+        switch(modalId) {
+            case 'detailModal':
+                closeModal();
+                break;
+            case 'resumePreviewModal':
+                closeResumePreviewModal();
+                break;
+            case 'editModal':
+                closeEditModal();
+                break;
+            case 'interviewModal':
+                closeInterviewModal();
+                break;
+            case 'funnelModal':
+                closeFunnelModal();
+                break;
+            case 'positionModal':
+                closePositionModal();
+                break;
+        }
     }
-}
+});
 
 // AI配置相关函数
 function toggleAIConfig() {
@@ -2735,8 +2947,9 @@ function displayAnalysisDetail(resume) {
 
             <div class="detail-section">
                 <h3>下载分析报告</h3>
-                <div class="detail-item">
+                <div class="detail-item" style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <button class="btn btn-secondary" onclick="downloadAnalysisPdf(${resume.id})">下载PDF报告</button>
+                    <button class="btn btn-secondary" onclick="downloadResumeFile(${resume.id})">下载原简历文件</button>
                 </div>
             </div>
             
@@ -3359,11 +3572,5 @@ function closePositionModal() {
     }
 }
 
-// 点击模态框外部关闭
-window.onclick = function(event) {
-    const modal = document.getElementById('positionModal');
-    if (event.target === modal) {
-        closePositionModal();
-    }
-}
+// 点击模态框外部关闭（已合并到统一的处理函数中）
 

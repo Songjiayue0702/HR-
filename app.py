@@ -612,6 +612,44 @@ def get_resume_detail(resume_id):
         'data': resume.to_dict()
     })
 
+@app.route('/api/resumes/<int:resume_id>/download', methods=['GET'])
+def download_resume_file(resume_id):
+    """下载简历原始文件（支持预览和下载）"""
+    session = get_db_session()
+    try:
+        resume = session.query(Resume).filter(Resume.id == resume_id).first()
+        if not resume:
+            return jsonify({'success': False, 'message': '简历不存在'}), 404
+        
+        file_path = resume.file_path
+        if not file_path or not os.path.exists(file_path):
+            return jsonify({'success': False, 'message': '文件不存在'}), 404
+        
+        # 获取原始文件名
+        file_name = resume.file_name or os.path.basename(file_path)
+        
+        # 检查是否为预览模式（通过查询参数）
+        as_attachment = request.args.get('download', 'false').lower() == 'true'
+        
+        # 根据文件类型设置MIME类型
+        file_ext = os.path.splitext(file_path)[1].lower()
+        mimetype = 'application/octet-stream'
+        if file_ext == '.pdf':
+            mimetype = 'application/pdf'
+        elif file_ext in ['.doc', '.docx']:
+            mimetype = 'application/msword' if file_ext == '.doc' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        
+        return send_file(
+            file_path,
+            as_attachment=as_attachment,
+            download_name=file_name if as_attachment else None,
+            mimetype=mimetype
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
 @app.route('/api/resumes/<int:resume_id>', methods=['PUT'])
 def update_resume(resume_id):
     """更新简历信息"""
@@ -987,13 +1025,22 @@ def create_interview():
                 else:
                     identity_code = resume.name
             
+            # 如果请求中没有传递匹配度，尝试从简历记录中获取（如果岗位匹配）
+            final_match_score = match_score
+            final_match_level = match_level
+            if not final_match_score and resume.match_score and resume.match_position:
+                # 如果简历有匹配度分析结果，且岗位匹配，则使用简历中的匹配度
+                if resume.match_position == (resume.applied_position or ''):
+                    final_match_score = resume.match_score
+                    final_match_level = resume.match_level
+            
             interview = Interview(
                 resume_id=resume.id,
                 name=resume.name or '',
                 applied_position=resume.applied_position or '',
                 identity_code=identity_code,
-                match_score=match_score,
-                match_level=match_level
+                match_score=final_match_score,
+                match_level=final_match_level
             )
             session.add(interview)
             session.commit()
@@ -1458,6 +1505,48 @@ def upload_interview_doc(interview_id):
     finally:
         session.close()
 
+
+@app.route('/api/interviews/batch_delete', methods=['POST'])
+def delete_interviews_batch():
+    """批量删除面试流程"""
+    try:
+        data = request.json or {}
+        interview_ids = data.get('interview_ids', [])
+        
+        if not interview_ids:
+            return jsonify({'success': False, 'message': '请选择要删除的面试记录'}), 400
+        
+        session = get_db_session()
+        try:
+            interviews = session.query(Interview).filter(Interview.id.in_(interview_ids)).all()
+            if not interviews:
+                return jsonify({'success': False, 'message': '未找到要删除的面试记录'}), 404
+            
+            # 删除关联的文档文件（如果有）
+            for interview in interviews:
+                for doc_path in [interview.round1_doc_path, interview.round2_doc_path, interview.round3_doc_path]:
+                    if doc_path:
+                        full_path = os.path.join(app.static_folder, doc_path)
+                        if os.path.exists(full_path):
+                            try:
+                                os.remove(full_path)
+                            except Exception as e:
+                                print(f"删除文档文件失败: {e}")
+            
+            # 删除面试记录
+            for interview in interviews:
+                session.delete(interview)
+            
+            session.commit()
+            return jsonify({
+                'success': True,
+                'message': f'成功删除 {len(interviews)} 条面试记录',
+                'deleted': len(interviews)
+            })
+        finally:
+            session.close()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'批量删除失败: {str(e)}'}), 500
 
 @app.route('/api/interviews/export', methods=['POST'])
 def export_interviews():
@@ -2064,14 +2153,30 @@ def analyze_resume_match(resume_id):
                 # 若转换失败，则保持原始结果
                 pass
 
+            # 保存匹配结果到简历记录
+            try:
+                session_save = get_db_session()
+                resume_save = session_save.query(Resume).filter(Resume.id == resume_id).first()
+                if resume_save:
+                    resume_save.match_score = analysis_result.get('match_score')
+                    resume_save.match_level = analysis_result.get('match_level')
+                    resume_save.match_position = applied_position
+                    session_save.commit()
+                session_save.close()
+            except Exception as save_err:
+                # 不影响主流程，仅打印日志
+                print(f"保存匹配结果到简历记录失败: {save_err}")
+            
             # 同步匹配结果到面试流程（如有对应的面试记录）
             try:
                 session_sync = get_db_session()
                 interviews = session_sync.query(Interview).filter(Interview.resume_id == resume_id).all()
                 if interviews:
                     for it in interviews:
-                        it.match_score = analysis_result.get('match_score')
-                        it.match_level = analysis_result.get('match_level')
+                        # 如果面试流程的岗位与分析的岗位一致，则更新匹配度
+                        if it.applied_position == applied_position:
+                            it.match_score = analysis_result.get('match_score')
+                            it.match_level = analysis_result.get('match_level')
                     session_sync.commit()
                 session_sync.close()
             except Exception as sync_err:

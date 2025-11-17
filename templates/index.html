@@ -195,6 +195,7 @@
                         <div class="filter-row">
                             <input type="text" id="interviewSearchInput" class="search-input" placeholder="搜索姓名、岗位..." />
                             <button class="btn btn-primary" onclick="loadInterviews()">搜索</button>
+                            <button class="btn btn-danger" onclick="deleteSelectedInterviews()">删除选中</button>
                             <button class="btn btn-secondary" onclick="exportSelectedInterviews()">导出选中</button>
                             <button class="btn btn-secondary" onclick="exportAllInterviews()">导出全部</button>
                         </div>
@@ -371,9 +372,16 @@
             <span class="close" onclick="closeModal()">&times;</span>
             <h2>简历详情</h2>
             <div id="detailContent"></div>
-            <div class="modal-actions">
-                <button class="btn btn-primary" id="detailEditBtn">编辑</button>
-                <button class="btn btn-danger" id="detailDeleteBtn">删除</button>
+        </div>
+    </div>
+    
+    <!-- 简历预览模态框 -->
+    <div class="modal" id="resumePreviewModal" style="display: none;">
+        <div class="modal-content" style="max-width: 90%; max-height: 90vh;">
+            <span class="close" onclick="closeResumePreviewModal()">&times;</span>
+            <h2>简历预览</h2>
+            <div id="resumePreviewContent" style="width: 100%; height: 80vh; overflow: auto;">
+                <!-- 预览内容将动态加载 -->
             </div>
         </div>
     </div>

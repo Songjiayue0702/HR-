@@ -44,6 +44,11 @@ class Resume(Base):
 
     applied_position = Column(String(200))
     
+    # 匹配度分析结果（最后一次分析的岗位匹配度）
+    match_score = Column(Integer)  # 匹配度分数（0-100）
+    match_level = Column(String(50))  # 匹配等级（高度匹配/中等匹配/低度匹配）
+    match_position = Column(String(200))  # 匹配度分析对应的岗位名称
+    
     # 工作经历（JSON格式存储）
     work_experience = Column(JSON)
     
@@ -80,6 +85,9 @@ class Resume(Base):
             'major': self.major,
             'major_original': self.major_original,
             'applied_position': self.applied_position,
+            'match_score': self.match_score,
+            'match_level': self.match_level,
+            'match_position': self.match_position,
             'work_experience': self.work_experience,
             'parse_status': self.parse_status,
             'parse_time': self.parse_time.isoformat() if self.parse_time else None,
@@ -114,6 +122,12 @@ with engine.connect() as conn:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
     if 'duplicate_resume_id' not in columns:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
+    if 'match_score' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
+    if 'match_level' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
+    if 'match_position' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
     conn.commit()
 Session = sessionmaker(bind=engine)
 
