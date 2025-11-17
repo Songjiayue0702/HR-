@@ -607,13 +607,13 @@ function displayDetail(resume) {
         <div class="modal-actions">
             <div class="modal-actions-row">
                 <button class="btn btn-primary" onclick="saveResume()">保存修改</button>
-                <button class="btn btn-secondary" onclick="exportSingle(${resume.id})">导出Excel</button>
+                <button class="btn btn-primary" onclick="exportSingle(${resume.id})">导出Excel</button>
                 <button class="btn btn-danger" onclick="deleteResume(${resume.id})">删除简历</button>
                 <button class="btn btn-secondary" onclick="closeModal()">关闭</button>
             </div>
             <div class="modal-actions-row">
-                <button class="btn btn-secondary" onclick="previewResumeFile(${resume.id})">预览简历文件</button>
-                <button class="btn btn-secondary" onclick="downloadResumeFile(${resume.id})">下载简历文件</button>
+                <button class="btn btn-primary" onclick="previewResumeFile(${resume.id})">预览简历文件</button>
+                <button class="btn btn-primary" onclick="downloadResumeFile(${resume.id})">下载简历文件</button>
             </div>
         </div>
     `;
@@ -2948,8 +2948,8 @@ function displayAnalysisDetail(resume) {
             <div class="detail-section">
                 <h3>下载分析报告</h3>
                 <div class="detail-item" style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <button class="btn btn-secondary" onclick="downloadAnalysisPdf(${resume.id})">下载PDF报告</button>
-                    <button class="btn btn-secondary" onclick="downloadResumeFile(${resume.id})">下载原简历文件</button>
+                    <button class="btn btn-primary" onclick="downloadAnalysisPdf(${resume.id})">下载PDF报告</button>
+                    <button class="btn btn-primary" onclick="downloadResumeFile(${resume.id})">下载原简历文件</button>
                 </div>
             </div>
             
