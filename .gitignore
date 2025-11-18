@@ -56,3 +56,10 @@ exports/*
 .DS_Store
 Thumbs.db
 
+# 临时文件
+nul
+*.tmp
+
+# 上传的文档文件（保留目录结构但忽略内容）
+static/interview_docs/*.docx
+!static/interview_docs/.gitkeep
