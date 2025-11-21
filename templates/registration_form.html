@@ -285,8 +285,39 @@
             </div>
             
             <div class="form-group">
-                <label>最高学历院校及专业及起始时间 <span class="required">*</span></label>
-                <textarea id="education" class="form-textarea" required>{{ interview.registration_form_education or (resume.school + ' ' + resume.major if resume and resume.school and resume.major else '') }}</textarea>
+                <label>教育信息 <span class="required">*</span></label>
+                <div class="education-row">
+                    <div class="education-field">
+                        <label>起始时间</label>
+                        <input type="date" id="education_start_date" class="form-input" required value="{{ interview.registration_form_education_start_date or '' }}">
+                    </div>
+                    <div class="education-field">
+                        <label>结束时间</label>
+                        <input type="date" id="education_end_date" class="form-input" required value="{{ interview.registration_form_education_end_date or '' }}">
+                    </div>
+                    <div class="education-field">
+                        <label>毕业院校</label>
+                        <input type="text" id="institution" class="form-input" required value="{{ interview.registration_form_institution or (resume.school or '') }}">
+                    </div>
+                    <div class="education-field">
+                        <label>专业</label>
+                        <input type="text" id="major" class="form-input" required value="{{ interview.registration_form_major or (resume.major or '') }}">
+                    </div>
+                    <div class="education-field">
+                        <label>学历</label>
+                        <select id="degree" class="form-select" required>
+                            <option value="">请选择</option>
+                        </select>
+                    </div>
+                    <div class="education-field">
+                        <label>是否为全日制统招</label>
+                        <select id="full_time" class="form-select" required>
+                            <option value="">请选择</option>
+                            <option value="是" {% if interview.registration_form_full_time == '是' %}selected{% endif %}>是</option>
+                            <option value="否" {% if interview.registration_form_full_time == '否' %}selected{% endif %}>否</option>
+                        </select>
+                    </div>
+                </div>
             </div>
             
             <div class="form-group">
@@ -351,6 +382,32 @@
     <script src="{{ url_for('static', filename='js/address_helpers.js') }}"></script>
     <script>
         const token = '{{ token }}';
+        
+        function populate_degree_select(selectedValue) {
+            fetch('/api/education-levels')
+                .then(res => res.json())
+                .then(result => {
+                    if (result.success && Array.isArray(result.data)) {
+                        const select = document.getElementById('degree');
+                        if (!select) return;
+                        select.innerHTML = '<option value=\"\">请选择</option>';
+                        result.data.forEach(level => {
+                            const option = document.createElement('option');
+                            option.value = level;
+                            option.textContent = level;
+                            if (level === selectedValue) {
+                                option.selected = true;
+                            }
+                            select.appendChild(option);
+                        });
+                    }
+                })
+                .catch(err => {
+                    console.error('加载学历选项失败:', err);
+                });
+        }
+        
+        populate_degree_select('{{ interview.registration_form_degree or '' }}');
         const savedProvince = '{{ interview.registration_form_address_province or '' }}';
         const savedCity = '{{ interview.registration_form_address_city or '' }}';
         const savedDistrict = '{{ interview.registration_form_address_district or '' }}';
@@ -505,7 +562,12 @@
                     registration_form_id_card: document.getElementById('id_card').value || '',
                     registration_form_first_work_date: document.getElementById('first_work_date').value || '',
                     registration_form_recent_work_experience: workExperiences,
-                    registration_form_education: document.getElementById('education').value || '',
+                    registration_form_education_start_date: document.getElementById('education_start_date').value || '',
+                    registration_form_education_end_date: document.getElementById('education_end_date').value || '',
+                    registration_form_institution: document.getElementById('institution').value || '',
+                    registration_form_major: document.getElementById('major').value || '',
+                    registration_form_degree: document.getElementById('degree').value || '',
+                    registration_form_full_time: document.getElementById('full_time').value || '',
                     registration_form_hobbies: document.getElementById('hobbies').value || '',
                     registration_form_current_salary: document.getElementById('current_salary').value || '',
                     registration_form_expected_salary: document.getElementById('expected_salary').value || '',

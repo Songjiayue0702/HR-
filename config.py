@@ -52,4 +52,7 @@ class Config:
     OCR_ENABLED = os.environ.get('OCR_ENABLED', 'true').lower() == 'true'  # 是否启用OCR
     OCR_ENGINE = os.environ.get('OCR_ENGINE', 'easyocr')  # 可选: 'paddleocr' 或 'easyocr'（当前使用easyocr）
     OCR_USE_GPU = os.environ.get('OCR_USE_GPU', 'false').lower() == 'true'  # 是否使用GPU加速
+    
+    # 教育层级选项（用于面试登记表学历下拉）
+    EDUCATION_LEVELS = ['博士', '硕士', '本科', '大专', '高中', '职高', '初中', '其他']
 

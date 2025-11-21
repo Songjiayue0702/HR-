@@ -9,6 +9,7 @@ let currentResumeData = null;
 let aiConfigStatus = null; // AI配置状态缓存
 let interviewedResumeIds = new Set(); // 已邀约面试的简历ID集合
 let selectedInterviews = new Set();   // 面试流程列表中选中的行ID
+let educationLevels = [];
 
 function escapeHtml(value) {
     if (value === null || value === undefined) {
@@ -55,6 +56,8 @@ document.addEventListener('DOMContentLoaded', function() {
         .catch(err => {
             console.error('加载已邀约面试简历列表失败:', err);
         });
+
+    loadEducationLevels();
 });
 
 // 初始化上传功能
@@ -148,6 +151,37 @@ function uploadFiles(files) {
         console.error('Error:', error);
         alert('上传失败，请重试');
         progressDiv.style.display = 'none';
+    });
+}
+
+function loadEducationLevels() {
+    return fetch('/api/education-levels')
+        .then(response => response.json())
+        .then(result => {
+            if (result.success && Array.isArray(result.data)) {
+                educationLevels = result.data;
+            } else {
+                educationLevels = ['博士', '硕士', '本科', '大专', '高中', '职高', '初中', '其他'];
+            }
+        })
+        .catch(err => {
+            console.error('加载学历选项失败:', err);
+            educationLevels = ['博士', '硕士', '本科', '大专', '高中', '职高', '初中', '其他'];
+        });
+}
+
+function populateEducationSelect(selectId, value) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    select.innerHTML = '<option value="">请选择</option>';
+    educationLevels.forEach(level => {
+        const opt = document.createElement('option');
+        opt.value = level;
+        opt.textContent = level;
+        if (level === value) {
+            opt.selected = true;
+        }
+        select.appendChild(opt);
     });
 }
 
@@ -3568,6 +3602,31 @@ function copyLink(inputId) {
     }
 }
 
+function downloadRegistrationForm(interviewId, format) {
+    const link = `/api/interviews/${interviewId}/registration-form/export?format=${format}`;
+    fetch(link)
+        .then(response => {
+            if (!response.ok) {
+                return response.json().then(err => { throw new Error(err.message || '导出失败'); });
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `面试登记表.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        })
+        .catch(error => {
+            console.error('导出失败:', error);
+            alert('导出失败，请稍后重试');
+        });
+}
+
 // 关闭岗位表单模态框
 function closePositionModal() {
     const modal = document.getElementById('positionModal');
@@ -3610,6 +3669,13 @@ function openRegistrationFormModal(interviewId) {
                                         <input type="text" id="reg_invite_link" class="form-input" value="${inviteLink}" readonly>
                                         <button type="button" class="btn btn-secondary" onclick="generateRegistrationFormLink(${data.id})">生成链接</button>
                                         <button type="button" class="btn btn-secondary" onclick="copyLink('reg_invite_link')">复制链接</button>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>导出</label>
+                                    <div style="display: flex; gap: 8px;">
+                                        <button type="button" class="btn btn-primary btn-small" onclick="downloadRegistrationForm(${data.id}, 'excel')">下载 Excel</button>
+                                        <button type="button" class="btn btn-primary btn-small" onclick="downloadRegistrationForm(${data.id}, 'pdf')">下载 PDF</button>
                                     </div>
                                 </div>
                                 
@@ -3691,8 +3757,39 @@ function openRegistrationFormModal(interviewId) {
                                 </div>
                                 
                                 <div class="form-group">
-                                    <label>最高学历院校及专业及起始时间 <span class="required">*</span></label>
-                                    <textarea id="reg_education" class="form-textarea" rows="3" required>${escapeHtml(data.registration_form_education || (resume ? `${resume.school || ''} ${resume.major || ''}` : ''))}</textarea>
+                                    <label>教育信息</label>
+                                    <div class="education-row">
+                                        <div class="education-field">
+                                            <label>起始时间 <span class="required">*</span></label>
+                                            <input type="date" id="reg_education_start_date" class="form-input" value="${escapeHtml(data.registration_form_education_start_date || '')}" required>
+                                        </div>
+                                        <div class="education-field">
+                                            <label>结束时间 <span class="required">*</span></label>
+                                            <input type="date" id="reg_education_end_date" class="form-input" value="${escapeHtml(data.registration_form_education_end_date || '')}" required>
+                                        </div>
+                                        <div class="education-field">
+                                            <label>毕业院校 <span class="required">*</span></label>
+                                            <input type="text" id="reg_institution" class="form-input" value="${escapeHtml(data.registration_form_institution || (resume ? resume.school || '' : ''))}" required>
+                                        </div>
+                                        <div class="education-field">
+                                            <label>专业 <span class="required">*</span></label>
+                                            <input type="text" id="reg_major" class="form-input" value="${escapeHtml(data.registration_form_major || (resume ? resume.major || '' : ''))}" required>
+                                        </div>
+                                        <div class="education-field">
+                                            <label>学历 <span class="required">*</span></label>
+                                            <select id="reg_degree" class="form-select" required>
+                                                <option value="">请选择</option>
+                                            </select>
+                                        </div>
+                                        <div class="education-field">
+                                            <label>是否为全日制统招 <span class="required">*</span></label>
+                                            <select id="reg_full_time" class="form-select" required>
+                                                <option value="">请选择</option>
+                                                <option value="是" ${data.registration_form_full_time === '是' ? 'selected' : ''}>是</option>
+                                                <option value="否" ${data.registration_form_full_time === '否' ? 'selected' : ''}>否</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                                 
                                 <div class="form-group">
@@ -3755,6 +3852,9 @@ function openRegistrationFormModal(interviewId) {
                             });
                         }
                         initAddressSelects('reg_', data.registration_form_address_province || '', data.registration_form_address_city || '', data.registration_form_address_district || '');
+                        loadEducationLevels().then(() => {
+                            populateEducationSelect('reg_degree', data.registration_form_degree || '');
+                        });
                         modal.style.display = 'block';
                     })
                     .catch(error => {
@@ -3867,7 +3967,12 @@ function saveRegistrationForm(interviewId) {
         registration_form_id_card: document.getElementById('reg_id_card')?.value || '',
         registration_form_first_work_date: document.getElementById('reg_first_work_date')?.value || '',
         registration_form_recent_work_experience: workExperiences,
-        registration_form_education: document.getElementById('reg_education')?.value || '',
+        registration_form_education_start_date: document.getElementById('reg_education_start_date')?.value || '',
+        registration_form_education_end_date: document.getElementById('reg_education_end_date')?.value || '',
+        registration_form_institution: document.getElementById('reg_institution')?.value || '',
+        registration_form_major: document.getElementById('reg_major')?.value || '',
+        registration_form_degree: document.getElementById('reg_degree')?.value || '',
+        registration_form_full_time: document.getElementById('reg_full_time')?.value || '',
         registration_form_hobbies: document.getElementById('reg_hobbies')?.value || '',
         registration_form_current_salary: document.getElementById('reg_current_salary')?.value || '',
         registration_form_expected_salary: document.getElementById('reg_expected_salary')?.value || '',

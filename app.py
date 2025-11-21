@@ -2,6 +2,7 @@
 智能简历数据库系统 - 主应用
 """
 from flask import Flask, render_template, request, jsonify, send_file
+import io
 import json
 from werkzeug.utils import secure_filename
 import os
@@ -16,13 +17,55 @@ from utils.ai_extractor import AIExtractor
 from utils.duplicate_checker import check_duplicate
 from utils.export import export_resumes_to_excel, export_interviews_to_excel
 from utils.export_pdf import export_resume_analysis_to_pdf, export_interview_round_analysis_to_pdf
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfgen import canvas
+from reportlab.platypus import Table, TableStyle
+from openpyxl import Workbook
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+from reportlab.platypus import Table, TableStyle
 import threading
 from sqlalchemy import and_
+import traceback
+import sys
+
+
+center_wrap_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+def _stylize_cell(cell, border, font=None, align=None, fill=None):
+    cell.border = border
+    if font:
+        cell.font = font
+    if align:
+        cell.alignment = align
+    else:
+        cell.alignment = center_wrap_alignment
+    if fill:
+        cell.fill = fill
+
+
+def _fill_row(ws, row, values, border, align):
+    ws.row_dimensions[row].height = 25
+    for col, value in enumerate(values, start=1):
+        cell = ws.cell(row=row, column=col)
+        cell.value = value
+        cell.alignment = align
+        cell.border = border
+
 
 app = Flask(__name__, 
             template_folder='templates',
             static_folder='static')
 app.config.from_object(Config)
+
+# 注册中文字体
+pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
 
 # 初始化OCR引擎（如果启用）
 if app.config.get('OCR_ENABLED', True):
@@ -37,6 +80,14 @@ def allowed_file(filename):
     """检查文件扩展名是否允许"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+
+@app.route('/api/education-levels', methods=['GET'])
+def get_education_levels():
+    return jsonify({
+        'success': True,
+        'data': Config.EDUCATION_LEVELS
+    })
 
 def process_resume_async(resume_id, file_path):
     """异步处理简历解析"""
@@ -1757,10 +1808,46 @@ def update_registration_form(interview_id):
         if 'registration_form_first_work_date' in data:
             interview.registration_form_first_work_date = _normalize_field(
                 data.get('registration_form_first_work_date'))
+        if 'registration_form_education_start_date' in data:
+            interview.registration_form_education_start_date = _normalize_field(
+                data.get('registration_form_education_start_date'))
+        if 'registration_form_education_end_date' in data:
+            interview.registration_form_education_end_date = _normalize_field(
+                data.get('registration_form_education_end_date'))
+        if 'registration_form_institution' in data:
+            interview.registration_form_institution = _normalize_field(
+                data.get('registration_form_institution'))
+        if 'registration_form_major' in data:
+            interview.registration_form_major = _normalize_field(
+                data.get('registration_form_major'))
+        if 'registration_form_degree' in data:
+            interview.registration_form_degree = _normalize_field(
+                data.get('registration_form_degree'))
+        if 'registration_form_full_time' in data:
+            interview.registration_form_full_time = _normalize_field(
+                data.get('registration_form_full_time'))
         if 'registration_form_recent_work_experience' in data:
             work_exps = data.get('registration_form_recent_work_experience')
             if work_exps is not None:
                 interview.registration_form_recent_work_experience = json.dumps(work_exps, ensure_ascii=False)
+        if 'registration_form_education_start_date' in data:
+            interview.registration_form_education_start_date = _normalize_field(
+                data.get('registration_form_education_start_date'))
+        if 'registration_form_education_end_date' in data:
+            interview.registration_form_education_end_date = _normalize_field(
+                data.get('registration_form_education_end_date'))
+        if 'registration_form_institution' in data:
+            interview.registration_form_institution = _normalize_field(
+                data.get('registration_form_institution'))
+        if 'registration_form_major' in data:
+            interview.registration_form_major = _normalize_field(
+                data.get('registration_form_major'))
+        if 'registration_form_degree' in data:
+            interview.registration_form_degree = _normalize_field(
+                data.get('registration_form_degree'))
+        if 'registration_form_full_time' in data:
+            interview.registration_form_full_time = _normalize_field(
+                data.get('registration_form_full_time'))
         if 'registration_form_education' in data:
             interview.registration_form_education = data.get('registration_form_education')
         if 'registration_form_hobbies' in data:
@@ -2066,6 +2153,263 @@ def test_ai_connection():
                 'success': False,
                 'message': f'测试失败: {str(e)}'
             }), 400
+
+
+def _collect_registration_data(interview):
+    return {
+        'name': interview.name or '',
+        'gender': interview.registration_form_ethnicity or '',
+        'birth_date': interview.registration_form_birth_date or '',
+        'marital_status': interview.registration_form_marital_status or '',
+        'has_children': interview.registration_form_has_children or '',
+        'origin': interview.registration_form_origin or '',
+        'id_card': interview.registration_form_id_card or '',
+        'first_work_date': interview.registration_form_first_work_date or '',
+        'education_start_date': interview.registration_form_education_start_date or '',
+        'education_end_date': interview.registration_form_education_end_date or '',
+        'institution': interview.registration_form_institution or '',
+        'major': interview.registration_form_major or '',
+        'degree': interview.registration_form_degree or '',
+        'full_time': interview.registration_form_full_time or '',
+        'education': interview.registration_form_education or '',
+        'hobbies': interview.registration_form_hobbies or '',
+        'current_salary': interview.registration_form_current_salary or '',
+        'expected_salary': interview.registration_form_expected_salary or '',
+        'available_date': interview.registration_form_available_date or '',
+        'address': f"{interview.registration_form_address_province or ''} {interview.registration_form_address_city or ''} {interview.registration_form_address_district or ''}",
+        'address_detail': interview.registration_form_address_detail or '',
+        'can_travel': interview.registration_form_can_travel or '',
+        'contact': interview.registration_form_contact or '',
+        'email': interview.registration_form_email or '',
+        'applied_position': interview.applied_position or '',
+        'fill_date': interview.registration_form_fill_date or '',
+        'work_experience': interview._parse_json_field(
+            interview.registration_form_recent_work_experience, [])[:2],
+        'factors': interview._parse_json_field(
+            interview.registration_form_consideration_factors, [])
+    }
+
+
+
+
+def export_registration_form_to_excel(interview):
+    try:
+        data = _collect_registration_data(interview)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = '面试登记表'
+        ws.sheet_properties.tabColor = "1072BA"
+
+        thin = Side(border_style="thin", color="000000")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        bold = Font(bold=True, size=11)
+        title_font = Font(bold=True, size=16)
+        section_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+
+        for col in ['A','B','C','D','E','F']:
+            ws.column_dimensions[col].width = 13
+
+        def stylize_cell(cell, font=None, align=None, fill=None):
+            _stylize_cell(cell, border, font, align, fill)
+
+        ws.row_dimensions[1].height = 50
+        ws.merge_cells('A1:F1')
+        ws['A1'].value = '应聘人员面试登记表'
+        stylize_cell(ws['A1'], font=title_font, align=center)
+
+        ws.row_dimensions[2].height = 25
+        ws.merge_cells('A2:B2')
+        ws.merge_cells('C2:D2')
+        ws['A2'].value = f"应聘岗位：{data['applied_position']}"
+        ws['C2'].value = f"填表日期：{data['fill_date']}"
+        for cell in ['A2','C2']:
+            stylize_cell(ws[cell], font=bold, align=center)
+
+        def section_row(row, title):
+            ws.row_dimensions[row].height = 25
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+            cell = ws.cell(row=row, column=1)
+            cell.value = title
+            stylize_cell(cell, font=bold, align=center, fill=section_fill)
+
+        section_row(3, '个人基本信息')
+        _fill_row(ws, 4, ['姓名', data['name'], '性别', data['gender'], '出生年月', data['birth_date']], border, center)
+        _fill_row(ws, 5, ['民族', data['origin'], '婚姻状况', data['marital_status'], '有无子女', data['has_children']], border, center)
+        _fill_row(ws, 6, ['学历', data['degree'], '联系电话', data['contact'], '电子邮箱', data['email']], border, center)
+        _fill_row(ws, 7, ['籍贯', data['origin'], '身份证号', data['id_card'], '', ''], border, center)
+
+        section_row(8, '教育经历')
+        _fill_row(ws, 9, ['开始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'], border, center)
+        _fill_row(ws, 10, [
+            data['education_start_date'],
+            data['education_end_date'],
+            data['institution'],
+            data['major'],
+            data['degree'],
+            data['full_time']
+        ], border, center)
+
+        section_row(12, '工作经历（从最近开始）')
+        _fill_row(ws, 13, ['开始时间', '结束时间', '单位名称', '', '职务', '离职原因'], border, center)
+        ws.merge_cells('C13:D13')
+        def job_list_row(row, entry):
+            _fill_row(ws, row, [
+                entry.get('start_year', ''),
+                entry.get('end_year', ''),
+                entry.get('company', ''),
+                '',
+                entry.get('position', ''),
+                entry.get('departure_reason', '')
+            ], border, center)
+            ws.merge_cells(f'C{row}:D{row}')
+        job_list_row(14, data['work_experience'][0] if data['work_experience'] else {})
+        job_list_row(15, data['work_experience'][1] if len(data['work_experience']) > 1 else {})
+        _fill_row(ws, 16, ['', '', '', '', '', ''], border, center)
+
+        section_row(17, '考虑新公司主要原因')
+        factor_texts = [
+            '公司前景',
+            '团队氛围',
+            '薪酬福利',
+            '人际关系',
+            '文化价值观',
+            '晋升机会',
+            '领导风格'
+        ]
+        factors = data['factors'] or []
+        factor_row = []
+        for idx, defaultText in enumerate(factor_texts):
+            value = factors[idx] if idx < len(factors) and factors[idx] else defaultText
+            factor_row.append(f"{idx + 1}、{value}")
+        _fill_row(ws, 18, factor_row[:6], border, center)
+        _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, center)
+
+        section_row(21, '个人爱好及专长')
+        ws.row_dimensions[22].height = 25
+        ws.merge_cells('A22:F22')
+        ws['A22'].value = data['hobbies']
+        stylize_cell(ws['A22'], align=left)
+
+        _fill_row(ws, 23, ['原月薪', data['current_salary'], '期望月薪', data['expected_salary'], '最快到岗时间', data['available_date']], border, center)
+        ws['A24'].value = '现住址'
+        ws.merge_cells('B24:F24')
+        ws['B24'].value = f"{data['address']} {data['address_detail']}"
+        stylize_cell(ws['B24'], align=center)
+        ws.row_dimensions[24].height = 25
+        for r in range(25, 30):
+            ws.row_dimensions[r].height = 25
+        ws.merge_cells('A25:F29')
+        ws['A25'].value = (
+            "声明人：\n"
+            "\n"
+            "本人保证以上内容填写真实无误，同意接受公司的调查，若有不实之处，本人愿意承担一切后果。\n"
+            "\n"
+            "声明人签字\n"
+            "\n"
+            "\n"
+            "日期"
+        )
+        stylize_cell(ws['A25'], align=center)
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return buffer
+    except Exception as e:
+        print("Excel 导出失败：", file=sys.stderr)
+        traceback.print_exc()
+        raise
+
+
+
+def export_registration_form_to_pdf(interview):
+    data = _collect_registration_data(interview)
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    c.setFont('STSong-Light', 16)
+    c.drawCentredString(width / 2, height - 40, '应聘人员面试登记表')
+
+    y = height - 80
+    def draw_section(title, rows):
+        nonlocal y
+        c.setFont('STSong-Light', 12)
+        c.drawString(40, y, title)
+        y -= 20
+        table = Table(rows, colWidths=[(width-80)/len(rows[0])] * len(rows[0]))
+        table.setStyle(TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('FONTNAME', (0, 0), (-1, -1), 'STSong-Light'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ]))
+        table.wrapOn(c, width - 80, y)
+        table.drawOn(c, 40, y - 10 - (20 * len(rows)))
+        y -= 30 + 20 * len(rows)
+
+    draw_section('个人基本信息', [
+        ['姓名', data['name'], '性别', data['gender'], '联系方式', data['contact']],
+        ['出生日期', data['birth_date'], '民族', data['origin'], '婚姻状况', data['marital_status']],
+        ['籍贯', data['origin'], '身份证号', data['id_card'], '邮箱', data['email']],
+    ])
+    draw_section('教育/自我信息', [
+        ['最高学历', data['education'], '学位', data['degree'], '统招', data['full_time']],
+        ['毕业院校', data['institution'], '专业', data['major'], '起止时间', f"{data['education_start_date']} - {data['education_end_date']}"],
+        ['个人爱好及特长', data['hobbies'], '原月薪', data['current_salary'], '期望月薪', data['expected_salary']],
+        ['最快到岗时间', data['available_date'], '能否出差', data['can_travel'], '', '']
+    ])
+    draw_section('现住址', [
+        ['省/市/区', data['address'], '详细地址', data['address_detail'], '', '']
+    ])
+    exp_rows = [['公司名称', '岗位', '开始时间', '结束时间']]
+    for exp in data['work_experience']:
+        exp_rows.append([
+            exp.get('company', ''),
+            exp.get('position', ''),
+            exp.get('start_year') or '',
+            exp.get('end_year') or ''
+        ])
+    if len(exp_rows) == 1:
+        exp_rows.append(['暂无工作经历', '', '', ''])
+    draw_section('近两份工作经历', exp_rows)
+    factor_rows = [['排序结果']] + [[f'{idx + 1}. {factor}'] for idx, factor in enumerate(data['factors'] or ['未填写'])]
+    draw_section('考虑新公司的主要因素', factor_rows)
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+
+@app.route('/api/interviews/<int:interview_id>/registration-form/export', methods=['GET'])
+def export_registration_form(interview_id):
+    fmt = request.args.get('format', 'excel').lower()
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        if fmt == 'pdf':
+            pdf_file = export_registration_form_to_pdf(interview)
+            return send_file(
+                pdf_file,
+                as_attachment=True,
+                download_name=f'面试登记表_{interview.name or interview_id}.pdf',
+                mimetype='application/pdf'
+            )
+        excel_file = export_registration_form_to_excel(interview)
+        return send_file(
+            excel_file,
+            as_attachment=True,
+            download_name=f'面试登记表_{interview.name or interview_id}.xlsx',
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'导出失败: {str(e)}'}), 500
+    finally:
+        session.close()
 
 # 岗位目录API
 @app.route('/api/positions', methods=['GET'])

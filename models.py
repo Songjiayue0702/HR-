@@ -244,6 +244,12 @@ class Interview(Base):
     registration_form_can_travel = Column(String(10))  # 能否出差（是、否）
     registration_form_consideration_factors = Column(Text)  # 考虑新公司的主要因素（排序后的JSON字符串）
     registration_form_token = Column(String(100))  # 面试登记表填写token（用于生成邀请链接）
+    registration_form_education_start_date = Column(String(50))
+    registration_form_education_end_date = Column(String(50))
+    registration_form_institution = Column(String(200))
+    registration_form_major = Column(String(200))
+    registration_form_degree = Column(String(100))
+    registration_form_full_time = Column(String(20))
 
     def _parse_json_field(self, value, default):
         if not value:
@@ -317,6 +323,12 @@ class Interview(Base):
             'registration_form_address_detail': self.registration_form_address_detail,
             'registration_form_can_travel': self.registration_form_can_travel,
             'registration_form_consideration_factors': self._parse_json_field(self.registration_form_consideration_factors, []),
+            'registration_form_education_start_date': self.registration_form_education_start_date,
+            'registration_form_education_end_date': self.registration_form_education_end_date,
+            'registration_form_institution': self.registration_form_institution,
+            'registration_form_major': self.registration_form_major,
+            'registration_form_degree': self.registration_form_degree,
+            'registration_form_full_time': self.registration_form_full_time,
             'registration_form_token': self.registration_form_token,
         }
 
@@ -449,6 +461,18 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN registration_form_can_travel VARCHAR(10)")
     if 'registration_form_consideration_factors' not in i_columns:
         add_cols.append("ADD COLUMN registration_form_consideration_factors TEXT")
+    if 'registration_form_education_start_date' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_education_start_date VARCHAR(50)")
+    if 'registration_form_education_end_date' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_education_end_date VARCHAR(50)")
+    if 'registration_form_institution' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_institution VARCHAR(200)")
+    if 'registration_form_major' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_major VARCHAR(200)")
+    if 'registration_form_degree' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_degree VARCHAR(100)")
+    if 'registration_form_full_time' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_full_time VARCHAR(20)")
     if 'registration_form_token' not in i_columns:
         add_cols.append("ADD COLUMN registration_form_token VARCHAR(100)")
 
