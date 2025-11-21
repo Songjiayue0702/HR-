@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>面试登记表填写</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .form-container {
+            max-width: 900px;
+            margin: 30px auto;
+            padding: 30px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+        }
+        .form-header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .info-section {
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        .info-item {
+            margin: 8px 0;
+            font-size: 16px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #333;
+            display: inline-block;
+            width: 120px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+            color: #333;
+        }
+        .form-group label .required {
+            color: red;
+        }
+        .form-input, .form-select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        .form-input[readonly] {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+        .form-textarea {
+            width: 100%;
+            min-height: 100px;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: inherit;
+            resize: vertical;
+            box-sizing: border-box;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .address-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .address-row select {
+            flex: 1;
+        }
+        @media (max-width: 600px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .work-exp-item {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        .work-exp-item input {
+            flex: 1;
+        }
+        .sortable-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .sortable-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: move;
+            font-size: 12px;
+        }
+        .sortable-item:hover {
+            background: #e9ecef;
+        }
+        .work-exp-header {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 8px;
+            font-weight: bold;
+            font-size: 14px;
+            color: #333;
+        }
+        .work-exp-header span {
+            flex: 1;
+        }
+        .submit-btn {
+            width: 100%;
+            padding: 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        .submit-btn:hover {
+            background: #5568d3;
+        }
+        .submit-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .success-message {
+            padding: 15px;
+            background: #d4edda;
+            color: #155724;
+            border-radius: 4px;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="form-container">
+        <div class="form-header">
+            <h1>面试登记表</h1>
+            <p style="color: #666;">请填写您的个人信息</p>
+        </div>
+        
+        <div class="info-section">
+            <div class="info-item">
+                <span class="info-label">候选人姓名：</span>
+                <span>{{ interview.name or '未知' }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">应聘岗位：</span>
+                <span>{{ interview.applied_position or '未填写' }}</span>
+            </div>
+        </div>
+        
+        <form id="registrationForm">
+            <div class="form-group">
+                <label>姓名 <span class="required">*</span></label>
+                <input type="text" id="name" class="form-input" value="{{ interview.name or '' }}" readonly>
+            </div>
+            
+            <div class="form-group">
+                <label>填写日期 <span class="required">*</span></label>
+                <input type="text" id="fill_date" class="form-input" value="{{ interview.registration_form_fill_date or '' }}" readonly>
+            </div>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>联系方式 <span class="required">*</span></label>
+                    <input type="text" id="contact" class="form-input" value="{{ interview.registration_form_contact or (resume.phone if resume else '') }}" required>
+                </div>
+                <div class="form-group">
+                    <label>邮箱 <span class="required">*</span></label>
+                    <input type="email" id="email" class="form-input" value="{{ interview.registration_form_email or (resume.email if resume else '') }}" required>
+                </div>
+            </div>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>出生日期 <span class="required">*</span></label>
+                    <input type="date" id="birth_date" class="form-input" value="{{ interview.registration_form_birth_date or '' }}" required>
+                </div>
+                <div class="form-group">
+                    <label>民族 <span class="required">*</span></label>
+                    <input type="text" id="ethnicity" class="form-input" value="{{ interview.registration_form_ethnicity or '' }}" required>
+                </div>
+            </div>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>婚姻状况 <span class="required">*</span></label>
+                    <select id="marital_status" class="form-select" required>
+                        <option value="">请选择</option>
+                        <option value="未婚" {% if interview.registration_form_marital_status == '未婚' %}selected{% endif %}>未婚</option>
+                        <option value="已婚" {% if interview.registration_form_marital_status == '已婚' %}selected{% endif %}>已婚</option>
+                        <option value="离异" {% if interview.registration_form_marital_status == '离异' %}selected{% endif %}>离异</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>有无子女 <span class="required">*</span></label>
+                    <select id="has_children" class="form-select" required>
+                        <option value="">请选择</option>
+                        <option value="有" {% if interview.registration_form_has_children == '有' %}selected{% endif %}>有</option>
+                        <option value="无" {% if interview.registration_form_has_children == '无' %}selected{% endif %}>无</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>籍贯 <span class="required">*</span></label>
+                <input type="text" id="origin" class="form-input" value="{{ interview.registration_form_origin or '' }}" required>
+            </div>
+            
+            <div class="form-group">
+                <label>身份证号（选填）</label>
+                <input type="text" id="id_card" class="form-input" value="{{ interview.registration_form_id_card or '' }}">
+            </div>
+            
+            <div class="form-group">
+                <label>首次工作时间 <span class="required">*</span></label>
+                <input type="date" id="first_work_date" class="form-input" value="{{ interview.registration_form_first_work_date or '' }}" required>
+            </div>
+            
+            <div class="form-group">
+                <label>近两份工作经历 <span class="required">*</span></label>
+                <div class="work-exp-header">
+                    <span>公司名称</span>
+                    <span>岗位</span>
+                    <span>开始时间</span>
+                    <span>结束时间</span>
+                </div>
+                <div id="work_experience_container">
+                    {% if interview.registration_form_recent_work_experience %}
+                        {% for exp in interview.registration_form_recent_work_experience %}
+                        <div class="work-exp-item">
+                            <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
+                            <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
+                            <input type="date" placeholder="开始时间" class="form-input" value="{{ exp.start_year|string + '-01-01' if exp.start_year else '' }}">
+                            <input type="date" placeholder="结束时间" class="form-input" value="{{ exp.end_year|string + '-01-01' if exp.end_year else '' }}">
+                        </div>
+                        {% endfor %}
+                    {% elif resume and resume.work_experience %}
+                        {% for exp in resume.work_experience[:2] %}
+                        <div class="work-exp-item">
+                            <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
+                            <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
+                            <input type="date" placeholder="开始时间" class="form-input" value="{{ exp.start_year|string + '-01-01' if exp.start_year else '' }}">
+                            <input type="date" placeholder="结束时间" class="form-input" value="{{ exp.end_year|string + '-01-01' if exp.end_year else '' }}">
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="work-exp-item">
+                            <input type="text" placeholder="公司名称" class="form-input">
+                            <input type="text" placeholder="岗位" class="form-input">
+                            <input type="date" placeholder="开始时间" class="form-input">
+                            <input type="date" placeholder="结束时间" class="form-input">
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>最高学历院校及专业及起始时间 <span class="required">*</span></label>
+                <textarea id="education" class="form-textarea" required>{{ interview.registration_form_education or (resume.school + ' ' + resume.major if resume and resume.school and resume.major else '') }}</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label>个人爱好及特长 <span class="required">*</span></label>
+                <textarea id="hobbies" class="form-textarea" required>{{ interview.registration_form_hobbies or '' }}</textarea>
+            </div>
+            
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>原月薪 <span class="required">*</span></label>
+                    <input type="text" id="current_salary" class="form-input" value="{{ interview.registration_form_current_salary or '' }}" required>
+                </div>
+                <div class="form-group">
+                    <label>期望月薪 <span class="required">*</span></label>
+                    <input type="text" id="expected_salary" class="form-input" value="{{ interview.registration_form_expected_salary or '' }}" required>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>最快到岗时间 <span class="required">*</span></label>
+                <input type="date" id="available_date" class="form-input" value="{{ interview.registration_form_available_date or '' }}" required>
+            </div>
+            
+            <div class="form-group">
+                <label>现住址 <span class="required">*</span></label>
+                <div class="address-row">
+                    <select id="address_province" class="form-select" required></select>
+                    <select id="address_city" class="form-select" required></select>
+                    <select id="address_district" class="form-select" required></select>
+                </div>
+                <input type="text" id="address_detail" class="form-input" value="{{ interview.registration_form_address_detail or '' }}" required placeholder="详细地址">
+            </div>
+
+            <div class="form-group">
+                <label>能否出差 <span class="required">*</span></label>
+                <select id="can_travel" class="form-select" required>
+                    <option value="">请选择</option>
+                    <option value="是" {% if interview.registration_form_can_travel == '是' %}selected{% endif %}>是</option>
+                    <option value="否" {% if interview.registration_form_can_travel == '否' %}selected{% endif %}>否</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>考虑新公司的主要因素（请按重要性排序，拖拽调整顺序） <span class="required">*</span></label>
+                <ul id="consideration_factors" class="sortable-list">
+                    {% for factor in ['公司前景', '团队氛围', '薪酬福利', '人际关系', '文化价值观', '晋升机会', '领导风格'] %}
+                    <li class="sortable-item" data-factor="{{ factor }}">{{ loop.index }}. {{ factor }}</li>
+                    {% endfor %}
+                </ul>
+                <input type="hidden" id="saved_factors_json" value="{{ interview.registration_form_consideration_factors or '' }}">
+            </div>
+            
+            <button type="submit" class="submit-btn" id="submitBtn">提交</button>
+        </form>
+        
+        <div id="successMessage" class="success-message" style="display: none;">
+            信息提交成功！感谢您的配合。
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+    <script src="{{ url_for('static', filename='js/address_helpers.js') }}"></script>
+    <script>
+        const token = '{{ token }}';
+        const savedProvince = '{{ interview.registration_form_address_province or '' }}';
+        const savedCity = '{{ interview.registration_form_address_city or '' }}';
+        const savedDistrict = '{{ interview.registration_form_address_district or '' }}';
+        initAddressSelects('', savedProvince, savedCity, savedDistrict);
+        
+        function parseWorkExperiences(value) {
+            if (!value) return [];
+            if (Array.isArray(value)) return value;
+            if (typeof value === 'string') {
+                try {
+                    const parsed = JSON.parse(value);
+                    if (Array.isArray(parsed)) {
+                        return parsed;
+                    }
+                } catch (e) {
+                    console.error('解析工作经历失败:', e);
+                }
+            }
+            return [];
+        }
+
+        // 初始化排序功能并恢复已保存的顺序
+        if (typeof Sortable !== 'undefined') {
+            const factorsList = document.getElementById('consideration_factors');
+            const savedFactorsJson = document.getElementById('saved_factors_json').value;
+            
+            // 如果有保存的顺序，恢复它
+            if (savedFactorsJson) {
+                try {
+                    const savedFactors = JSON.parse(savedFactorsJson);
+                    if (Array.isArray(savedFactors) && savedFactors.length > 0) {
+                        // 重新排序列表项
+                        const items = Array.from(factorsList.children);
+                        const sortedItems = savedFactors.map(factor => {
+                            return items.find(item => item.getAttribute('data-factor') === factor);
+                        }).filter(item => item);
+                        
+                        // 清空并重新添加
+                        factorsList.innerHTML = '';
+                        sortedItems.forEach((item, index) => {
+                            item.textContent = (index + 1) + '. ' + item.getAttribute('data-factor');
+                            factorsList.appendChild(item);
+                        });
+                    }
+                } catch (e) {
+                    console.error('解析保存的因素顺序失败:', e);
+                }
+            }
+            
+            new Sortable(factorsList, {
+                animation: 150,
+                handle: '.sortable-item',
+                onEnd: function(evt) {
+                    // 更新序号
+                    Array.from(factorsList.children).forEach((item, index) => {
+                        const factor = item.getAttribute('data-factor');
+                        item.textContent = (index + 1) + '. ' + factor;
+                    });
+                }
+            });
+        }
+        
+        document.getElementById('registrationForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const successMessage = document.getElementById('successMessage');
+            
+            // 验证必填字段
+            const requiredFields = [
+                { id: 'contact', name: '联系方式' },
+                { id: 'email', name: '邮箱' },
+                { id: 'birth_date', name: '出生日期' },
+                { id: 'ethnicity', name: '民族' },
+                { id: 'marital_status', name: '婚姻状况' },
+                { id: 'has_children', name: '有无子女' },
+                { id: 'origin', name: '籍贯' },
+                { id: 'first_work_date', name: '首次工作时间' },
+                { id: 'education', name: '最高学历院校及专业及起始时间' },
+                { id: 'hobbies', name: '个人爱好及特长' },
+                { id: 'current_salary', name: '原月薪' },
+                { id: 'expected_salary', name: '期望月薪' },
+                { id: 'available_date', name: '最快到岗时间' },
+                { id: 'address_province', name: '现住址-省' },
+                { id: 'address_city', name: '现住址-市' },
+                { id: 'address_district', name: '现住址-区' },
+                { id: 'address_detail', name: '详细地址' },
+                { id: 'can_travel', name: '能否出差' }
+            ];
+            
+            for (const field of requiredFields) {
+                const element = document.getElementById(field.id);
+                if (!element || !element.value.trim()) {
+                    alert(`请填写${field.name}`);
+                    element?.focus();
+                    return;
+                }
+            }
+            
+            // 验证工作经历
+            const workExpItems = document.querySelectorAll('#work_experience_container .work-exp-item');
+            if (workExpItems.length === 0) {
+                alert('请填写至少一份工作经历');
+                return;
+            }
+            
+            let hasValidWorkExp = false;
+            workExpItems.forEach(item => {
+                const inputs = item.querySelectorAll('input');
+                if (inputs[0]?.value.trim() || inputs[1]?.value.trim()) {
+                    hasValidWorkExp = true;
+                }
+            });
+            
+            if (!hasValidWorkExp) {
+                alert('请填写工作经历信息');
+                return;
+            }
+            
+            // 收集工作经历
+            const workExperiences = Array.from(workExpItems).map(item => {
+                const inputs = item.querySelectorAll('input');
+                return {
+                    company: inputs[0]?.value || '',
+                    position: inputs[1]?.value || '',
+                    start_year: inputs[2]?.value ? parseInt(inputs[2].value.split('-')[0]) : null,
+                    end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null
+                };
+            }).filter(exp => exp.company || exp.position);
+            
+            // 收集考虑因素排序
+            const factorItems = document.querySelectorAll('#consideration_factors .sortable-item');
+            const factors = Array.from(factorItems).map(item => item.getAttribute('data-factor'));
+            
+            submitBtn.disabled = true;
+            submitBtn.textContent = '提交中...';
+            
+            fetch('/api/registration-form/submit', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    token: token,
+                    registration_form_contact: contact,
+                    registration_form_email: email,
+                    registration_form_birth_date: document.getElementById('birth_date').value || '',
+                    registration_form_ethnicity: document.getElementById('ethnicity').value || '',
+                    registration_form_marital_status: document.getElementById('marital_status').value || '',
+                    registration_form_has_children: document.getElementById('has_children').value || '',
+                    registration_form_origin: document.getElementById('origin').value || '',
+                    registration_form_id_card: document.getElementById('id_card').value || '',
+                    registration_form_first_work_date: document.getElementById('first_work_date').value || '',
+                    registration_form_recent_work_experience: workExperiences,
+                    registration_form_education: document.getElementById('education').value || '',
+                    registration_form_hobbies: document.getElementById('hobbies').value || '',
+                    registration_form_current_salary: document.getElementById('current_salary').value || '',
+                    registration_form_expected_salary: document.getElementById('expected_salary').value || '',
+                    registration_form_available_date: document.getElementById('available_date').value || '',
+                    registration_form_address_province: document.getElementById('address_province').value || '',
+                    registration_form_address_city: document.getElementById('address_city').value || '',
+                    registration_form_address_district: document.getElementById('address_district').value || '',
+                    registration_form_address_detail: document.getElementById('address_detail').value || '',
+                    registration_form_can_travel: document.getElementById('can_travel').value || '',
+                    registration_form_consideration_factors: JSON.stringify(factors)
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.success) {
+                    successMessage.style.display = 'block';
+                    submitBtn.style.display = 'none';
+                    document.getElementById('registrationForm').style.display = 'none';
+                } else {
+                    alert('提交失败：' + (result.message || '未知错误'));
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = '提交';
+                }
+            })
+            .catch(error => {
+                console.error('提交失败:', error);
+                alert('提交失败，请重试');
+                submitBtn.disabled = false;
+                submitBtn.textContent = '提交';
+            });
+        });
+    </script>
+</body>
+</html>
+

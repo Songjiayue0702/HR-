@@ -6,6 +6,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from config import Config
+import json
 
 Base = declarative_base()
 
@@ -219,6 +220,39 @@ class Interview(Base):
     create_time = Column(DateTime, default=datetime.now)
     update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
+    # 面试登记表字段
+    registration_form_fill_date = Column(String(50))  # 填写日期（只读，自动生成）
+    registration_form_contact = Column(String(50))  # 联系方式（可修改）
+    registration_form_email = Column(String(100))  # 邮箱（可修改）
+    registration_form_birth_date = Column(String(50))  # 出生日期（可修改）
+    registration_form_ethnicity = Column(String(50))  # 民族
+    registration_form_marital_status = Column(String(50))  # 婚姻状况（未婚、已婚、离异）
+    registration_form_has_children = Column(String(10))  # 有无子女（有、无）
+    registration_form_origin = Column(String(200))  # 籍贯
+    registration_form_id_card = Column(String(50))  # 身份证号（选填）
+    registration_form_first_work_date = Column(String(50))  # 首次工作时间
+    registration_form_recent_work_experience = Column(JSON)  # 近两份工作经历（JSON格式）
+    registration_form_education = Column(Text)  # 最高学历院校及专业及起始时间
+    registration_form_hobbies = Column(Text)  # 个人爱好及特长
+    registration_form_current_salary = Column(String(50))  # 原月薪
+    registration_form_expected_salary = Column(String(50))  # 期望月薪
+    registration_form_available_date = Column(String(50))  # 最快到岗时间
+    registration_form_address_province = Column(String(50))  # 现住址-省
+    registration_form_address_city = Column(String(50))  # 现住址-市
+    registration_form_address_district = Column(String(50))  # 现住址-区
+    registration_form_address_detail = Column(String(500))  # 现住址-详细地址
+    registration_form_can_travel = Column(String(10))  # 能否出差（是、否）
+    registration_form_consideration_factors = Column(Text)  # 考虑新公司的主要因素（排序后的JSON字符串）
+    registration_form_token = Column(String(100))  # 面试登记表填写token（用于生成邀请链接）
+
+    def _parse_json_field(self, value, default):
+        if not value:
+            return default
+        try:
+            return json.loads(value)
+        except (ValueError, TypeError):
+            return default
+
     def to_dict(self):
         return {
             'id': self.id,
@@ -260,6 +294,30 @@ class Interview(Base):
             'onboard_department': self.onboard_department,
             'create_time': self.create_time.isoformat() if self.create_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None,
+            # 面试登记表字段
+            'registration_form_fill_date': self.registration_form_fill_date,
+            'registration_form_contact': self.registration_form_contact,
+            'registration_form_email': self.registration_form_email,
+            'registration_form_birth_date': self.registration_form_birth_date,
+            'registration_form_ethnicity': self.registration_form_ethnicity,
+            'registration_form_marital_status': self.registration_form_marital_status,
+            'registration_form_has_children': self.registration_form_has_children,
+            'registration_form_origin': self.registration_form_origin,
+            'registration_form_id_card': self.registration_form_id_card,
+            'registration_form_first_work_date': self.registration_form_first_work_date,
+            'registration_form_recent_work_experience': self._parse_json_field(self.registration_form_recent_work_experience, []),
+            'registration_form_education': self.registration_form_education,
+            'registration_form_hobbies': self.registration_form_hobbies,
+            'registration_form_current_salary': self.registration_form_current_salary,
+            'registration_form_expected_salary': self.registration_form_expected_salary,
+            'registration_form_available_date': self.registration_form_available_date,
+            'registration_form_address_province': self.registration_form_address_province,
+            'registration_form_address_city': self.registration_form_address_city,
+            'registration_form_address_district': self.registration_form_address_district,
+            'registration_form_address_detail': self.registration_form_address_detail,
+            'registration_form_can_travel': self.registration_form_can_travel,
+            'registration_form_consideration_factors': self._parse_json_field(self.registration_form_consideration_factors, []),
+            'registration_form_token': self.registration_form_token,
         }
 
 # 确保表存在
@@ -346,6 +404,53 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN onboard_department VARCHAR(200)")
     if 'identity_code' not in i_columns:
         add_cols.append("ADD COLUMN identity_code VARCHAR(200)")
+    # 面试登记表字段
+    if 'registration_form_fill_date' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_fill_date VARCHAR(50)")
+    if 'registration_form_contact' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_contact VARCHAR(50)")
+    if 'registration_form_email' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_email VARCHAR(100)")
+    if 'registration_form_birth_date' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_birth_date VARCHAR(50)")
+    if 'registration_form_ethnicity' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_ethnicity VARCHAR(50)")
+    if 'registration_form_marital_status' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_marital_status VARCHAR(50)")
+    if 'registration_form_has_children' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_has_children VARCHAR(10)")
+    if 'registration_form_origin' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_origin VARCHAR(200)")
+    if 'registration_form_id_card' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_id_card VARCHAR(50)")
+    if 'registration_form_first_work_date' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_first_work_date VARCHAR(50)")
+    if 'registration_form_recent_work_experience' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_recent_work_experience TEXT")
+    if 'registration_form_education' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_education TEXT")
+    if 'registration_form_hobbies' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_hobbies TEXT")
+    if 'registration_form_current_salary' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_current_salary VARCHAR(50)")
+    if 'registration_form_expected_salary' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_expected_salary VARCHAR(50)")
+    if 'registration_form_available_date' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_available_date VARCHAR(50)")
+    if 'registration_form_address_province' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_address_province VARCHAR(50)")
+    if 'registration_form_address_city' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_address_city VARCHAR(50)")
+    if 'registration_form_address_district' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_address_district VARCHAR(50)")
+    if 'registration_form_address_detail' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_address_detail VARCHAR(500)")
+    if 'registration_form_can_travel' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_can_travel VARCHAR(10)")
+    if 'registration_form_consideration_factors' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_consideration_factors TEXT")
+    if 'registration_form_token' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_token VARCHAR(100)")
 
     for clause in add_cols:
         conn.execute(text(f"ALTER TABLE interviews {clause}"))

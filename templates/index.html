@@ -211,12 +211,13 @@
                                     <th>简历匹配度</th>
                                     <th>流程状态</th>
                                     <th>最后修改时间</th>
+                                    <th>面试登记表</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody id="interviewTableBody">
                                 <tr>
-                                    <td colspan="6" class="loading">加载中...</td>
+                                    <td colspan="7" class="loading">加载中...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -270,6 +271,15 @@
                     <h3>面试流程详情</h3>
                     <div id="interviewModalBody"></div>
                     <div class="modal-actions" id="interviewModalExtraActions" style="margin-top: 10px; display:none;"></div>
+                </div>
+            </div>
+
+            <!-- 面试登记表模态框 -->
+            <div class="modal" id="registrationFormModal" style="display: none;">
+                <div class="modal-content" style="max-width: 1000px; max-height: 90vh; overflow-y: auto;">
+                    <span class="close" onclick="closeRegistrationFormModal()">&times;</span>
+                    <h3>面试登记表</h3>
+                    <div id="registrationFormModalBody"></div>
                 </div>
             </div>
 
@@ -442,6 +452,8 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+    <script src="{{ url_for('static', filename='js/address_helpers.js') }}"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 
     <!-- 岗位编辑模态框 -->

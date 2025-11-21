@@ -1753,3 +1753,25 @@ input[readonly] {
     font-size: 14px;
 }
 
+/* 面试登记表样式 */
+.work-exp-header {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-weight: bold;
+    font-size: 14px;
+    color: #333;
+}
+
+.work-exp-header span {
+    flex: 1;
+}
+
+.sortable-list {
+    font-size: 12px;
+}
+
+.sortable-item {
+    font-size: 12px;
+}
+

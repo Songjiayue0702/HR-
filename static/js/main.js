@@ -1251,7 +1251,7 @@ function loadInterviews() {
     const tbody = document.getElementById('interviewTableBody');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="6" class="loading">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="loading">加载中...</td></tr>';
 
     const searchInput = document.getElementById('interviewSearchInput');
     const search = searchInput ? (searchInput.value || '').trim() : '';
@@ -1266,7 +1266,7 @@ function loadInterviews() {
             if (result.success) {
                 const list = result.data || [];
                 if (list.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="loading">暂无面试记录</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="9" class="loading">暂无面试记录</td></tr>';
                     return;
                 }
                 tbody.innerHTML = list.map(item => {
@@ -1282,6 +1282,10 @@ function loadInterviews() {
                     const scoreHtml = score !== null
                         ? `<span class="match-score-dot" style="background:${color};"></span><span>${score}${level ? ' 分（' + level + '）' : ''}</span>`
                         : '<span>-</span>';
+                    const hasRegistrationForm = item.registration_form_fill_date ? '已填写' : '未填写';
+                    const registrationFormStatus = item.registration_form_fill_date 
+                        ? `<span style="color: #28a745;">已填写</span>` 
+                        : `<span style="color: #999;">未填写</span>`;
                     return `
                         <tr>
                             <td><input type="checkbox" value="${item.id}" ${isSelected ? 'checked' : ''} onchange="toggleInterview(${item.id}, this)"></td>
@@ -1291,17 +1295,18 @@ function loadInterviews() {
                             <td>${scoreHtml}</td>
                             <td>${status}</td>
                             <td>${time}</td>
+                            <td><button class="btn btn-small btn-primary" onclick="openRegistrationFormModal(${item.id})">${hasRegistrationForm}</button></td>
                             <td><button class="btn btn-small btn-primary" onclick="openInterviewModal(${item.id})">填写/查看</button></td>
                         </tr>
                     `;
                 }).join('');
             } else {
-                tbody.innerHTML = `<tr><td colspan="6" class="loading">加载失败：${escapeHtml(result.message || '未知错误')}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="9" class="loading">加载失败：${escapeHtml(result.message || '未知错误')}</td></tr>`;
             }
         })
         .catch(error => {
             console.error('加载面试流程失败:', error);
-            tbody.innerHTML = '<tr><td colspan="6" class="loading">加载失败，请稍后重试</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="loading">加载失败，请稍后重试</td></tr>';
         });
 }
 
@@ -3573,4 +3578,352 @@ function closePositionModal() {
 }
 
 // 点击模态框外部关闭（已合并到统一的处理函数中）
+
+// 面试登记表相关函数
+function openRegistrationFormModal(interviewId) {
+    fetch(`/api/interviews/${interviewId}`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const data = result.data;
+                const modal = document.getElementById('registrationFormModal');
+                const body = document.getElementById('registrationFormModalBody');
+                if (!modal || !body) return;
+
+                // 获取关联的简历信息
+                fetch(`/api/resumes/${data.resume_id}`)
+                    .then(res => res.json())
+                    .then(resumeResult => {
+                        const resume = resumeResult.success ? resumeResult.data : null;
+                        
+                        // 构建表单HTML
+                        const baseUrl = window.location.origin;
+                        const inviteLink = data.registration_form_token 
+                            ? `${baseUrl}/registration-form?token=${data.registration_form_token}` 
+                            : '';
+                        
+                        body.innerHTML = `
+                            <form id="registrationForm" onsubmit="saveRegistrationForm(${data.id}); return false;">
+                                <div class="form-group">
+                                    <label>邀请填写链接</label>
+                                    <div style="display: flex; gap: 8px;">
+                                        <input type="text" id="reg_invite_link" class="form-input" value="${inviteLink}" readonly>
+                                        <button type="button" class="btn btn-secondary" onclick="generateRegistrationFormLink(${data.id})">生成链接</button>
+                                        <button type="button" class="btn btn-secondary" onclick="copyLink('reg_invite_link')">复制链接</button>
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>姓名 <span class="required">*</span></label>
+                                    <input type="text" id="reg_name" class="form-input" value="${escapeHtml(data.name || '')}" readonly>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>填写日期 <span class="required">*</span></label>
+                                    <input type="text" id="reg_fill_date" class="form-input" value="${escapeHtml(data.registration_form_fill_date || new Date().toISOString().split('T')[0])}" readonly>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>联系方式 <span class="required">*</span></label>
+                                    <input type="text" id="reg_contact" class="form-input" value="${escapeHtml(data.registration_form_contact || (resume ? resume.phone || '' : ''))}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>邮箱 <span class="required">*</span></label>
+                                    <input type="email" id="reg_email" class="form-input" value="${escapeHtml(data.registration_form_email || (resume ? resume.email || '' : ''))}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>出生日期 <span class="required">*</span></label>
+                                    <input type="date" id="reg_birth_date" class="form-input" value="${escapeHtml(data.registration_form_birth_date || (resume && resume.birth_year ? resume.birth_year + '-01-01' : ''))}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>民族 <span class="required">*</span></label>
+                                    <input type="text" id="reg_ethnicity" class="form-input" value="${escapeHtml(data.registration_form_ethnicity || '')}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>婚姻状况 <span class="required">*</span></label>
+                                    <select id="reg_marital_status" class="form-select" required>
+                                        <option value="">请选择</option>
+                                        <option value="未婚" ${data.registration_form_marital_status === '未婚' ? 'selected' : ''}>未婚</option>
+                                        <option value="已婚" ${data.registration_form_marital_status === '已婚' ? 'selected' : ''}>已婚</option>
+                                        <option value="离异" ${data.registration_form_marital_status === '离异' ? 'selected' : ''}>离异</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>有无子女 <span class="required">*</span></label>
+                                    <select id="reg_has_children" class="form-select" required>
+                                        <option value="">请选择</option>
+                                        <option value="有" ${data.registration_form_has_children === '有' ? 'selected' : ''}>有</option>
+                                        <option value="无" ${data.registration_form_has_children === '无' ? 'selected' : ''}>无</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>籍贯 <span class="required">*</span></label>
+                                    <input type="text" id="reg_origin" class="form-input" value="${escapeHtml(data.registration_form_origin || '')}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>身份证号（选填）</label>
+                                    <input type="text" id="reg_id_card" class="form-input" value="${escapeHtml(data.registration_form_id_card || '')}">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>首次工作时间 <span class="required">*</span></label>
+                                    <input type="date" id="reg_first_work_date" class="form-input" value="${escapeHtml(data.registration_form_first_work_date || '')}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>近两份工作经历 <span class="required">*</span></label>
+                                    <div class="work-exp-header" style="display: flex; gap: 8px; margin-bottom: 8px; font-weight: bold; font-size: 14px;">
+                                        <span style="flex: 1;">公司名称</span>
+                                        <span style="flex: 1;">岗位</span>
+                                        <span style="flex: 1;">开始时间</span>
+                                        <span style="flex: 1;">结束时间</span>
+                                    </div>
+                                    <div id="reg_work_experience_container">
+                                        ${renderWorkExperienceInputs(parseWorkExperiences(data.registration_form_recent_work_experience || (resume && resume.work_experience ? resume.work_experience.slice(0, 2) : [])))}
+                                    </div>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>最高学历院校及专业及起始时间 <span class="required">*</span></label>
+                                    <textarea id="reg_education" class="form-textarea" rows="3" required>${escapeHtml(data.registration_form_education || (resume ? `${resume.school || ''} ${resume.major || ''}` : ''))}</textarea>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>个人爱好及特长 <span class="required">*</span></label>
+                                    <textarea id="reg_hobbies" class="form-textarea" rows="3" required>${escapeHtml(data.registration_form_hobbies || '')}</textarea>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>原月薪 <span class="required">*</span></label>
+                                    <input type="text" id="reg_current_salary" class="form-input" value="${escapeHtml(data.registration_form_current_salary || '')}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>期望月薪 <span class="required">*</span></label>
+                                    <input type="text" id="reg_expected_salary" class="form-input" value="${escapeHtml(data.registration_form_expected_salary || '')}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>最快到岗时间 <span class="required">*</span></label>
+                                    <input type="date" id="reg_available_date" class="form-input" value="${escapeHtml(data.registration_form_available_date || '')}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>现住址 <span class="required">*</span></label>
+                                    <div class="address-row">
+                                        <select id="reg_address_province" class="form-select" required></select>
+                                        <select id="reg_address_city" class="form-select" required></select>
+                                        <select id="reg_address_district" class="form-select" required></select>
+                                    </div>
+                                    <input type="text" id="reg_address_detail" class="form-input" value="${escapeHtml(data.registration_form_address_detail || '')}" required placeholder="详细地址">
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>能否出差 <span class="required">*</span></label>
+                                    <select id="reg_can_travel" class="form-select" required>
+                                        <option value="">请选择</option>
+                                        <option value="是" ${data.registration_form_can_travel === '是' ? 'selected' : ''}>是</option>
+                                        <option value="否" ${data.registration_form_can_travel === '否' ? 'selected' : ''}>否</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>考虑新公司的主要因素（请按重要性排序，拖拽调整顺序） <span class="required">*</span></label>
+                                    <ul id="reg_consideration_factors" class="sortable-list" style="font-size: 12px;">
+                                        ${renderConsiderationFactors(data.registration_form_consideration_factors)}
+                                    </ul>
+                                </div>
+                                
+                                <div class="form-actions">
+                                    <button type="submit" class="btn btn-primary">保存</button>
+                                    <button type="button" class="btn btn-secondary" onclick="closeRegistrationFormModal()">关闭</button>
+                                </div>
+                            </form>
+                        `;
+                        
+                        if (typeof Sortable !== 'undefined') {
+                            new Sortable(document.getElementById('reg_consideration_factors'), {
+                                animation: 150,
+                                handle: '.sortable-item'
+                            });
+                        }
+                        initAddressSelects('reg_', data.registration_form_address_province || '', data.registration_form_address_city || '', data.registration_form_address_district || '');
+                        modal.style.display = 'block';
+                    })
+                    .catch(error => {
+                        console.error('获取简历信息失败:', error);
+                        alert('获取简历信息失败');
+                    });
+            } else {
+                alert('获取面试记录失败：' + (result.message || '未知错误'));
+            }
+        })
+        .catch(error => {
+            console.error('获取面试记录失败:', error);
+            alert('获取面试记录失败，请稍后再试');
+        });
+}
+
+function parseWorkExperiences(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+                return parsed;
+            }
+        } catch (e) {
+            console.error('解析工作经历失败:', e);
+        }
+    }
+    return [];
+}
+
+function renderWorkExperienceInputs(workExperiences) {
+    if (!workExperiences || workExperiences.length === 0) {
+        return '<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" style="flex: 1;"></div>';
+    }
+    return workExperiences.map(exp => {
+        const company = escapeHtml(exp.company || '');
+        const position = escapeHtml(exp.position || '');
+        const startYear = exp.start_year ? (exp.start_year + '-01-01') : '';
+        const endYear = exp.end_year ? (exp.end_year + '-01-01') : '';
+        return `<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" value="${company}" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" value="${position}" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" value="${startYear}" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" value="${endYear}" style="flex: 1;"></div>`;
+    }).join('');
+}
+
+function renderConsiderationFactors(factorsJson) {
+    const defaultFactors = [
+        '公司前景',
+        '团队氛围',
+        '薪酬福利',
+        '人际关系',
+        '文化价值观',
+        '晋升机会',
+        '领导风格'
+    ];
+    
+    let factors = defaultFactors;
+    if (factorsJson) {
+        try {
+            const parsed = JSON.parse(factorsJson);
+            if (Array.isArray(parsed)) {
+                factors = parsed;
+            }
+        } catch (e) {
+            // 如果解析失败，使用默认顺序
+        }
+    }
+    
+    return factors.map((factor, index) => 
+        `<li class="sortable-item" data-factor="${escapeHtml(factor)}" style="font-size: 12px; padding: 8px; margin: 5px 0; background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; cursor: move;">${index + 1}. ${escapeHtml(factor)}</li>`
+    ).join('');
+}
+
+function closeRegistrationFormModal() {
+    const modal = document.getElementById('registrationFormModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function saveRegistrationForm(interviewId) {
+    const form = document.getElementById('registrationForm');
+    if (!form) return;
+    
+    // 收集工作经历
+    const workExpItems = form.querySelectorAll('.work-exp-item');
+    const workExperiences = Array.from(workExpItems).map(item => {
+        const inputs = item.querySelectorAll('input');
+        return {
+            company: inputs[0]?.value || '',
+            position: inputs[1]?.value || '',
+            start_year: inputs[2]?.value ? parseInt(inputs[2].value.split('-')[0]) : null,
+            end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null
+        };
+    }).filter(exp => exp.company || exp.position);
+    
+    // 收集考虑因素排序
+    const factorItems = form.querySelectorAll('#reg_consideration_factors .sortable-item');
+    const factors = Array.from(factorItems).map(item => item.getAttribute('data-factor'));
+    
+    const data = {
+        registration_form_fill_date: document.getElementById('reg_fill_date')?.value || new Date().toISOString().split('T')[0],
+        registration_form_contact: document.getElementById('reg_contact')?.value || '',
+        registration_form_email: document.getElementById('reg_email')?.value || '',
+        registration_form_birth_date: document.getElementById('reg_birth_date')?.value || '',
+        registration_form_ethnicity: document.getElementById('reg_ethnicity')?.value || '',
+        registration_form_marital_status: document.getElementById('reg_marital_status')?.value || '',
+        registration_form_has_children: document.getElementById('reg_has_children')?.value || '',
+        registration_form_origin: document.getElementById('reg_origin')?.value || '',
+        registration_form_id_card: document.getElementById('reg_id_card')?.value || '',
+        registration_form_first_work_date: document.getElementById('reg_first_work_date')?.value || '',
+        registration_form_recent_work_experience: workExperiences,
+        registration_form_education: document.getElementById('reg_education')?.value || '',
+        registration_form_hobbies: document.getElementById('reg_hobbies')?.value || '',
+        registration_form_current_salary: document.getElementById('reg_current_salary')?.value || '',
+        registration_form_expected_salary: document.getElementById('reg_expected_salary')?.value || '',
+        registration_form_available_date: document.getElementById('reg_available_date')?.value || '',
+        registration_form_address_province: document.getElementById('reg_address_province')?.value || '',
+        registration_form_address_city: document.getElementById('reg_address_city')?.value || '',
+        registration_form_address_district: document.getElementById('reg_address_district')?.value || '',
+        registration_form_address_detail: document.getElementById('reg_address_detail')?.value || '',
+        registration_form_can_travel: document.getElementById('reg_can_travel')?.value || '',
+        registration_form_consideration_factors: JSON.stringify(factors)
+    };
+    
+    fetch(`/api/interviews/${interviewId}/registration-form`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('保存成功');
+            loadInterviews();
+            closeRegistrationFormModal();
+        } else {
+            alert('保存失败：' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('保存失败:', error);
+        alert('保存失败，请稍后再试');
+    });
+}
+
+function generateRegistrationFormLink(interviewId) {
+    fetch(`/api/interviews/${interviewId}/registration-form-link`, {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            const baseUrl = window.location.origin;
+            const linkInput = document.getElementById('reg_invite_link');
+            if (linkInput) {
+                linkInput.value = `${baseUrl}/registration-form?token=${result.data.token}`;
+            }
+            alert('链接生成成功');
+        } else {
+            alert('生成链接失败：' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('生成链接失败:', error);
+        alert('生成链接失败，请重试');
+    });
+}
+
 

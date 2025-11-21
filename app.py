@@ -2,9 +2,9 @@
 智能简历数据库系统 - 主应用
 """
 from flask import Flask, render_template, request, jsonify, send_file
+import json
 from werkzeug.utils import secure_filename
 import os
-import json
 import secrets
 from datetime import datetime
 from config import Config
@@ -1715,6 +1715,225 @@ def analyze_interview_doc(interview_id):
 
     except Exception as e:
         return jsonify({'success': False, 'message': f'分析请求失败: {str(e)}'}), 500
+
+
+@app.route('/api/interviews/<int:interview_id>/registration-form', methods=['PUT'])
+def update_registration_form(interview_id):
+    """更新面试登记表"""
+    data = request.json or {}
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        
+        # 更新面试登记表字段
+        if 'registration_form_fill_date' in data:
+            interview.registration_form_fill_date = data.get('registration_form_fill_date')
+        if 'registration_form_contact' in data:
+            interview.registration_form_contact = _normalize_field(
+                data.get('registration_form_contact'))
+        if 'registration_form_email' in data:
+            interview.registration_form_email = _normalize_field(
+                data.get('registration_form_email'))
+        if 'registration_form_birth_date' in data:
+            interview.registration_form_birth_date = _normalize_field(
+                data.get('registration_form_birth_date'))
+        if 'registration_form_ethnicity' in data:
+            interview.registration_form_ethnicity = _normalize_field(
+                data.get('registration_form_ethnicity'))
+        if 'registration_form_marital_status' in data:
+            interview.registration_form_marital_status = _normalize_field(
+                data.get('registration_form_marital_status'))
+        if 'registration_form_has_children' in data:
+            interview.registration_form_has_children = _normalize_field(
+                data.get('registration_form_has_children'))
+        if 'registration_form_origin' in data:
+            interview.registration_form_origin = _normalize_field(
+                data.get('registration_form_origin'))
+        if 'registration_form_id_card' in data:
+            interview.registration_form_id_card = _normalize_field(
+                data.get('registration_form_id_card'))
+        if 'registration_form_first_work_date' in data:
+            interview.registration_form_first_work_date = _normalize_field(
+                data.get('registration_form_first_work_date'))
+        if 'registration_form_recent_work_experience' in data:
+            work_exps = data.get('registration_form_recent_work_experience')
+            if work_exps is not None:
+                interview.registration_form_recent_work_experience = json.dumps(work_exps, ensure_ascii=False)
+        if 'registration_form_education' in data:
+            interview.registration_form_education = data.get('registration_form_education')
+        if 'registration_form_hobbies' in data:
+            interview.registration_form_hobbies = data.get('registration_form_hobbies')
+        if 'registration_form_current_salary' in data:
+            interview.registration_form_current_salary = data.get('registration_form_current_salary')
+        if 'registration_form_expected_salary' in data:
+            interview.registration_form_expected_salary = data.get('registration_form_expected_salary')
+        if 'registration_form_available_date' in data:
+            interview.registration_form_available_date = data.get('registration_form_available_date')
+        if 'registration_form_address_province' in data:
+            interview.registration_form_address_province = data.get('registration_form_address_province')
+        if 'registration_form_address_city' in data:
+            interview.registration_form_address_city = data.get('registration_form_address_city')
+        if 'registration_form_address_district' in data:
+            interview.registration_form_address_district = data.get('registration_form_address_district')
+        if 'registration_form_address_detail' in data:
+            interview.registration_form_address_detail = data.get('registration_form_address_detail')
+        if 'registration_form_can_travel' in data:
+            interview.registration_form_can_travel = data.get('registration_form_can_travel')
+        if 'registration_form_consideration_factors' in data:
+            factors = data.get('registration_form_consideration_factors')
+            interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False) if factors else ''
+        
+        # 如果填写日期为空，自动设置为当前日期
+        if not interview.registration_form_fill_date:
+            interview.registration_form_fill_date = datetime.now().strftime('%Y-%m-%d')
+        
+        session.commit()
+        return jsonify({'success': True, 'data': interview.to_dict()})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/interviews/<int:interview_id>/registration-form-link', methods=['POST'])
+def generate_registration_form_link(interview_id):
+    """生成面试登记表填写链接"""
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.id == interview_id).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        
+        # 生成唯一token
+        token = secrets.token_urlsafe(32)
+        interview.registration_form_token = token
+        
+        session.commit()
+        return jsonify({'success': True, 'data': {'token': token}})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'生成链接失败: {str(e)}'}), 500
+    finally:
+        session.close()
+
+
+@app.route('/registration-form', methods=['GET'])
+def registration_form_page():
+    """面试登记表填写页面（公开页面）"""
+    token = request.args.get('token', '').strip()
+    if not token:
+        return render_template('error.html', message='缺少访问令牌'), 400
+    
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.registration_form_token == token).first()
+        if not interview:
+            return render_template('error.html', message='无效的访问令牌'), 404
+        
+        # 解析 JSON 展示
+        interview.registration_form_recent_work_experience = interview._parse_json_field(
+            interview.registration_form_recent_work_experience, [])
+        interview.registration_form_consideration_factors = interview._parse_json_field(
+            interview.registration_form_consideration_factors, [])
+
+        # 获取关联的简历信息
+        resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+        
+        return render_template('registration_form.html', 
+                             interview=interview,
+                             resume=resume,
+                             token=token)
+    finally:
+        session.close()
+
+
+def _normalize_field(value):
+    if isinstance(value, dict):
+        return value.get('value') or value.get('label') or ''
+    return value
+
+
+@app.route('/api/registration-form/submit', methods=['POST'])
+def submit_registration_form():
+    """提交面试登记表（公开接口）"""
+    data = request.json or {}
+    token = data.get('token', '').strip()
+    
+    if not token:
+        return jsonify({'success': False, 'message': '缺少访问令牌'}), 400
+    
+    session = get_db_session()
+    try:
+        interview = session.query(Interview).filter(Interview.registration_form_token == token).first()
+        if not interview:
+            return jsonify({'success': False, 'message': '无效的访问令牌'}), 404
+        
+        # 更新面试登记表字段
+        if 'registration_form_contact' in data:
+            interview.registration_form_contact = _normalize_field(
+                data.get('registration_form_contact'))
+        if 'registration_form_email' in data:
+            interview.registration_form_email = _normalize_field(
+                data.get('registration_form_email'))
+        if 'registration_form_birth_date' in data:
+            interview.registration_form_birth_date = _normalize_field(
+                data.get('registration_form_birth_date'))
+        if 'registration_form_ethnicity' in data:
+            interview.registration_form_ethnicity = _normalize_field(
+                data.get('registration_form_ethnicity'))
+        if 'registration_form_marital_status' in data:
+            interview.registration_form_marital_status = _normalize_field(
+                data.get('registration_form_marital_status'))
+        if 'registration_form_has_children' in data:
+            interview.registration_form_has_children = _normalize_field(
+                data.get('registration_form_has_children'))
+        if 'registration_form_origin' in data:
+            interview.registration_form_origin = _normalize_field(
+                data.get('registration_form_origin'))
+        if 'registration_form_id_card' in data:
+            interview.registration_form_id_card = _normalize_field(
+                data.get('registration_form_id_card'))
+        if 'registration_form_recent_work_experience' in data:
+            work_exps = data.get('registration_form_recent_work_experience')
+            if work_exps is not None:
+                interview.registration_form_recent_work_experience = json.dumps(work_exps, ensure_ascii=False)
+        if 'registration_form_education' in data:
+            interview.registration_form_education = data.get('registration_form_education')
+        if 'registration_form_hobbies' in data:
+            interview.registration_form_hobbies = data.get('registration_form_hobbies')
+        if 'registration_form_current_salary' in data:
+            interview.registration_form_current_salary = data.get('registration_form_current_salary')
+        if 'registration_form_expected_salary' in data:
+            interview.registration_form_expected_salary = data.get('registration_form_expected_salary')
+        if 'registration_form_available_date' in data:
+            interview.registration_form_available_date = data.get('registration_form_available_date')
+        if 'registration_form_address_province' in data:
+            interview.registration_form_address_province = data.get('registration_form_address_province')
+        if 'registration_form_address_city' in data:
+            interview.registration_form_address_city = data.get('registration_form_address_city')
+        if 'registration_form_address_district' in data:
+            interview.registration_form_address_district = data.get('registration_form_address_district')
+        if 'registration_form_address_detail' in data:
+            interview.registration_form_address_detail = data.get('registration_form_address_detail')
+        if 'registration_form_can_travel' in data:
+            interview.registration_form_can_travel = data.get('registration_form_can_travel')
+        if 'registration_form_consideration_factors' in data:
+            factors = data.get('registration_form_consideration_factors')
+            interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False) if factors else ''
+        
+        # 自动设置填写日期
+        interview.registration_form_fill_date = datetime.now().strftime('%Y-%m-%d')
+        
+        session.commit()
+        return jsonify({'success': True, 'message': '信息提交成功'})
+    except Exception as e:
+        session.rollback()
+        return jsonify({'success': False, 'message': f'提交失败: {str(e)}'}), 500
+    finally:
+        session.close()
 
 
 @app.route('/api/interviews/<int:interview_id>/analysis-pdf', methods=['POST'])
