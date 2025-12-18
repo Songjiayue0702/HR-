@@ -1687,6 +1687,23 @@ input[readonly] {
     color: #666;
 }
 
+.match-suggestions .focus-item {
+    display: inline-block;
+    color: #1890ff;
+    font-weight: 600;
+    margin-bottom: 5px;
+}
+
+.match-suggestions .question-item {
+    margin-top: 5px;
+    margin-left: 20px;
+    color: #333;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-left: 3px solid #1890ff;
+    border-radius: 4px;
+}
+
 .form-select {
     font-size: 14px;
 }

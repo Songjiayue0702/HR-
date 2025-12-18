@@ -49,7 +49,7 @@ class Config:
     ]
     
     # OCR配置（用于图片PDF识别）
-    OCR_ENABLED = os.environ.get('OCR_ENABLED', 'true').lower() == 'true'  # 是否启用OCR
+    OCR_ENABLED = os.environ.get('OCR_ENABLED', 'false').lower() == 'true'  # 是否启用OCR（默认禁用，避免启动问题）
     OCR_ENGINE = os.environ.get('OCR_ENGINE', 'easyocr')  # 可选: 'paddleocr' 或 'easyocr'（当前使用easyocr）
     OCR_USE_GPU = os.environ.get('OCR_USE_GPU', 'false').lower() == 'true'  # 是否使用GPU加速
     

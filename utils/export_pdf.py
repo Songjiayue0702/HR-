@@ -75,24 +75,40 @@ def _draw_wrapped_text(
     y: int,
     max_width: int,
     leading: int = 16,
+    min_y: int = 80,
+    page_height: int = None,
 ) -> int:
     """
     在 PDF 上绘制自动换行的文本，并返回新的 y 坐标
+    如果内容超过一页，会自动分页
     """
     if not text:
         return y
 
     font_name = CH_FONT_NAME
+    if page_height is None:
+        from reportlab.lib.pagesizes import A4
+        _, page_height = A4
 
     current_line = ""
     for ch in text:
         if ch == "\n":
+            # 检查是否需要换页
+            if y < min_y:
+                c.showPage()
+                c.setFont(CH_FONT_NAME, 11)
+                y = page_height - 60
             c.drawString(x, y, current_line)
             y -= leading
             current_line = ""
             continue
 
         if pdfmetrics.stringWidth(current_line + ch, font_name, 11) > max_width:
+            # 检查是否需要换页
+            if y < min_y:
+                c.showPage()
+                c.setFont(CH_FONT_NAME, 11)
+                y = page_height - 60
             c.drawString(x, y, current_line)
             y -= leading
             current_line = ch
@@ -100,6 +116,11 @@ def _draw_wrapped_text(
             current_line += ch
 
     if current_line:
+        # 检查是否需要换页
+        if y < min_y:
+            c.showPage()
+            c.setFont(CH_FONT_NAME, 11)
+            y = page_height - 60
         c.drawString(x, y, current_line)
         y -= leading
 
@@ -139,12 +160,17 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
 
     c.setFont(CH_FONT_NAME, 11)
 
-    def draw_section(title: str):
+    def check_page_break(min_y: int = 80):
+        """检查是否需要换页，如果需要则换页"""
         nonlocal y
-        if y < 80:
+        if y < min_y:
             c.showPage()
             c.setFont(CH_FONT_NAME, 11)
             y = height - 60
+    
+    def draw_section(title: str):
+        nonlocal y
+        check_page_break()
         c.setFont(CH_FONT_NAME, 12)
         c.drawString(margin_left, y, title)
         y -= 18
@@ -185,9 +211,11 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
     draw_section("四、工作经历")
     work_exps: List[Dict[str, Any]] = getattr(resume, "work_experience", None) or []
     if not work_exps:
+        check_page_break()
         y = _draw_wrapped_text(c, "暂无工作经历", margin_left, y, max_text_width)
     else:
         for idx, exp in enumerate(work_exps, start=1):
+            check_page_break()
             company = exp.get("company") or "-"
             position = exp.get("position") or "-"
             start_year = exp.get("start_year")
@@ -223,26 +251,45 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
         y -= 5
 
         if detailed:
+            check_page_break()
             y = _draw_wrapped_text(c, "详细分析：", margin_left, y, max_text_width)
+            check_page_break()
             y = _draw_wrapped_text(c, detailed, margin_left + 20, y, max_text_width - 20)
             y -= 5
 
         if strengths:
+            check_page_break()
             y = _draw_wrapped_text(c, "优势：", margin_left, y, max_text_width)
             for s in strengths:
+                check_page_break()
                 y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
             y -= 5
 
         if weaknesses:
+            check_page_break()
             y = _draw_wrapped_text(c, "不足：", margin_left, y, max_text_width)
             for w in weaknesses:
+                check_page_break()
                 y = _draw_wrapped_text(c, f"• {w}", margin_left + 20, y, max_text_width - 20)
             y -= 5
 
         if suggestions:
-            y = _draw_wrapped_text(c, "改进建议：", margin_left, y, max_text_width)
+            check_page_break()
+            y = _draw_wrapped_text(c, "面试重点考核项及对应面试问题：", margin_left, y, max_text_width)
+            import re
             for s in suggestions:
-                y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
+                check_page_break()
+                # 解析格式化的字符串：【考核重点】xxx - 【面试问题】xxx
+                match = re.match(r'【考核重点】(.*?)\s*-\s*【面试问题】(.*)', s)
+                if match:
+                    focus = match.group(1).strip()
+                    question = match.group(2).strip()
+                    y = _draw_wrapped_text(c, f"• 【考核重点】{focus}", margin_left + 20, y, max_text_width - 20)
+                    check_page_break()
+                    y = _draw_wrapped_text(c, f"  【面试问题】{question}", margin_left + 40, y, max_text_width - 40)
+                else:
+                    # 如果没有匹配到格式，直接显示原内容
+                    y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
     else:
         y = _draw_wrapped_text(c, "暂无匹配度分析结果。请在系统中先执行一次匹配分析。", margin_left, y, max_text_width)
 

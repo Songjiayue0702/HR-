@@ -32,6 +32,7 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
 import threading
 from sqlalchemy import and_
+from sqlalchemy.orm import make_transient
 import traceback
 import sys
 
@@ -929,7 +930,7 @@ def export_resume_analysis_pdf(resume_id):
     "detailed_analysis": "详细的分析说明...",
     "strengths": ["优势1", "优势2"],
     "weaknesses": ["不足1", "不足2"],
-    "suggestions": ["建议1", "建议2"]
+    "suggestions": ["【考核重点】技术能力 - 【面试问题】请详细说明您在XX项目中的技术实现方案和遇到的挑战", "【考核重点】沟通协作 - 【面试问题】请描述一次您与跨部门团队协作解决复杂问题的经历"]
 }}
 
 其中：
@@ -938,7 +939,28 @@ def export_resume_analysis_pdf(resume_id):
 - detailed_analysis: 详细分析说明（200-500字）
 - strengths: 优势匹配点列表
 - weaknesses: 不足匹配点列表
-- suggestions: 改进建议列表
+- suggestions: 这是给面试官使用的面试重点考核项及对应面试问题，不是给候选人的建议！
+
+【suggestions字段的详细要求】：
+1. 这是给面试官的建议，用于指导面试官在面试中重点考核哪些方面，以及应该问什么问题
+2. 绝对不要生成给候选人的改进建议（如"建议候选人如何提升"、"候选人应该做什么"等）
+3. 必须严格按照以下格式生成，每个suggestion必须是：【考核重点】考核项名称 - 【面试问题】具体的面试问题
+4. 根据简历与岗位的匹配情况，识别3-5个需要重点考核的维度，例如：
+   - 如果简历缺乏相关经验，考核重点可以是"行业经验"或"学习能力"
+   - 如果简历有相关经验但不够深入，考核重点可以是"项目深度"或"技术能力"
+   - 如果岗位需要沟通能力，考核重点可以是"沟通协作"或"团队合作"
+5. 为每个考核重点设计1-2个针对性的面试问题，问题要能帮助面试官深入了解候选人在该维度的真实能力
+6. 面试问题应该以"请"、"请描述"、"请说明"等开头，直接面向候选人提问
+
+【格式示例】：
+正确格式：
+- "【考核重点】技术能力 - 【面试问题】请详细说明您在XX项目中的技术实现方案和遇到的挑战"
+- "【考核重点】沟通协作 - 【面试问题】请描述一次您与跨部门团队协作解决复杂问题的经历"
+
+错误格式（禁止使用）：
+- "建议候选人提升技术能力"（这是给候选人的建议，不是给面试官的）
+- "候选人应该加强沟通能力"（这是给候选人的建议，不是给面试官的）
+- "技术能力：请说明..."（缺少【考核重点】和【面试问题】标记）
 
 请只返回JSON格式，不要包含其他文字说明。"""
 
@@ -961,8 +983,25 @@ def export_resume_analysis_pdf(resume_id):
                                 'weaknesses': [],
                                 'suggestions': []
                             }
+                        
+                        # 验证和清理suggestions字段，确保格式正确
+                        if 'suggestions' in analysis and isinstance(analysis['suggestions'], list):
+                            import re
+                            cleaned_suggestions = []
+                            for suggestion in analysis['suggestions']:
+                                if not isinstance(suggestion, str):
+                                    continue
+                                # 检查是否符合格式：【考核重点】xxx - 【面试问题】xxx
+                                if re.match(r'【考核重点】.*?\s*[-—–]\s*【面试问题】.*', suggestion):
+                                    cleaned_suggestions.append(suggestion)
+                                # 如果不符合格式，尝试修复或跳过
+                                # 过滤掉明显是给候选人的建议（包含"建议"、"应该"等关键词）
+                                elif any(keyword in suggestion for keyword in ['建议候选人', '候选人应该', '建议您', '您应该', '可以尝试']):
+                                    # 跳过给候选人的建议
+                                    continue
+                            analysis['suggestions'] = cleaned_suggestions
 
-                        # 对得分做同样的“放宽”与等级划分，保持与页面一致
+                        # 对得分做同样的"放宽"与等级划分，保持与页面一致
                         try:
                             raw_score = analysis.get('match_score')
                             if raw_score is None:
@@ -985,7 +1024,9 @@ def export_resume_analysis_pdf(resume_id):
             analysis = None
 
         file_path = export_resume_analysis_to_pdf(resume, analysis)
-        download_name = f"简历分析报告_{resume.name or resume_id}.pdf"
+        # 文件名称格式：候选人姓名-简历分析报告
+        candidate_name = resume.name or f"简历{resume_id}"
+        download_name = f"{candidate_name}-简历分析报告.pdf"
         return send_file(file_path, as_attachment=True, download_name=download_name)
     except Exception as e:
         return jsonify({'success': False, 'message': f'导出分析报告失败: {str(e)}'}), 500
@@ -1870,7 +1911,11 @@ def update_registration_form(interview_id):
             interview.registration_form_can_travel = data.get('registration_form_can_travel')
         if 'registration_form_consideration_factors' in data:
             factors = data.get('registration_form_consideration_factors')
-            interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False) if factors else ''
+            # 确保将列表转换为JSON字符串，即使是空列表也要转换为'[]'
+            if factors is not None:
+                interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+            else:
+                interview.registration_form_consideration_factors = ''
         
         # 如果填写日期为空，自动设置为当前日期
         if not interview.registration_form_fill_date:
@@ -1916,18 +1961,34 @@ def registration_form_page():
     
     session = get_db_session()
     try:
+        # 查询对象
         interview = session.query(Interview).filter(Interview.registration_form_token == token).first()
         if not interview:
             return render_template('error.html', message='无效的访问令牌'), 404
         
-        # 解析 JSON 展示
-        interview.registration_form_recent_work_experience = interview._parse_json_field(
-            interview.registration_form_recent_work_experience, [])
-        interview.registration_form_consideration_factors = interview._parse_json_field(
-            interview.registration_form_consideration_factors, [])
-
         # 获取关联的简历信息
         resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+        
+        # 先保存原始值（JSON字符串）
+        original_work_exp = interview.registration_form_recent_work_experience
+        original_factors = interview.registration_form_consideration_factors
+        
+        # 将对象从session中分离，避免触发数据库更新
+        session.expunge(interview)
+        if resume:
+            session.expunge(resume)
+        
+        # 使用 make_transient 确保对象完全脱离 session，不会触发任何数据库操作
+        make_transient(interview)
+        if resume:
+            make_transient(resume)
+        
+        # 现在可以安全地修改属性，因为对象已完全脱离 session
+        # 解析 JSON 展示（对象已完全脱离 session，不会触发数据库更新）
+        interview.registration_form_recent_work_experience = interview._parse_json_field(
+            original_work_exp, [])
+        interview.registration_form_consideration_factors = interview._parse_json_field(
+            original_factors, [])
         
         return render_template('registration_form.html', 
                              interview=interview,
@@ -2009,7 +2070,11 @@ def submit_registration_form():
             interview.registration_form_can_travel = data.get('registration_form_can_travel')
         if 'registration_form_consideration_factors' in data:
             factors = data.get('registration_form_consideration_factors')
-            interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False) if factors else ''
+            # 确保将列表转换为JSON字符串，即使是空列表也要转换为'[]'
+            if factors is not None:
+                interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+            else:
+                interview.registration_form_consideration_factors = ''
         
         # 自动设置填写日期
         interview.registration_form_fill_date = datetime.now().strftime('%Y-%m-%d')
@@ -2655,7 +2720,7 @@ def analyze_resume_match(resume_id):
     "detailed_analysis": "详细的分析说明...",
     "strengths": ["优势1", "优势2"],
     "weaknesses": ["不足1", "不足2"],
-    "suggestions": ["建议1", "建议2"]
+    "suggestions": ["【考核重点】技术能力 - 【面试问题】请详细说明您在XX项目中的技术实现方案和遇到的挑战", "【考核重点】沟通协作 - 【面试问题】请描述一次您与跨部门团队协作解决复杂问题的经历"]
 }}
 
 其中：
@@ -2664,7 +2729,28 @@ def analyze_resume_match(resume_id):
 - detailed_analysis: 详细分析说明（200-500字）
 - strengths: 优势匹配点列表
 - weaknesses: 不足匹配点列表
-- suggestions: 改进建议列表
+- suggestions: 这是给面试官使用的面试重点考核项及对应面试问题，不是给候选人的建议！
+
+【suggestions字段的详细要求】：
+1. 这是给面试官的建议，用于指导面试官在面试中重点考核哪些方面，以及应该问什么问题
+2. 绝对不要生成给候选人的改进建议（如"建议候选人如何提升"、"候选人应该做什么"等）
+3. 必须严格按照以下格式生成，每个suggestion必须是：【考核重点】考核项名称 - 【面试问题】具体的面试问题
+4. 根据简历与岗位的匹配情况，识别3-5个需要重点考核的维度，例如：
+   - 如果简历缺乏相关经验，考核重点可以是"行业经验"或"学习能力"
+   - 如果简历有相关经验但不够深入，考核重点可以是"项目深度"或"技术能力"
+   - 如果岗位需要沟通能力，考核重点可以是"沟通协作"或"团队合作"
+5. 为每个考核重点设计1-2个针对性的面试问题，问题要能帮助面试官深入了解候选人在该维度的真实能力
+6. 面试问题应该以"请"、"请描述"、"请说明"等开头，直接面向候选人提问
+
+【格式示例】：
+正确格式：
+- "【考核重点】技术能力 - 【面试问题】请详细说明您在XX项目中的技术实现方案和遇到的挑战"
+- "【考核重点】沟通协作 - 【面试问题】请描述一次您与跨部门团队协作解决复杂问题的经历"
+
+错误格式（禁止使用）：
+- "建议候选人提升技术能力"（这是给候选人的建议，不是给面试官的）
+- "候选人应该加强沟通能力"（这是给候选人的建议，不是给面试官的）
+- "技术能力：请说明..."（缺少【考核重点】和【面试问题】标记）
 
 请只返回JSON格式，不要包含其他文字说明。"""
         
@@ -2692,7 +2778,24 @@ def analyze_resume_match(resume_id):
                     'suggestions': []
                 }
             
-            # 对匹配得分进行“温和放宽”，避免评分过于严苛
+            # 验证和清理suggestions字段，确保格式正确
+            if 'suggestions' in analysis_result and isinstance(analysis_result['suggestions'], list):
+                import re
+                cleaned_suggestions = []
+                for suggestion in analysis_result['suggestions']:
+                    if not isinstance(suggestion, str):
+                        continue
+                    # 检查是否符合格式：【考核重点】xxx - 【面试问题】xxx
+                    if re.match(r'【考核重点】.*?\s*[-—–]\s*【面试问题】.*', suggestion):
+                        cleaned_suggestions.append(suggestion)
+                    # 如果不符合格式，尝试修复或跳过
+                    # 过滤掉明显是给候选人的建议（包含"建议"、"应该"等关键词）
+                    elif any(keyword in suggestion for keyword in ['建议候选人', '候选人应该', '建议您', '您应该', '可以尝试']):
+                        # 跳过给候选人的建议
+                        continue
+                analysis_result['suggestions'] = cleaned_suggestions
+            
+            # 对匹配得分进行"温和放宽"，避免评分过于严苛
             # 原始得分区间 0-100，转换为约 50-100 的区间，更贴近日常使用场景
             try:
                 raw_score = analysis_result.get('match_score')
@@ -2763,5 +2866,35 @@ def analyze_resume_match(resume_id):
         }), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    import socket
+    import sys
+    
+    # 检查端口是否被占用
+    def is_port_in_use(port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(('localhost', port)) == 0
+    
+    port = 5000
+    if is_port_in_use(port):
+        print(f'错误: 端口 {port} 已被占用！')
+        print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
+        sys.exit(1)
+    
+    print('=' * 50)
+    print('智能简历数据库系统')
+    print('=' * 50)
+    print(f'服务器地址: http://127.0.0.1:{port}')
+    print(f'局域网地址: http://0.0.0.0:{port}')
+    print('=' * 50)
+    print('按 Ctrl+C 停止服务器')
+    print('=' * 50)
+    print()
+    
+    try:
+        app.run(debug=True, host='0.0.0.0', port=port, use_reloader=False)
+    except Exception as e:
+        print(f'启动失败: {e}')
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 

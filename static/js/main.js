@@ -1461,13 +1461,40 @@ function downloadAnalysisPdf(resumeId) {
                 throw new Error(`导出失败，状态码: ${response.status}`);
             });
         }
-        return response.blob();
+        // 从响应头中获取文件名
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = `简历分析报告_${resumeId}.pdf`; // 默认文件名
+        if (contentDisposition) {
+            // 尝试匹配 filename*=UTF-8''xxx 格式（RFC 5987）
+            let filenameMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+            if (filenameMatch && filenameMatch[1]) {
+                try {
+                    filename = decodeURIComponent(filenameMatch[1]);
+                } catch (e) {
+                    // 如果解码失败，尝试其他格式
+                }
+            } else {
+                // 尝试匹配 filename="xxx" 或 filename=xxx 格式
+                filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                if (filenameMatch && filenameMatch[1]) {
+                    // 移除引号
+                    filename = filenameMatch[1].replace(/['"]/g, '');
+                    // 处理URL编码的文件名
+                    try {
+                        filename = decodeURIComponent(filename);
+                    } catch (e) {
+                        // 如果解码失败，使用原始文件名
+                    }
+                }
+            }
+        }
+        return response.blob().then(blob => ({ blob, filename }));
     })
-    .then(blob => {
+    .then(({ blob, filename }) => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `简历分析报告_${resumeId}.pdf`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -3118,6 +3145,10 @@ function analyzeResumeMatch(resumeId, appliedPosition) {
     
     resultDiv.innerHTML = '<div class="loading">正在分析中，请稍候...</div>';
     
+    // 清除旧缓存，确保使用最新的分析结果
+    const cacheKey = `${resumeId}_${appliedPosition}`;
+    delete matchAnalysisCache[cacheKey];
+    
     fetch(`/api/resumes/${resumeId}/match-analysis`, {
         method: 'POST',
         headers: {
@@ -3131,7 +3162,6 @@ function analyzeResumeMatch(resumeId, appliedPosition) {
     .then(result => {
         if (result.success) {
             // 缓存分析结果
-            const cacheKey = `${resumeId}_${appliedPosition}`;
             matchAnalysisCache[cacheKey] = result.data;
             // 显示分析结果
             displayMatchAnalysis(result.data);
@@ -3198,9 +3228,37 @@ function displayMatchAnalysis(analysisData) {
             
             ${suggestions.length > 0 ? `
             <div class="match-suggestions">
-                <h4>改进建议</h4>
+                <h4>面试重点考核项及对应面试问题</h4>
                 <ul>
-                    ${suggestions.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
+                    ${suggestions.map(s => {
+                        // 解析格式化的字符串：【考核重点】xxx - 【面试问题】xxx
+                        // 支持多种分隔符：- 或 — 或 –
+                        const match = s.match(/【考核重点】(.*?)\s*[-—–]\s*【面试问题】(.*)/);
+                        if (match) {
+                            const focus = match[1].trim();
+                            const question = match[2].trim();
+                            return `<li>
+                                <strong class="focus-item">【考核重点】${escapeHtml(focus)}</strong>
+                                <div class="question-item">【面试问题】${escapeHtml(question)}</div>
+                            </li>`;
+                        } else {
+                            // 如果没有匹配到格式，尝试其他可能的格式
+                            // 检查是否包含"考核重点"和"面试问题"关键词
+                            if (s.includes('考核重点') || s.includes('面试问题')) {
+                                // 尝试提取关键信息
+                                const focusMatch = s.match(/考核重点[：:]\s*(.*?)(?:\s*[-—–]|\s*面试问题|$)/);
+                                const questionMatch = s.match(/面试问题[：:]\s*(.*)/);
+                                if (focusMatch || questionMatch) {
+                                    return `<li>
+                                        ${focusMatch ? `<strong class="focus-item">【考核重点】${escapeHtml(focusMatch[1].trim())}</strong>` : ''}
+                                        ${questionMatch ? `<div class="question-item">【面试问题】${escapeHtml(questionMatch[1].trim())}</div>` : ''}
+                                    </li>`;
+                                }
+                            }
+                            // 如果都不匹配，直接显示原内容（可能是旧格式）
+                            return `<li class="old-format">${escapeHtml(s)}</li>`;
+                        }
+                    }).join('')}
                 </ul>
             </div>
             ` : ''}
