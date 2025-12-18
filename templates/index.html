@@ -51,8 +51,14 @@
                 <ul>
                     <li>
                         <a href="#" class="nav-item" data-module="settings" onclick="switchModule('settings'); return false;">
-                            <span class="nav-icon">⚙️</span>
-                            <span class="nav-text">设置</span>
+                            <span class="nav-icon">🔧</span>
+                            <span class="nav-text">系统设置</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="#" class="nav-item" data-module="account-settings" onclick="switchModule('account-settings'); return false;">
+                            <span class="nav-icon">👤</span>
+                            <span class="nav-text">账号设置</span>
                         </a>
                     </li>
                 </ul>
@@ -64,6 +70,10 @@
             <!-- 页面标题 -->
             <header class="page-header">
                 <h1 class="page-title">面试系统</h1>
+                <div style="margin-left: auto; display: flex; align-items: center; gap: 15px;">
+                    <span id="currentUserInfo" style="color: #666; font-size: 14px;"></span>
+                    <button class="btn btn-sm btn-secondary" onclick="logout()">退出登录</button>
+                </div>
             </header>
             
             <!-- 模块1：简历上传 -->
@@ -142,12 +152,13 @@
                                     <th>专业</th>
                                     <th>查重</th>
                                     <th>状态</th>
+                                    <th>上传者</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody id="resumeTableBody">
                                 <tr>
-                                    <td colspan="15" class="loading">加载中...</td>
+                                    <td colspan="16" class="loading">加载中...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -211,13 +222,14 @@
                                     <th>简历匹配度</th>
                                     <th>流程状态</th>
                                     <th>最后修改时间</th>
+                                    <th>邀约发起者</th>
                                     <th>面试登记表</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
                             <tbody id="interviewTableBody">
                                 <tr>
-                                    <td colspan="7" class="loading">加载中...</td>
+                                    <td colspan="10" class="loading">加载中...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -242,6 +254,14 @@
                             <label style="margin-right:8px;">岗位：</label>
                             <select id="statsPosition" class="filter-select" style="max-width:220px;margin-right:16px;" onchange="loadStatistics()">
                                 <option value="">全部岗位</option>
+                            </select>
+
+                            <label style="margin-right:8px;display:none;" id="statsScopeLabel">统计范围：</label>
+                            <select id="statsScope" class="filter-select" style="max-width:150px;margin-right:16px;display:none;" onchange="loadStatistics()">
+                                <option value="personal">个人</option>
+                                <option value="department" style="display:none;">部门</option>
+                                <option value="group" style="display:none;">小组</option>
+                                <option value="all" style="display:none;">整体</option>
                             </select>
 
                             <button class="btn btn-primary" onclick="loadStatistics()">统计</button>
@@ -372,6 +392,50 @@
                         <div id="aiConfigStatus" class="ai-config-status"></div>
                     </div>
                 </section>
+
+            </div>
+
+            <!-- 模块6：账号设置 -->
+            <div id="module-account-settings" class="module" style="display: none;">
+                <header class="module-header">
+                    <h2>账号设置</h2>
+                </header>
+
+                <!-- 管理员账号管理 -->
+                <section class="settings-section" id="adminAccountManagement" style="display: none;">
+                    <h3>账号管理</h3>
+                    <div class="settings-content">
+                        <div style="margin-bottom: 20px;">
+                            <button class="btn btn-primary" onclick="showCreateUserModal()">新增账号</button>
+                        </div>
+                        <div id="accountManagementContent">
+                            <!-- 账号列表将动态生成 -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 普通用户修改密码 -->
+                <section class="settings-section" id="userPasswordChange">
+                    <h3>修改密码</h3>
+                    <div class="settings-content">
+                        <div class="form-group">
+                            <label for="currentPassword">当前密码：</label>
+                            <input type="password" id="currentPassword" class="form-input" placeholder="请输入当前密码">
+                        </div>
+                        <div class="form-group">
+                            <label for="newPassword">新密码：</label>
+                            <input type="password" id="newPassword" class="form-input" placeholder="请输入新密码">
+                        </div>
+                        <div class="form-group">
+                            <label for="confirmPassword">确认新密码：</label>
+                            <input type="password" id="confirmPassword" class="form-input" placeholder="请再次输入新密码">
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-primary" onclick="changeMyPassword()">修改密码</button>
+                        </div>
+                        <div id="passwordChangeStatus" style="margin-top: 15px;"></div>
+                    </div>
+                </section>
             </div>
         </main>
     </div>
@@ -482,6 +546,62 @@
                     <button type="button" class="btn btn-secondary" onclick="closePositionModal()">取消</button>
                     <button type="submit" class="btn btn-primary">保存</button>
                 </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 新增/编辑账号模态框 -->
+    <div id="userModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 600px;">
+            <span class="close" onclick="closeUserModal()">&times;</span>
+            <h3 id="userModalTitle">新增账号</h3>
+            <form id="userForm" onsubmit="submitUserForm(event)">
+                <input type="hidden" id="editUserId" value="">
+                <div class="form-group">
+                    <label>用户名 <span class="required">*</span></label>
+                    <input type="text" id="userUsername" class="form-input" required placeholder="请输入用户名">
+                </div>
+                <div class="form-group" id="passwordGroup">
+                    <label>密码 <span class="required">*</span></label>
+                    <input type="password" id="userPassword" class="form-input" placeholder="请输入密码（至少6位）" minlength="6">
+                    <small class="form-hint" id="passwordHint">编辑模式下，留空则不修改密码</small>
+                </div>
+                <div class="form-group" id="confirmPasswordGroup">
+                    <label>确认密码 <span class="required">*</span></label>
+                    <input type="password" id="userConfirmPassword" class="form-input" placeholder="请再次输入密码" minlength="6">
+                </div>
+                <div class="form-group">
+                    <label>真实姓名</label>
+                    <input type="text" id="userRealName" class="form-input" placeholder="请输入真实姓名（可选）">
+                </div>
+                <div class="form-group">
+                    <label>角色 <span class="required">*</span></label>
+                    <select id="userRole" class="form-select" required>
+                        <option value="employee">员工</option>
+                        <option value="manager">主管</option>
+                        <option value="admin">管理员</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>部门</label>
+                    <input type="text" id="userDepartment" class="form-input" placeholder="请输入部门（可选）">
+                </div>
+                <div class="form-group">
+                    <label>小组</label>
+                    <input type="text" id="userGroupName" class="form-input" placeholder="请输入小组名称（可选）">
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="userIsActive" checked>
+                        账号激活
+                    </label>
+                    <small class="form-hint">取消勾选将禁用该账号</small>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeUserModal()">取消</button>
+                    <button type="submit" class="btn btn-primary" id="userSubmitBtn">创建账号</button>
+                </div>
+                <div id="userFormStatus" style="margin-top: 15px;"></div>
             </form>
         </div>
     </div>

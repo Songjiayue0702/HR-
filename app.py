@@ -1,15 +1,16 @@
 """
 智能简历数据库系统 - 主应用
 """
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 import io
 import json
 from werkzeug.utils import secure_filename
 import os
 import secrets
 from datetime import datetime
+from functools import wraps
 from config import Config
-from models import get_db_session, Resume, Position, Interview
+from models import get_db_session, Resume, Position, Interview, User
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.api_integration import APIIntegration
@@ -245,34 +246,164 @@ def process_resume_async(resume_id, file_path):
     finally:
         db.close()
 
+# 权限装饰器
+def login_required(f):
+    """要求登录的装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    """要求管理员权限的装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
+        db = get_db_session()
+        try:
+            user = db.query(User).filter_by(id=session['user_id']).first()
+            if not user or user.role != 'admin':
+                return jsonify({'success': False, 'message': '需要管理员权限'}), 403
+        finally:
+            db.close()
+        return f(*args, **kwargs)
+    return decorated_function
+
+def get_current_user():
+    """获取当前登录用户"""
+    if 'user_id' not in session:
+        return None
+    db = get_db_session()
+    try:
+        return db.query(User).filter_by(id=session['user_id']).first()
+    finally:
+        db.close()
+
 @app.route('/')
 def index():
     """首页"""
+    # 检查是否已登录
+    if 'user_id' not in session:
+        return redirect(url_for('login_page'))
     return render_template('index.html')
+
+@app.route('/login', methods=['GET'])
+def login_page():
+    """登录页面"""
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+    return render_template('login.html')
+
+@app.route('/api/login', methods=['POST'])
+def login():
+    """登录接口"""
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    
+    if not username or not password:
+        return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
+    
+    db = get_db_session()
+    try:
+        user = db.query(User).filter_by(username=username).first()
+        if not user or not user.check_password(password):
+            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+        
+        if user.is_active != 1:
+            return jsonify({'success': False, 'message': '账户已被禁用'}), 403
+        
+        # 登录成功，设置session
+        session['user_id'] = user.id
+        session['username'] = user.username
+        session['role'] = user.role
+        session['real_name'] = user.real_name
+        
+        return jsonify({
+            'success': True,
+            'message': '登录成功',
+            'user': user.to_dict()
+        })
+    finally:
+        db.close()
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    """登出接口"""
+    session.clear()
+    return jsonify({'success': True, 'message': '已退出登录'})
+
+@app.route('/api/current-user', methods=['GET'])
+def get_current_user_info():
+    """获取当前用户信息"""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    
+    db = get_db_session()
+    try:
+        user = db.query(User).filter_by(id=session['user_id']).first()
+        if not user:
+            session.clear()
+            return jsonify({'success': False, 'message': '用户不存在'}), 401
+        
+        return jsonify({
+            'success': True,
+            'user': user.to_dict()
+        })
+    finally:
+        db.close()
 
 
 @app.route('/api/statistics', methods=['GET'])
+@login_required
 def get_statistics():
     """
-    获取数据统计
+    获取数据统计（需要登录）
 
     查询参数：
     - start_date: 开始日期（YYYY-MM-DD）
     - end_date: 结束日期（YYYY-MM-DD）
     - position: 岗位名称（可选，为空则统计全部岗位）
+    - scope: 统计范围（personal-个人, department-部门, group-小组, all-整体），根据角色自动限制
 
     统计内容：
     - resume_count: 简历数（按简历上传时间统计）
     - interview_count: 到面数（按一面时间统计，有一面时间视为到面）
-    - pass_count: 通过数（按状态为“面试通过/已发offer/已入职”等统计）
+    - pass_count: 通过数（按状态为"面试通过/已发offer/已入职"等统计）
     - offer_count: offer数（按offer发放时间统计）
     - onboard_count: 入职数（按入职时间统计）
     """
-    session = get_db_session()
+    # 获取当前用户
+    current_user = get_current_user()
+    if not current_user:
+        return jsonify({'success': False, 'message': '请先登录'}), 401
+    
+    db_session = get_db_session()
     try:
         start_date_str = request.args.get('start_date', '').strip()
         end_date_str = request.args.get('end_date', '').strip()
         position = request.args.get('position', '').strip()
+        scope = request.args.get('scope', '').strip()  # 统计范围
+        
+        # 根据角色确定可用的统计范围
+        available_scopes = []
+        if current_user.role == 'admin':
+            # 管理员：可选个人/小组/整体
+            available_scopes = ['personal', 'group', 'all']
+            if not scope or scope not in available_scopes:
+                scope = 'all'  # 默认整体
+        elif current_user.role == 'manager':
+            # 主管：可选个人/部门
+            available_scopes = ['personal', 'department']
+            if not scope or scope not in available_scopes:
+                scope = 'department'  # 默认部门
+        else:  # employee
+            # 员工：只看个人
+            available_scopes = ['personal']
+            scope = 'personal'
 
         # 解析日期
         start_dt = None
@@ -291,7 +422,7 @@ def get_statistics():
                 return jsonify({'success': False, 'message': '结束日期格式错误，应为YYYY-MM-DD'}), 400
 
         # 1) 简历数（按上传时间）
-        resume_query = session.query(Resume)
+        resume_query = db_session.query(Resume)
         if start_dt is not None:
             resume_query = resume_query.filter(Resume.upload_time >= start_dt)
         if end_dt is not None:
@@ -301,7 +432,7 @@ def get_statistics():
         resume_count = resume_query.count()
 
         # 2) 到面数（有一面时间视为到面，round1_time 非空）
-        interview_query = session.query(Interview)
+        interview_query = db_session.query(Interview)
         if position:
             interview_query = interview_query.filter(Interview.applied_position == position)
 
@@ -317,9 +448,9 @@ def get_statistics():
             )
         interview_count = interview_query.count()
 
-        # 3) 通过数（状态为“面试通过/已发offer/已入职”）
+        # 3) 通过数（状态为"面试通过/已发offer/已入职"）
         pass_statuses = ['面试通过', '已发offer', '已入职']
-        pass_query = session.query(Interview).filter(Interview.status.in_(pass_statuses))
+        pass_query = db_session.query(Interview).filter(Interview.status.in_(pass_statuses))
         if position:
             pass_query = pass_query.filter(Interview.applied_position == position)
         # 通过数暂不按时间字段细分，统一按 create_time 范围过滤
@@ -330,7 +461,7 @@ def get_statistics():
         pass_count = pass_query.count()
 
         # 4) Offer 数（按 offer_date 字符串日期）
-        offer_query = session.query(Interview).filter(
+        offer_query = db_session.query(Interview).filter(
             Interview.offer_issued == 1,
             Interview.offer_date.isnot(None),
             Interview.offer_date != ''
@@ -344,7 +475,7 @@ def get_statistics():
         offer_count = offer_query.count()
 
         # 5) 入职数（按 onboard_date 字符串日期）
-        onboard_query = session.query(Interview).filter(
+        onboard_query = db_session.query(Interview).filter(
             Interview.onboard == 1,
             Interview.onboard_date.isnot(None),
             Interview.onboard_date != ''
@@ -371,6 +502,28 @@ def get_statistics():
                 }
             })
         
+        # 返回统计范围信息
+        result_data = {
+            'scope': scope,
+            'available_scopes': available_scopes,
+            'user_role': current_user.role
+        }
+        
+        # 如果指定了岗位，返回单个岗位的数据
+        if position:
+            result_data.update({
+                'position': position,
+                'resume_count': resume_count,
+                'interview_count': interview_count,
+                'pass_count': pass_count,
+                'offer_count': offer_count,
+                'onboard_count': onboard_count,
+            })
+            return jsonify({
+                'success': True,
+                'data': result_data
+            })
+        
         # 如果没有指定岗位，按岗位分组返回数据
         from sqlalchemy import func
         stats_by_position = []
@@ -378,7 +531,7 @@ def get_statistics():
         # 获取所有有数据的岗位（从简历和面试记录中）
         all_positions = set()
         # 从简历中获取岗位
-        resume_positions = session.query(Resume.applied_position).filter(
+        resume_positions = db_session.query(Resume.applied_position).filter(
             Resume.applied_position.isnot(None),
             Resume.applied_position != ''
         )
@@ -391,7 +544,7 @@ def get_statistics():
                 all_positions.add(pos[0])
         
         # 从面试记录中获取岗位
-        interview_positions = session.query(Interview.applied_position).filter(
+        interview_positions = db_session.query(Interview.applied_position).filter(
             Interview.applied_position.isnot(None),
             Interview.applied_position != ''
         )
@@ -411,7 +564,7 @@ def get_statistics():
         # 为每个岗位计算统计数据
         for pos_name in sorted(all_positions):
             # 简历数
-            pos_resume_query = session.query(Resume).filter(Resume.applied_position == pos_name)
+            pos_resume_query = db_session.query(Resume).filter(Resume.applied_position == pos_name)
             if start_dt is not None:
                 pos_resume_query = pos_resume_query.filter(Resume.upload_time >= start_dt)
             if end_dt is not None:
@@ -419,7 +572,7 @@ def get_statistics():
             pos_resume_count = pos_resume_query.count()
             
             # 到面数
-            pos_interview_query = session.query(Interview).filter(Interview.applied_position == pos_name)
+            pos_interview_query = db_session.query(Interview).filter(Interview.applied_position == pos_name)
             if start_date_str:
                 pos_interview_query = pos_interview_query.filter(
                     Interview.round1_time.isnot(None),
@@ -430,7 +583,7 @@ def get_statistics():
             pos_interview_count = pos_interview_query.count()
             
             # 通过数
-            pos_pass_query = session.query(Interview).filter(
+            pos_pass_query = db_session.query(Interview).filter(
                 Interview.applied_position == pos_name,
                 Interview.status.in_(pass_statuses)
             )
@@ -441,7 +594,7 @@ def get_statistics():
             pos_pass_count = pos_pass_query.count()
             
             # Offer数
-            pos_offer_query = session.query(Interview).filter(
+            pos_offer_query = db_session.query(Interview).filter(
                 Interview.applied_position == pos_name,
                 Interview.offer_issued == 1,
                 Interview.offer_date.isnot(None),
@@ -454,7 +607,7 @@ def get_statistics():
             pos_offer_count = pos_offer_query.count()
             
             # 入职数
-            pos_onboard_query = session.query(Interview).filter(
+            pos_onboard_query = db_session.query(Interview).filter(
                 Interview.applied_position == pos_name,
                 Interview.onboard == 1,
                 Interview.onboard_date.isnot(None),
@@ -490,11 +643,202 @@ def get_statistics():
             }
         })
     finally:
-        session.close()
+        db_session.close()
+
+# 账号管理API
+@app.route('/api/users', methods=['GET'])
+@login_required
+def list_users():
+    """获取用户列表（需要登录）"""
+    current_user = get_current_user()
+    if not current_user:
+        return jsonify({'success': False, 'message': '请先登录'}), 401
+    
+    db = get_db_session()
+    try:
+        # 管理员可以看到所有用户，主管和员工只能看到自己
+        if current_user.role == 'admin':
+            users = db.query(User).all()
+        else:
+            users = [current_user]
+        
+        return jsonify({
+            'success': True,
+            'data': [user.to_dict() for user in users]
+        })
+    finally:
+        db.close()
+
+@app.route('/api/users', methods=['POST'])
+@admin_required
+def create_user():
+    """创建用户（仅管理员）"""
+    data = request.json or {}
+    username = data.get('username', '').strip()
+    password = data.get('password', '').strip()
+    role = data.get('role', 'employee').strip()
+    real_name = data.get('real_name', '').strip()
+    department = data.get('department', '').strip()
+    group_name = data.get('group_name', '').strip()
+    is_active = data.get('is_active', 1)  # 默认为激活状态
+    
+    if not username or not password:
+        return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
+    
+    if len(password) < 6:
+        return jsonify({'success': False, 'message': '密码长度至少6位'}), 400
+    
+    if role not in ['admin', 'manager', 'employee']:
+        return jsonify({'success': False, 'message': '角色无效'}), 400
+    
+    db = get_db_session()
+    try:
+        # 检查用户名是否已存在
+        existing_user = db.query(User).filter_by(username=username).first()
+        if existing_user:
+            return jsonify({'success': False, 'message': '用户名已存在'}), 400
+        
+        # 创建新用户
+        user = User(
+            username=username,
+            role=role,
+            real_name=real_name,
+            department=department,
+            group_name=group_name,
+            is_active=1 if is_active else 0
+        )
+        user.set_password(password)
+        db.add(user)
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': '用户创建成功',
+            'user': user.to_dict()
+        })
+    finally:
+        db.close()
+
+@app.route('/api/users/<int:user_id>', methods=['PUT'])
+@login_required
+def update_user(user_id):
+    """更新用户信息"""
+    current_user = get_current_user()
+    if not current_user:
+        return jsonify({'success': False, 'message': '请先登录'}), 401
+    
+    # 非管理员只能修改自己的信息
+    if current_user.role != 'admin' and current_user.id != user_id:
+        return jsonify({'success': False, 'message': '无权修改其他用户信息'}), 403
+    
+    data = request.json or {}
+    db = get_db_session()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if not user:
+            return jsonify({'success': False, 'message': '用户不存在'}), 404
+        
+        # 更新字段
+        if 'real_name' in data:
+            user.real_name = data['real_name']
+        if 'department' in data:
+            user.department = data['department']
+        if 'group_name' in data:
+            user.group_name = data['group_name']
+        
+        # 只有管理员可以修改角色和激活状态
+        if current_user.role == 'admin':
+            if 'role' in data and data['role'] in ['admin', 'manager', 'employee']:
+                user.role = data['role']
+            if 'is_active' in data:
+                user.is_active = 1 if data['is_active'] else 0
+        
+        # 修改密码
+        # 管理员可以修改任意用户密码，普通用户只能修改自己的密码
+        if 'password' in data and data['password']:
+            if current_user.role == 'admin' or current_user.id == user_id:
+                if len(data['password']) < 6:
+                    return jsonify({'success': False, 'message': '密码长度至少6位'}), 400
+                user.set_password(data['password'])
+            else:
+                return jsonify({'success': False, 'message': '无权修改其他用户的密码'}), 403
+        
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': '更新成功',
+            'user': user.to_dict()
+        })
+    finally:
+        db.close()
+
+@app.route('/api/users/<int:user_id>', methods=['DELETE'])
+@admin_required
+def delete_user(user_id):
+    """删除用户（仅管理员）"""
+    current_user = get_current_user()
+    if not current_user:
+        return jsonify({'success': False, 'message': '请先登录'}), 401
+    
+    # 不能删除自己
+    if current_user.id == user_id:
+        return jsonify({'success': False, 'message': '不能删除自己的账户'}), 400
+    
+    db = get_db_session()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if not user:
+            return jsonify({'success': False, 'message': '用户不存在'}), 404
+        
+        db.delete(user)
+        db.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': '用户删除成功'
+        })
+    finally:
+        db.close()
+
+@app.route('/api/users/departments', methods=['GET'])
+@login_required
+def get_departments():
+    """获取所有部门列表（用于下拉选择）"""
+    db = get_db_session()
+    try:
+        departments = db.query(User.department).filter(
+            User.department.isnot(None),
+            User.department != ''
+        ).distinct().all()
+        return jsonify({
+            'success': True,
+            'data': [dept[0] for dept in departments if dept[0]]
+        })
+    finally:
+        db.close()
+
+@app.route('/api/users/groups', methods=['GET'])
+@login_required
+def get_groups():
+    """获取所有小组列表（用于下拉选择）"""
+    db = get_db_session()
+    try:
+        groups = db.query(User.group_name).filter(
+            User.group_name.isnot(None),
+            User.group_name != ''
+        ).distinct().all()
+        return jsonify({
+            'success': True,
+            'data': [group[0] for group in groups if group[0]]
+        })
+    finally:
+        db.close()
 
 @app.route('/api/upload', methods=['POST'])
+@login_required
 def upload_file():
-    """文件上传接口（支持多文件上传）"""
+    """文件上传接口（支持多文件上传，需要登录）"""
     if 'file' not in request.files:
         return jsonify({'success': False, 'message': '没有文件'}), 400
     
@@ -547,10 +891,15 @@ def upload_file():
             
             # 创建数据库记录
             db = get_db_session()
+            current_user = get_current_user()
+            username = current_user.username if current_user else 'system'
+            
             resume = Resume(
                 file_name=file.filename,
                 file_path=file_path,
-                parse_status='pending'
+                parse_status='pending',
+                created_by=username,
+                updated_by=username
             )
             db.add(resume)
             db.commit()
@@ -774,8 +1123,9 @@ def _remove_file_if_exists(path: str) -> None:
 
 
 @app.route('/api/resumes/<int:resume_id>', methods=['DELETE'])
+@admin_required
 def delete_resume(resume_id):
-    """删除单个简历"""
+    """删除单个简历（仅管理员）"""
     db = get_db_session()
     resume = db.query(Resume).filter_by(id=resume_id).first()
     if not resume:
@@ -801,8 +1151,9 @@ def delete_resume(resume_id):
 
 
 @app.route('/api/resumes/batch_delete', methods=['POST'])
+@admin_required
 def delete_resumes_batch():
-    """批量删除简历"""
+    """批量删除简历（仅管理员）"""
     data = request.json or {}
     resume_ids = data.get('resume_ids', [])
     if not resume_ids:
@@ -1126,13 +1477,18 @@ def create_interview():
                     final_match_score = resume.match_score
                     final_match_level = resume.match_level
             
+            current_user = get_current_user()
+            username = current_user.username if current_user else 'system'
+            
             interview = Interview(
                 resume_id=resume.id,
                 name=resume.name or '',
                 applied_position=resume.applied_position or '',
                 identity_code=identity_code,
                 match_score=final_match_score,
-                match_level=final_match_level
+                match_level=final_match_level,
+                created_by=username,
+                updated_by=username
             )
             session.add(interview)
             session.commit()
@@ -1261,6 +1617,11 @@ def update_interview(interview_id):
         interview = session.query(Interview).filter(Interview.id == interview_id).first()
         if not interview:
             return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+
+        # 记录更新者
+        current_user = get_current_user()
+        username = current_user.username if current_user else 'system'
+        interview.updated_by = username
 
         # 更新各轮信息
         interview.round1_interviewer = data.get('round1_interviewer')
@@ -1599,8 +1960,9 @@ def upload_interview_doc(interview_id):
 
 
 @app.route('/api/interviews/batch_delete', methods=['POST'])
+@admin_required
 def delete_interviews_batch():
-    """批量删除面试流程"""
+    """批量删除面试流程（仅管理员）"""
     try:
         data = request.json or {}
         interview_ids = data.get('interview_ids', [])
@@ -2509,11 +2871,16 @@ def create_position():
             }), 400
         
         session = get_db_session()
+        current_user = get_current_user()
+        username = current_user.username if current_user else 'system'
+        
         position = Position(
             position_name=position_name,
             work_content=data.get('work_content', '').strip() or None,
             job_requirements=data.get('job_requirements', '').strip() or None,
-            core_requirements=data.get('core_requirements', '').strip() or None
+            core_requirements=data.get('core_requirements', '').strip() or None,
+            created_by=username,
+            updated_by=username
         )
         session.add(position)
         session.commit()
@@ -2578,11 +2945,15 @@ def update_position(position_id):
                 'message': '岗位不存在'
             }), 404
         
+        current_user = get_current_user()
+        username = current_user.username if current_user else 'system'
+        
         position.position_name = position_name
         position.work_content = data.get('work_content', '').strip() or None
         position.job_requirements = data.get('job_requirements', '').strip() or None
         position.core_requirements = data.get('core_requirements', '').strip() or None
         position.update_time = datetime.now()
+        position.updated_by = username
         
         session.commit()
         session.close()
@@ -2599,8 +2970,9 @@ def update_position(position_id):
         }), 500
 
 @app.route('/api/positions/<int:position_id>', methods=['DELETE'])
+@admin_required
 def delete_position(position_id):
-    """删除岗位"""
+    """删除岗位（仅管理员）"""
     try:
         session = get_db_session()
         position = session.query(Position).filter(Position.id == position_id).first()
@@ -2625,6 +2997,62 @@ def delete_position(position_id):
             'success': False,
             'message': f'删除岗位失败: {str(e)}'
         }), 500
+
+@app.route('/api/sync/check', methods=['GET'])
+@login_required
+def check_sync():
+    """检查数据更新（用于实时同步）"""
+    try:
+        last_sync_time = request.args.get('last_sync', '')
+        current_user = get_current_user()
+        if not current_user:
+            return jsonify({'success': False, 'message': '未登录'}), 401
+        
+        db = get_db_session()
+        try:
+            updates = {
+                'resumes': False,
+                'interviews': False,
+                'positions': False
+            }
+            
+            if last_sync_time:
+                try:
+                    last_sync = datetime.fromisoformat(last_sync_time.replace('Z', '+00:00'))
+                except:
+                    last_sync = None
+                
+                if last_sync:
+                    # 检查简历更新
+                    resume_count = db.query(Resume).filter(
+                        Resume.updated_at > last_sync
+                    ).count()
+                    if resume_count > 0:
+                        updates['resumes'] = True
+                    
+                    # 检查面试流程更新
+                    interview_count = db.query(Interview).filter(
+                        Interview.updated_at > last_sync
+                    ).count()
+                    if interview_count > 0:
+                        updates['interviews'] = True
+                    
+                    # 检查岗位更新
+                    position_count = db.query(Position).filter(
+                        Position.updated_at > last_sync
+                    ).count()
+                    if position_count > 0:
+                        updates['positions'] = True
+            
+            return jsonify({
+                'success': True,
+                'updates': updates,
+                'current_time': datetime.now().isoformat()
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/resumes/<int:resume_id>/match-analysis', methods=['POST'])
 def analyze_resume_match(resume_id):
@@ -2824,9 +3252,12 @@ def analyze_resume_match(resume_id):
                 session_save = get_db_session()
                 resume_save = session_save.query(Resume).filter(Resume.id == resume_id).first()
                 if resume_save:
+                    current_user = get_current_user()
+                    username = current_user.username if current_user else 'system'
                     resume_save.match_score = analysis_result.get('match_score')
                     resume_save.match_level = analysis_result.get('match_level')
                     resume_save.match_position = applied_position
+                    resume_save.updated_by = username
                     session_save.commit()
                 session_save.close()
             except Exception as save_err:
@@ -2836,6 +3267,8 @@ def analyze_resume_match(resume_id):
             # 同步匹配结果到面试流程（如有对应的面试记录）
             try:
                 session_sync = get_db_session()
+                current_user = get_current_user()
+                username = current_user.username if current_user else 'system'
                 interviews = session_sync.query(Interview).filter(Interview.resume_id == resume_id).all()
                 if interviews:
                     for it in interviews:
@@ -2843,11 +3276,18 @@ def analyze_resume_match(resume_id):
                         if it.applied_position == applied_position:
                             it.match_score = analysis_result.get('match_score')
                             it.match_level = analysis_result.get('match_level')
+                            it.analyzed_by = username  # 记录分析者
+                            it.updated_by = username
                     session_sync.commit()
                 session_sync.close()
             except Exception as sync_err:
                 # 不影响主流程，仅打印日志
                 print(f"同步匹配结果到面试流程失败: {sync_err}")
+            
+            # 添加分析者信息
+            current_user = get_current_user()
+            username = current_user.username if current_user else 'system'
+            analysis_result['analyzed_by'] = username
             
             return jsonify({
                 'success': True,

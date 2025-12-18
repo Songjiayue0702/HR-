@@ -10,6 +10,62 @@ let aiConfigStatus = null; // AI配置状态缓存
 let interviewedResumeIds = new Set(); // 已邀约面试的简历ID集合
 let selectedInterviews = new Set();   // 面试流程列表中选中的行ID
 let educationLevels = [];
+let currentUser = null; // 当前登录用户信息
+let lastSyncTime = null; // 最后同步时间
+let syncInterval = null; // 同步定时器
+
+// 实时同步检查
+function checkSync() {
+    if (!lastSyncTime) {
+        lastSyncTime = new Date().toISOString();
+        return;
+    }
+    
+    fetch(`/api/sync/check?last_sync=${encodeURIComponent(lastSyncTime)}`)
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const updates = result.updates;
+                const currentModule = document.querySelector('.module.active');
+                
+                // 如果有更新，刷新对应的列表
+                if (updates.resumes && currentModule && currentModule.id === 'module-upload') {
+                    loadResumes(currentPage);
+                }
+                if (updates.interviews && currentModule && currentModule.id === 'module-interview') {
+                    loadInterviews();
+                }
+                if (updates.positions && currentModule && currentModule.id === 'module-positions') {
+                    loadPositions();
+                }
+                
+                // 更新同步时间
+                if (result.current_time) {
+                    lastSyncTime = result.current_time;
+                }
+            }
+        })
+        .catch(error => {
+            console.error('同步检查失败:', error);
+        });
+}
+
+// 启动实时同步
+function startSync() {
+    // 每5秒检查一次更新
+    if (syncInterval) {
+        clearInterval(syncInterval);
+    }
+    syncInterval = setInterval(checkSync, 5000);
+}
+
+// 停止实时同步
+function stopSync() {
+    if (syncInterval) {
+        clearInterval(syncInterval);
+        syncInterval = null;
+    }
+}
 
 function escapeHtml(value) {
     if (value === null || value === undefined) {
@@ -26,38 +82,749 @@ function escapeHtml(value) {
 // 全局变量
 let currentAnalysisResumeId = null;
 
-// 初始化
-document.addEventListener('DOMContentLoaded', function() {
-    initUpload();
-    
-    // 检查URL参数，切换到指定模块
-    const urlParams = new URLSearchParams(window.location.search);
-    const module = urlParams.get('module');
-    if (module) {
-        switchModule(module);
-    } else {
-        // 默认显示上传模块
-        switchModule('upload');
-    }
-    
-    // 初始化时检查AI状态
-    checkAIStatus().then(() => {
-        updateAIStatusDisplay();
-    });
-
-    // 加载已邀约面试的简历ID
-    fetch('/api/interviews/resume-ids')
-        .then(response => response.json())
+// 加载当前用户信息
+function loadCurrentUser() {
+    return fetch('/api/current-user')
+        .then(response => {
+            if (response.status === 401) {
+                // 未登录，跳转到登录页
+                window.location.href = '/login';
+                return Promise.reject('未登录');
+            }
+            return response.json();
+        })
         .then(result => {
-            if (result.success && Array.isArray(result.data)) {
-                interviewedResumeIds = new Set(result.data);
+            if (result.success && result.user) {
+                currentUser = result.user;
+                updateUIForPermissions();
+                updateUserInfoDisplay();
+                
+                // 如果当前在账号设置页面，重新检查权限
+                const accountSettingsModule = document.getElementById('module-account-settings');
+                if (accountSettingsModule && accountSettingsModule.classList.contains('active')) {
+                    setTimeout(() => {
+                        updateAccountSettingsPermissions();
+                        if (currentUser.role === 'admin') {
+                            loadAccountManagement();
+                        }
+                    }, 100);
+                }
+                return Promise.resolve();
+            } else {
+                // 未登录，跳转到登录页
+                window.location.href = '/login';
+                return Promise.reject('未登录');
             }
         })
-        .catch(err => {
-            console.error('加载已邀约面试简历列表失败:', err);
+        .catch(error => {
+            if (error !== '未登录') {
+                console.error('加载用户信息失败:', error);
+            }
+            // 如果已经跳转到登录页，不需要再次跳转
+            if (window.location.pathname !== '/login') {
+                window.location.href = '/login';
+            }
+            return Promise.reject(error);
+        });
+}
+
+// 更新用户信息显示
+function updateUserInfoDisplay() {
+    const userInfoEl = document.getElementById('currentUserInfo');
+    if (userInfoEl && currentUser) {
+        const roleMap = { 'admin': '管理员', 'manager': '主管', 'employee': '员工' };
+        userInfoEl.textContent = `${currentUser.real_name || currentUser.username} (${roleMap[currentUser.role] || currentUser.role})`;
+    }
+}
+
+// 退出登录
+function logout() {
+    if (!confirm('确定要退出登录吗？')) {
+        return;
+    }
+    fetch('/api/logout', { method: 'POST' })
+        .then(() => {
+            window.location.href = '/login';
+        })
+        .catch(error => {
+            console.error('退出登录失败:', error);
+            window.location.href = '/login';
+        });
+}
+
+// 根据权限更新UI
+function updateUIForPermissions() {
+    if (!currentUser) return;
+    
+    const isAdmin = currentUser.role === 'admin';
+    const isManager = currentUser.role === 'manager';
+    
+    // 隐藏非管理员的删除按钮
+    const deleteSelectedBtn = document.getElementById('deleteSelectedBtn');
+    if (deleteSelectedBtn) {
+        deleteSelectedBtn.style.display = isAdmin ? 'inline-block' : 'none';
+    }
+    
+    const deleteButtons = document.querySelectorAll('.btn-danger, button[onclick*="delete"], button[onclick*="Delete"]');
+    deleteButtons.forEach(btn => {
+        const onclick = btn.getAttribute('onclick') || '';
+        if (onclick.includes('delete') || onclick.includes('Delete')) {
+            if (!isAdmin) {
+                btn.style.display = 'none';
+            } else {
+                btn.style.display = '';
+            }
+        }
+    });
+    
+    // 更新数据统计范围选择
+    updateStatsScopeOptions();
+    
+    // 更新账号设置显示（如果账号设置模块已加载）
+    // 只在账号设置模块可见时才检查权限
+    const accountSettingsModule = document.getElementById('module-account-settings');
+    if (accountSettingsModule && accountSettingsModule.classList.contains('active')) {
+        updateAccountSettingsPermissions();
+    }
+}
+
+// 更新账号设置模块的权限显示
+function updateAccountSettingsPermissions() {
+    if (!currentUser) {
+        console.warn('updateAccountSettingsPermissions: currentUser is null');
+        return;
+    }
+    
+    const isAdmin = currentUser.role === 'admin';
+    console.log('updateAccountSettingsPermissions: 用户角色 =', currentUser.role, ', 是否为管理员 =', isAdmin);
+    
+    const adminAccountManagement = document.getElementById('adminAccountManagement');
+    const userPasswordChange = document.getElementById('userPasswordChange');
+    
+    console.log('adminAccountManagement 元素:', adminAccountManagement);
+    console.log('userPasswordChange 元素:', userPasswordChange);
+    
+    if (adminAccountManagement) {
+        if (isAdmin) {
+            adminAccountManagement.style.display = 'block';
+            console.log('显示管理员账号管理界面');
+        } else {
+            adminAccountManagement.style.display = 'none';
+            console.log('隐藏管理员账号管理界面');
+        }
+    } else {
+        console.warn('未找到 adminAccountManagement 元素');
+    }
+    
+    if (userPasswordChange) {
+        userPasswordChange.style.display = 'block'; // 所有用户都可以修改密码
+    } else {
+        console.warn('未找到 userPasswordChange 元素');
+    }
+}
+
+// 切换子菜单
+function toggleSubMenu(menuId, event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+    
+    const menu = document.getElementById(menuId);
+    const arrowId = menuId.replace('-menu', '-arrow');
+    const arrow = document.getElementById(arrowId);
+    const parent = menu ? menu.closest('.nav-item-parent') : null;
+    
+    if (menu && parent) {
+        const isHidden = menu.style.display === 'none' || !menu.style.display;
+        if (isHidden) {
+            menu.style.display = 'block';
+            parent.classList.add('expanded');
+        } else {
+            menu.style.display = 'none';
+            parent.classList.remove('expanded');
+        }
+    }
+    
+    return false;
+}
+
+// 更新数据统计范围选择
+function updateStatsScopeOptions() {
+    if (!currentUser) return;
+    
+    const scopeLabel = document.getElementById('statsScopeLabel');
+    const scopeSelect = document.getElementById('statsScope');
+    
+    if (!scopeLabel || !scopeSelect) return;
+    
+    if (currentUser.role === 'admin') {
+        // 管理员：显示个人/小组/整体
+        scopeLabel.style.display = 'inline';
+        scopeSelect.style.display = 'inline';
+        scopeSelect.innerHTML = '<option value="personal">个人</option><option value="group">小组</option><option value="all" selected>整体</option>';
+    } else if (currentUser.role === 'manager') {
+        // 主管：显示个人/部门
+        scopeLabel.style.display = 'inline';
+        scopeSelect.style.display = 'inline';
+        scopeSelect.innerHTML = '<option value="personal">个人</option><option value="department" selected>部门</option>';
+    } else {
+        // 员工：隐藏范围选择
+        scopeLabel.style.display = 'none';
+        scopeSelect.style.display = 'none';
+    }
+}
+
+// 加载账号管理
+function loadAccountManagement() {
+    if (currentUser && currentUser.role !== 'admin') return;
+    
+    fetch('/api/users')
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                displayAccountManagement(result.data || []);
+            }
+        })
+        .catch(error => {
+            console.error('加载账号列表失败:', error);
+        });
+}
+
+// 显示账号管理界面
+function displayAccountManagement(users) {
+    const content = document.getElementById('accountManagementContent');
+    if (!content) return;
+    
+    const roleMap = { 'admin': '管理员', 'manager': '主管', 'employee': '员工' };
+    
+    let html = `
+        <div class="table-container">
+            <table class="resume-table" style="width: 100%;">
+                <thead>
+                    <tr>
+                        <th>用户名</th>
+                        <th>真实姓名</th>
+                        <th>角色</th>
+                        <th>部门</th>
+                        <th>小组</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    users.forEach(user => {
+        const isCurrentUser = user.id === currentUser.id;
+        html += `
+            <tr>
+                <td>${escapeHtml(user.username)}</td>
+                <td>${escapeHtml(user.real_name || '-')}</td>
+                <td>
+                    ${isCurrentUser ? roleMap[user.role] || user.role : `
+                        <select class="form-select" style="width: 100px; padding: 4px;" onchange="changeUserRole(${user.id}, this.value)">
+                            <option value="employee" ${user.role === 'employee' ? 'selected' : ''}>员工</option>
+                            <option value="manager" ${user.role === 'manager' ? 'selected' : ''}>主管</option>
+                            <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>管理员</option>
+                        </select>
+                    `}
+                </td>
+                <td>${escapeHtml(user.department || '-')}</td>
+                <td>${escapeHtml(user.group_name || '-')}</td>
+                <td>
+                    ${isCurrentUser ? (user.is_active ? '<span style="color: #28a745; font-weight: 500;">激活</span>' : '<span style="color: #dc3545; font-weight: 500;">禁用</span>') : `
+                        <button class="btn btn-sm ${user.is_active ? 'btn-warning' : 'btn-success'}" 
+                                onclick="toggleUserStatus(${user.id}, ${user.is_active ? 0 : 1})">
+                            ${user.is_active ? '禁用' : '启用'}
+                        </button>
+                    `}
+                </td>
+                <td>
+                    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                        <button class="btn btn-sm btn-primary" onclick="showEditUserModal(${user.id})">编辑</button>
+                        <button class="btn btn-sm btn-secondary" onclick="showChangePasswordModal(${user.id}, '${escapeHtml(user.username)}')">修改密码</button>
+                        ${!isCurrentUser ? `<button class="btn btn-sm btn-danger" onclick="deleteUser(${user.id})">删除</button>` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    });
+    
+    html += `
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    content.innerHTML = html;
+}
+
+// 显示创建用户模态框
+function showCreateUserModal() {
+    const modal = document.getElementById('userModal');
+    if (!modal) {
+        alert('未找到账号表单');
+        return;
+    }
+    
+    // 设置为新增模式
+    document.getElementById('userModalTitle').textContent = '新增账号';
+    document.getElementById('userSubmitBtn').textContent = '创建账号';
+    document.getElementById('editUserId').value = '';
+    
+    // 重置表单
+    document.getElementById('userForm').reset();
+    document.getElementById('userIsActive').checked = true;
+    document.getElementById('userFormStatus').innerHTML = '';
+    
+    // 密码字段必填
+    document.getElementById('userPassword').required = true;
+    document.getElementById('userConfirmPassword').required = true;
+    document.getElementById('passwordHint').textContent = '';
+    document.getElementById('passwordGroup').querySelector('label').innerHTML = '密码 <span class="required">*</span>';
+    document.getElementById('confirmPasswordGroup').querySelector('label').innerHTML = '确认密码 <span class="required">*</span>';
+    
+    // 显示模态框
+    modal.style.display = 'block';
+}
+
+// 显示编辑用户模态框
+function showEditUserModal(userId) {
+    const modal = document.getElementById('userModal');
+    if (!modal) {
+        alert('未找到账号表单');
+        return;
+    }
+    
+    // 设置为编辑模式
+    document.getElementById('userModalTitle').textContent = '编辑账号';
+    document.getElementById('userSubmitBtn').textContent = '保存修改';
+    document.getElementById('editUserId').value = userId;
+    
+    // 重置表单
+    document.getElementById('userForm').reset();
+    document.getElementById('userFormStatus').innerHTML = '';
+    
+    // 密码字段可选（编辑时）
+    document.getElementById('userPassword').required = false;
+    document.getElementById('userConfirmPassword').required = false;
+    document.getElementById('passwordHint').textContent = '留空则不修改密码';
+    document.getElementById('passwordGroup').querySelector('label').innerHTML = '密码（留空不修改）';
+    document.getElementById('confirmPasswordGroup').querySelector('label').innerHTML = '确认密码（留空不修改）';
+    
+    // 加载用户信息
+    fetch('/api/users')
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                const user = result.data.find(u => u.id === userId);
+                if (!user) {
+                    alert('用户不存在');
+                    return;
+                }
+                
+                // 填充表单
+                document.getElementById('userUsername').value = user.username || '';
+                document.getElementById('userUsername').disabled = true; // 用户名不可修改
+                document.getElementById('userRealName').value = user.real_name || '';
+                document.getElementById('userRole').value = user.role || 'employee';
+                document.getElementById('userDepartment').value = user.department || '';
+                document.getElementById('userGroupName').value = user.group_name || '';
+                document.getElementById('userIsActive').checked = user.is_active === 1;
+                
+                // 显示模态框
+                modal.style.display = 'block';
+            } else {
+                alert('加载用户信息失败');
+            }
+        })
+        .catch(error => {
+            console.error('加载用户信息失败:', error);
+            alert('加载用户信息失败');
+        });
+}
+
+// 关闭用户模态框
+function closeUserModal() {
+    const modal = document.getElementById('userModal');
+    if (modal) {
+        modal.style.display = 'none';
+        // 重置表单
+        document.getElementById('userForm').reset();
+        document.getElementById('userFormStatus').innerHTML = '';
+        document.getElementById('userUsername').disabled = false; // 恢复用户名输入框
+    }
+}
+
+// 提交用户表单（新增或编辑）
+function submitUserForm(event) {
+    event.preventDefault();
+    
+    const statusDiv = document.getElementById('userFormStatus');
+    const userId = document.getElementById('editUserId').value;
+    const isEdit = !!userId;
+    
+    const username = document.getElementById('userUsername').value.trim();
+    const password = document.getElementById('userPassword').value;
+    const confirmPassword = document.getElementById('userConfirmPassword').value;
+    const realName = document.getElementById('userRealName').value.trim();
+    const role = document.getElementById('userRole').value;
+    const department = document.getElementById('userDepartment').value.trim();
+    const groupName = document.getElementById('userGroupName').value.trim();
+    const isActive = document.getElementById('userIsActive').checked;
+    
+    // 验证
+    if (!username) {
+        statusDiv.innerHTML = '<div style="color: #c33;">请输入用户名</div>';
+        return;
+    }
+    
+    // 密码验证
+    if (!isEdit) {
+        // 新增模式：密码必填
+        if (!password) {
+            statusDiv.innerHTML = '<div style="color: #c33;">请输入密码</div>';
+            return;
+        }
+        if (password.length < 6) {
+            statusDiv.innerHTML = '<div style="color: #c33;">密码长度至少6位</div>';
+            return;
+        }
+        if (password !== confirmPassword) {
+            statusDiv.innerHTML = '<div style="color: #c33;">两次输入的密码不一致</div>';
+            return;
+        }
+    } else {
+        // 编辑模式：如果填写了密码，需要验证
+        if (password) {
+            if (password.length < 6) {
+                statusDiv.innerHTML = '<div style="color: #c33;">密码长度至少6位</div>';
+                return;
+            }
+            if (password !== confirmPassword) {
+                statusDiv.innerHTML = '<div style="color: #c33;">两次输入的密码不一致</div>';
+                return;
+            }
+        }
+    }
+    
+    // 显示提交中状态
+    statusDiv.innerHTML = '<div style="color: #666;">正在' + (isEdit ? '保存' : '创建') + '账号...</div>';
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    submitBtn.textContent = isEdit ? '保存中...' : '创建中...';
+    
+    // 准备数据
+    const data = {
+        real_name: realName,
+        role: role,
+        department: department,
+        group_name: groupName,
+        is_active: isActive ? 1 : 0
+    };
+    
+    // 如果填写了密码，添加到数据中
+    if (password) {
+        data.password = password;
+    }
+    
+    // 提交数据
+    const url = isEdit ? `/api/users/${userId}` : '/api/users';
+    const method = isEdit ? 'PUT' : 'POST';
+    
+    // 新增时需要用户名和密码
+    if (!isEdit) {
+        data.username = username;
+        data.password = password;
+    }
+    
+    fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            statusDiv.innerHTML = '<div style="color: #3c3;">' + (isEdit ? '保存成功！' : '账号创建成功！') + '</div>';
+            // 延迟关闭模态框并刷新列表
+            setTimeout(() => {
+                closeUserModal();
+                loadAccountManagement();
+            }, 1000);
+        } else {
+            statusDiv.innerHTML = '<div style="color: #c33;">' + (isEdit ? '保存失败' : '创建失败') + ': ' + (result.message || '未知错误') + '</div>';
+            submitBtn.disabled = false;
+            submitBtn.textContent = isEdit ? '保存修改' : '创建账号';
+        }
+    })
+    .catch(error => {
+        console.error((isEdit ? '保存' : '创建') + '用户失败:', error);
+        statusDiv.innerHTML = '<div style="color: #c33;">' + (isEdit ? '保存失败' : '创建失败') + '，请重试</div>';
+        submitBtn.disabled = false;
+        submitBtn.textContent = isEdit ? '保存修改' : '创建账号';
+    });
+}
+
+
+// 修改用户角色
+function changeUserRole(userId, newRole) {
+    if (!confirm(`确定要将该用户的角色修改为"${newRole === 'admin' ? '管理员' : newRole === 'manager' ? '主管' : '员工'}"吗？`)) {
+        loadAccountManagement(); // 重新加载以恢复原值
+        return;
+    }
+    
+    fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: newRole })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('角色修改成功');
+            loadAccountManagement();
+        } else {
+            alert('修改失败: ' + (result.message || '未知错误'));
+            loadAccountManagement(); // 重新加载以恢复原值
+        }
+    })
+    .catch(error => {
+        console.error('修改角色失败:', error);
+        alert('修改失败，请重试');
+        loadAccountManagement(); // 重新加载以恢复原值
+    });
+}
+
+// 切换用户状态（启用/禁用）
+function toggleUserStatus(userId, newStatus) {
+    const action = newStatus === 1 ? '启用' : '禁用';
+    if (!confirm(`确定要${action}该账号吗？`)) {
+        return;
+    }
+    
+    fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: newStatus })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert(`${action}成功`);
+            loadAccountManagement();
+        } else {
+            alert(`${action}失败: ` + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error(`${action}用户失败:`, error);
+        alert(`${action}失败，请重试`);
+    });
+}
+
+// 显示修改密码模态框
+function showChangePasswordModal(userId, username) {
+    const newPassword = prompt(`请输入用户"${username}"的新密码:`);
+    if (!newPassword) {
+        return;
+    }
+    
+    const confirmPassword = prompt('请再次输入新密码:');
+    if (newPassword !== confirmPassword) {
+        alert('两次输入的密码不一致');
+        return;
+    }
+    
+    fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: newPassword })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('密码修改成功');
+        } else {
+            alert('修改失败: ' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('修改密码失败:', error);
+        alert('修改失败，请重试');
+    });
+}
+
+// 修改自己的密码
+function changeMyPassword() {
+    if (!currentUser) {
+        alert('请先登录');
+        return;
+    }
+    
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmPassword').value;
+    const statusDiv = document.getElementById('passwordChangeStatus');
+    
+    if (!currentPassword || !newPassword || !confirmPassword) {
+        statusDiv.innerHTML = '<div style="color: #c33;">请填写所有字段</div>';
+        return;
+    }
+    
+    if (newPassword !== confirmPassword) {
+        statusDiv.innerHTML = '<div style="color: #c33;">两次输入的新密码不一致</div>';
+        return;
+    }
+    
+    if (newPassword.length < 6) {
+        statusDiv.innerHTML = '<div style="color: #c33;">新密码长度至少6位</div>';
+        return;
+    }
+    
+    // 先验证当前密码
+    fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            username: currentUser.username,
+            password: currentPassword
+        })
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (!result.success) {
+            statusDiv.innerHTML = '<div style="color: #c33;">当前密码错误</div>';
+            return;
+        }
+        
+        // 当前密码正确，修改密码
+        return fetch(`/api/users/${currentUser.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: newPassword })
+        });
+    })
+    .then(response => {
+        if (!response) return;
+        return response.json();
+    })
+    .then(result => {
+        if (result && result.success) {
+            statusDiv.innerHTML = '<div style="color: #3c3;">密码修改成功！</div>';
+            document.getElementById('currentPassword').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmPassword').value = '';
+        } else if (result) {
+            statusDiv.innerHTML = '<div style="color: #c33;">修改失败: ' + (result.message || '未知错误') + '</div>';
+        }
+    })
+    .catch(error => {
+        console.error('修改密码失败:', error);
+        statusDiv.innerHTML = '<div style="color: #c33;">修改失败，请重试</div>';
+    });
+}
+
+// 编辑用户
+function editUser(userId) {
+    const newPassword = prompt('请输入新密码（留空则不修改）:');
+    const realName = prompt('请输入真实姓名（留空则不修改）:');
+    const department = prompt('请输入部门（留空则不修改）:');
+    const groupName = prompt('请输入小组名称（留空则不修改）:');
+    
+    const data = {};
+    if (newPassword) data.password = newPassword;
+    if (realName !== null) data.real_name = realName;
+    if (department !== null) data.department = department;
+    if (groupName !== null) data.group_name = groupName;
+    
+    fetch(`/api/users/${userId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('更新成功');
+            loadAccountManagement();
+        } else {
+            alert('更新失败: ' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('更新用户失败:', error);
+        alert('更新失败，请重试');
+    });
+}
+
+// 删除用户
+function deleteUser(userId) {
+    if (!confirm('确定要删除这个用户吗？')) {
+        return;
+    }
+    
+    fetch(`/api/users/${userId}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            alert('删除成功');
+            loadAccountManagement();
+        } else {
+            alert('删除失败: ' + (result.message || '未知错误'));
+        }
+    })
+    .catch(error => {
+        console.error('删除用户失败:', error);
+        alert('删除失败，请重试');
+    });
+}
+
+// 初始化
+document.addEventListener('DOMContentLoaded', function() {
+    // 初始化同步时间
+    lastSyncTime = new Date().toISOString();
+    // 启动实时同步
+    startSync();
+    
+    // 先加载用户信息，然后再初始化其他功能
+    loadCurrentUser().then(() => {
+        initUpload();
+        
+        // 检查URL参数，切换到指定模块
+        const urlParams = new URLSearchParams(window.location.search);
+        const module = urlParams.get('module');
+        if (module) {
+            switchModule(module);
+        } else {
+            // 默认显示上传模块
+            switchModule('upload');
+        }
+        
+        // 初始化时检查AI状态
+        checkAIStatus().then(() => {
+            updateAIStatusDisplay();
         });
 
-    loadEducationLevels();
+        // 加载已邀约面试的简历ID
+        fetch('/api/interviews/resume-ids')
+            .then(response => response.json())
+            .then(result => {
+                if (result.success && Array.isArray(result.data)) {
+                    interviewedResumeIds = new Set(result.data);
+                }
+            })
+            .catch(err => {
+                console.error('加载已邀约面试简历列表失败:', err);
+            });
+
+        loadEducationLevels();
+    }).catch(error => {
+        console.error('初始化失败:', error);
+    });
 });
 
 // 初始化上传功能
@@ -125,7 +892,16 @@ function uploadFiles(files) {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        // 先检查响应状态
+        if (response.status === 401) {
+            // 未登录，跳转到登录页
+            alert('请先登录');
+            window.location.href = '/login';
+            return Promise.reject('未登录');
+        }
+        return response.json();
+    })
     .then(data => {
         if (data.success) {
             progressFill.style.width = '100%';
@@ -143,14 +919,16 @@ function uploadFiles(files) {
                 progressDiv.style.display = 'none';
             }, 2000);
         } else {
-            alert('上传失败: ' + data.message);
+            alert('上传失败: ' + (data.message || '未知错误'));
             progressDiv.style.display = 'none';
         }
     })
     .catch(error => {
-        console.error('Error:', error);
-        alert('上传失败，请重试');
-        progressDiv.style.display = 'none';
+        console.error('上传错误:', error);
+        if (error !== '未登录') {
+            alert('上传失败，请重试');
+            progressDiv.style.display = 'none';
+        }
     });
 }
 
@@ -255,7 +1033,7 @@ function displayResumes(resumes) {
     }
     
     if (resumes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="15" class="loading">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="16" class="loading">暂无数据</td></tr>';
         return;
     }
     
@@ -352,6 +1130,7 @@ function displayResumes(resumes) {
             <td>${escapeHtml(resume.major) || '-'}</td>
             <td>${duplicateDisplay}</td>
             <td>${statusDisplay}</td>
+            <td>${escapeHtml(resume.created_by || '-')}</td>
             <td>
                 <button class="${viewButtonClass}" ${viewButtonDisabled} onclick="viewDetail(${resume.id})">查看/编辑</button>
                 <button class="btn btn-small ${alreadyInvited ? 'btn-success' : 'btn-secondary'}" 
@@ -1011,6 +1790,10 @@ function saveResume() {
 }
 
 function deleteResume(id) {
+    if (!currentUser || currentUser.role !== 'admin') {
+        alert('只有管理员可以删除简历');
+        return;
+    }
     if (!confirm('确定要删除该简历吗？此操作不可撤销。')) {
         return;
     }
@@ -1027,7 +1810,11 @@ function deleteResume(id) {
                 alert('删除成功');
                 loadResumes(currentPage);
             } else {
-                alert(`删除失败：${data.message || '未知错误'}`);
+                if (data.require_login) {
+                    window.location.href = '/login';
+                } else {
+                    alert(`删除失败：${data.message || '未知错误'}`);
+                }
             }
         })
         .catch(error => {
@@ -1106,6 +1893,10 @@ function exportSingle(id) {
 }
 
 function deleteSelected() {
+    if (!currentUser || currentUser.role !== 'admin') {
+        alert('只有管理员可以删除简历');
+        return;
+    }
     if (selectedResumes.size === 0) {
         alert('请先选择要删除的简历');
         return;
@@ -1129,7 +1920,11 @@ function deleteSelected() {
                 selectedResumes.clear();
                 loadResumes(currentPage);
             } else {
-                alert(`批量删除失败：${data.message || '未知错误'}`);
+                if (data.require_login) {
+                    window.location.href = '/login';
+                } else {
+                    alert(`批量删除失败：${data.message || '未知错误'}`);
+                }
             }
         })
         .catch(error => {
@@ -1285,7 +2080,7 @@ function loadInterviews() {
     const tbody = document.getElementById('interviewTableBody');
     if (!tbody) return;
 
-    tbody.innerHTML = '<tr><td colspan="9" class="loading">加载中...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="loading">加载中...</td></tr>';
 
     const searchInput = document.getElementById('interviewSearchInput');
     const search = searchInput ? (searchInput.value || '').trim() : '';
@@ -1300,7 +2095,7 @@ function loadInterviews() {
             if (result.success) {
                 const list = result.data || [];
                 if (list.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="9" class="loading">暂无面试记录</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" class="loading">暂无面试记录</td></tr>';
                     return;
                 }
                 tbody.innerHTML = list.map(item => {
@@ -1329,18 +2124,19 @@ function loadInterviews() {
                             <td>${scoreHtml}</td>
                             <td>${status}</td>
                             <td>${time}</td>
+                            <td>${escapeHtml(item.created_by || '-')}</td>
                             <td><button class="btn btn-small btn-primary" onclick="openRegistrationFormModal(${item.id})">${hasRegistrationForm}</button></td>
                             <td><button class="btn btn-small btn-primary" onclick="openInterviewModal(${item.id})">填写/查看</button></td>
                         </tr>
                     `;
                 }).join('');
             } else {
-                tbody.innerHTML = `<tr><td colspan="9" class="loading">加载失败：${escapeHtml(result.message || '未知错误')}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="10" class="loading">加载失败：${escapeHtml(result.message || '未知错误')}</td></tr>`;
             }
         })
         .catch(error => {
             console.error('加载面试流程失败:', error);
-            tbody.innerHTML = '<tr><td colspan="9" class="loading">加载失败，请稍后重试</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="10" class="loading">加载失败，请稍后重试</td></tr>';
         });
 }
 
@@ -1583,10 +2379,13 @@ function loadStatistics() {
 
     if (!statsContent) return;
 
+    const scopeSelect = document.getElementById('statsScope');
+    
     const params = new URLSearchParams();
     if (startInput && startInput.value) params.append('start_date', startInput.value);
     if (endInput && endInput.value) params.append('end_date', endInput.value);
     if (positionSelect && positionSelect.value) params.append('position', positionSelect.value);
+    if (scopeSelect && scopeSelect.value) params.append('scope', scopeSelect.value);
 
     fetch(`/api/statistics?${params.toString()}`)
         .then(response => response.json())
@@ -2490,6 +3289,9 @@ document.addEventListener('click', function(event) {
             case 'editModal':
                 closeEditModal();
                 break;
+            case 'userModal':
+                closeUserModal();
+                break;
             case 'interviewModal':
                 closeInterviewModal();
                 break;
@@ -2721,6 +3523,45 @@ function switchModule(moduleName) {
         } else if (moduleName === 'stats') {
             loadPositionsForStats();
             loadStatistics();
+        } else if (moduleName === 'account-settings') {
+            // 确保用户信息已加载后再检查权限
+            const checkPermissions = () => {
+                if (!currentUser) {
+                    console.log('用户信息未加载，等待加载完成...');
+                    // 如果用户信息还没加载，等待一下再试
+                    setTimeout(() => {
+                        if (currentUser) {
+                            checkPermissions();
+                        } else {
+                            // 如果还是null，重新加载用户信息
+                            loadCurrentUser().then(() => {
+                                setTimeout(() => {
+                                    updateAccountSettingsPermissions();
+                                    if (currentUser && currentUser.role === 'admin') {
+                                        loadAccountManagement();
+                                    }
+                                }, 100);
+                            });
+                        }
+                    }, 200);
+                    return;
+                }
+                
+                // 等待一小段时间确保DOM已更新，然后重新检查权限并显示相应的内容
+                setTimeout(() => {
+                    console.log('切换到账号设置模块，检查权限');
+                    updateAccountSettingsPermissions();
+                    // 如果是管理员，加载账号管理列表
+                    if (currentUser && currentUser.role === 'admin') {
+                        console.log('加载账号管理列表');
+                        loadAccountManagement();
+                    } else {
+                        console.log('非管理员，不加载账号管理列表');
+                    }
+                }, 100);
+            };
+            
+            checkPermissions();
         }
     }
 }
@@ -3200,6 +4041,12 @@ function displayMatchAnalysis(analysisData) {
                 </div>
                 <div class="match-level-badge match-level-${matchLevel.toLowerCase()}">${matchLevel}</div>
             </div>
+            
+            ${analysisData.analyzed_by ? `
+            <div class="match-analysis-info" style="margin-bottom: 15px; padding: 8px; background: #f5f5f5; border-radius: 4px;">
+                <span style="color: #666;">分析者：${escapeHtml(analysisData.analyzed_by)}</span>
+            </div>
+            ` : ''}
             
             ${detailedAnalysis ? `
             <div class="match-analysis-text">

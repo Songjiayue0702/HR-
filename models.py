@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 from config import Config
 import json
+from werkzeug.security import generate_password_hash, check_password_hash
 
 Base = declarative_base()
 
@@ -66,6 +67,12 @@ class Resume(Base):
     # 原始文本内容
     raw_text = Column(Text)
     
+    # 操作记录字段
+    created_by = Column(String(100))  # 创建者（上传者）
+    updated_by = Column(String(100))  # 最后更新者
+    created_at = Column(DateTime, default=datetime.now)  # 创建时间
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)  # 更新时间
+    
     def to_dict(self):
         """转换为字典"""
         return {
@@ -96,7 +103,11 @@ class Resume(Base):
             'duplicate_status': self.duplicate_status,
             'duplicate_similarity': self.duplicate_similarity,
             'duplicate_resume_id': self.duplicate_resume_id,
-            'raw_text': self.raw_text
+            'raw_text': self.raw_text,
+            'created_by': self.created_by,
+            'updated_by': self.updated_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
 # 数据库初始化
@@ -129,6 +140,42 @@ with engine.connect() as conn:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
     if 'match_position' not in columns:
         conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
+    if 'created_by' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
+    if 'updated_by' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
+    if 'created_at' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
+    if 'updated_at' not in columns:
+        conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
+    conn.commit()
+    
+    # 为 positions 表添加字段
+    result = conn.execute(text("PRAGMA table_info(positions)"))
+    columns = {row[1] for row in result}
+    if 'created_by' not in columns:
+        conn.execute(text("ALTER TABLE positions ADD COLUMN created_by VARCHAR(100)"))
+    if 'updated_by' not in columns:
+        conn.execute(text("ALTER TABLE positions ADD COLUMN updated_by VARCHAR(100)"))
+    if 'created_at' not in columns:
+        conn.execute(text("ALTER TABLE positions ADD COLUMN created_at DATETIME"))
+    if 'updated_at' not in columns:
+        conn.execute(text("ALTER TABLE positions ADD COLUMN updated_at DATETIME"))
+    conn.commit()
+    
+    # 为 interviews 表添加字段
+    result = conn.execute(text("PRAGMA table_info(interviews)"))
+    columns = {row[1] for row in result}
+    if 'created_by' not in columns:
+        conn.execute(text("ALTER TABLE interviews ADD COLUMN created_by VARCHAR(100)"))
+    if 'updated_by' not in columns:
+        conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_by VARCHAR(100)"))
+    if 'created_at' not in columns:
+        conn.execute(text("ALTER TABLE interviews ADD COLUMN created_at DATETIME"))
+    if 'updated_at' not in columns:
+        conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_at DATETIME"))
+    if 'analyzed_by' not in columns:
+        conn.execute(text("ALTER TABLE interviews ADD COLUMN analyzed_by VARCHAR(100)"))
     conn.commit()
 Session = sessionmaker(bind=engine)
 
@@ -144,6 +191,12 @@ class Position(Base):
     create_time = Column(DateTime, default=datetime.now)  # 创建时间
     update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)  # 更新时间
     
+    # 操作记录字段
+    created_by = Column(String(100))  # 创建者
+    updated_by = Column(String(100))  # 最后更新者
+    created_at = Column(DateTime, default=datetime.now)  # 创建时间（与create_time保持一致）
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)  # 更新时间（与update_time保持一致）
+    
     def to_dict(self):
         """转换为字典"""
         return {
@@ -153,7 +206,11 @@ class Position(Base):
             'job_requirements': self.job_requirements,
             'core_requirements': self.core_requirements,
             'create_time': self.create_time.isoformat() if self.create_time else None,
-            'update_time': self.update_time.isoformat() if self.update_time else None
+            'update_time': self.update_time.isoformat() if self.update_time else None,
+            'created_by': self.created_by,
+            'updated_by': self.updated_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
 class Interview(Base):
@@ -219,6 +276,15 @@ class Interview(Base):
     onboard_department = Column(String(200))   # 入职架构
     create_time = Column(DateTime, default=datetime.now)
     update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # 操作记录字段
+    created_by = Column(String(100))  # 创建者（邀约发起者）
+    updated_by = Column(String(100))  # 最后更新者
+    created_at = Column(DateTime, default=datetime.now)  # 创建时间（与create_time保持一致）
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)  # 更新时间（与update_time保持一致）
+    
+    # 简历分析记录字段（用于记录谁进行了分析）
+    analyzed_by = Column(String(100))  # 分析者（进行简历分析的用户）
 
     # 面试登记表字段
     registration_form_fill_date = Column(String(50))  # 填写日期（只读，自动生成）
@@ -300,6 +366,11 @@ class Interview(Base):
             'onboard_department': self.onboard_department,
             'create_time': self.create_time.isoformat() if self.create_time else None,
             'update_time': self.update_time.isoformat() if self.update_time else None,
+            'created_by': self.created_by,
+            'updated_by': self.updated_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'analyzed_by': self.analyzed_by,
             # 面试登记表字段
             'registration_form_fill_date': self.registration_form_fill_date,
             'registration_form_contact': self.registration_form_contact,
@@ -332,8 +403,90 @@ class Interview(Base):
             'registration_form_token': self.registration_form_token,
         }
 
+class User(Base):
+    """用户数据模型"""
+    __tablename__ = 'users'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(100), unique=True, nullable=False)  # 用户名
+    password_hash = Column(String(255), nullable=False)  # 密码哈希
+    role = Column(String(50), nullable=False, default='employee')  # 角色：admin（管理员）、manager（主管）、employee（员工）
+    real_name = Column(String(100))  # 真实姓名
+    department = Column(String(200))  # 部门
+    group_name = Column(String(200))  # 小组名称（用于数据统计）
+    is_active = Column(Integer, default=1)  # 是否激活：1 激活，0 禁用
+    create_time = Column(DateTime, default=datetime.now)
+    update_time = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    def set_password(self, password):
+        """设置密码"""
+        self.password_hash = generate_password_hash(password)
+    
+    def check_password(self, password):
+        """验证密码"""
+        return check_password_hash(self.password_hash, password)
+    
+    def to_dict(self):
+        """转换为字典（不包含密码）"""
+        return {
+            'id': self.id,
+            'username': self.username,
+            'role': self.role,
+            'real_name': self.real_name,
+            'department': self.department,
+            'group_name': self.group_name,
+            'is_active': self.is_active,
+            'create_time': self.create_time.isoformat() if self.create_time else None,
+            'update_time': self.update_time.isoformat() if self.update_time else None
+        }
+    
+    def has_permission(self, permission):
+        """检查权限"""
+        if self.role == 'admin':
+            return True  # 管理员拥有所有权限
+        elif self.role == 'manager':
+            # 主管权限
+            return permission in ['view_department', 'view_group', 'view_personal']
+        else:  # employee
+            # 员工权限
+            return permission == 'view_personal'
+
 # 确保表存在
 Base.metadata.create_all(engine)
+
+# 检查users表是否存在，如果不存在则创建；并确保默认管理员账户存在
+with engine.connect() as conn:
+    try:
+        conn.execute(text("SELECT 1 FROM users LIMIT 1"))
+        # 表已存在，检查是否有admin用户
+        session = Session()
+        admin_user = session.query(User).filter_by(username='admin').first()
+        if not admin_user:
+            # 如果没有admin用户，创建默认管理员账户
+            admin = User(
+                username='admin',
+                role='admin',
+                real_name='系统管理员',
+                is_active=1
+            )
+            admin.set_password('admin123')  # 默认密码，建议首次登录后修改
+            session.add(admin)
+            session.commit()
+        session.close()
+    except Exception:
+        # 表不存在，创建表并创建默认管理员账户
+        User.__table__.create(engine)
+        session = Session()
+        admin = User(
+            username='admin',
+            role='admin',
+            real_name='系统管理员',
+            is_active=1
+        )
+        admin.set_password('admin123')  # 默认密码，建议首次登录后修改
+        session.add(admin)
+        session.commit()
+        session.close()
 
 # 检查positions/interviews表是否存在，如果不存在则创建；并做简单列补全
 with engine.connect() as conn:

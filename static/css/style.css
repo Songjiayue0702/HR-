@@ -125,6 +125,36 @@ body {
     font-size: 15px;
 }
 
+.nav-item-parent {
+    position: relative;
+}
+
+.nav-arrow {
+    margin-left: auto;
+    font-size: 10px;
+    transition: transform 0.3s;
+}
+
+.nav-item-parent.expanded .nav-arrow {
+    transform: rotate(90deg);
+}
+
+.nav-submenu {
+    list-style: none;
+    padding-left: 0;
+    background: rgba(0,0,0,0.1);
+    margin-top: 0;
+}
+
+.nav-subitem {
+    padding-left: 60px !important;
+    font-size: 14px;
+}
+
+.nav-subitem:hover {
+    background: rgba(255,255,255,0.15);
+}
+
 /* 主内容区 */
 .main-content {
     flex: 1;
@@ -520,6 +550,29 @@ body {
 
 .btn-danger:hover {
     background: #c0392b;
+}
+
+.btn-warning {
+    background: #ffc107;
+    color: #212529;
+}
+
+.btn-warning:hover {
+    background: #e0a800;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background: #218838;
+}
+
+.btn-sm {
+    padding: 6px 12px;
+    font-size: 12px;
 }
 
 /* 表格 */
