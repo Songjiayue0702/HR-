@@ -3289,29 +3289,36 @@ if __name__ == '__main__':
     import socket
     import sys
     
-    # 检查端口是否被占用
-    def is_port_in_use(port):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(('localhost', port)) == 0
+    # 支持生产环境部署（Railway、Render 等）
+    # 从环境变量读取端口和主机，如果没有则使用默认值
+    port = int(os.environ.get('PORT', 5000))
+    host = os.environ.get('HOST', '0.0.0.0')
+    debug = os.environ.get('DEBUG', 'True').lower() == 'true'
     
-    port = 5000
-    if is_port_in_use(port):
-        print(f'错误: 端口 {port} 已被占用！')
-        print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
-        sys.exit(1)
+    # 本地开发时检查端口是否被占用
+    if host == '0.0.0.0' or host == '127.0.0.1':
+        def is_port_in_use(port):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                return s.connect_ex(('localhost', port)) == 0
+        
+        if is_port_in_use(port):
+            print(f'错误: 端口 {port} 已被占用！')
+            print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
+            sys.exit(1)
     
     print('=' * 50)
     print('智能简历数据库系统')
     print('=' * 50)
     print(f'服务器地址: http://127.0.0.1:{port}')
-    print(f'局域网地址: http://0.0.0.0:{port}')
+    print(f'局域网地址: http://{host}:{port}')
+    print(f'调试模式: {debug}')
     print('=' * 50)
     print('按 Ctrl+C 停止服务器')
     print('=' * 50)
     print()
     
     try:
-        app.run(debug=True, host='0.0.0.0', port=port, use_reloader=False)
+        app.run(debug=debug, host=host, port=port, use_reloader=False)
     except Exception as e:
         print(f'启动失败: {e}')
         import traceback

@@ -7,21 +7,7 @@ __pycache__/
 env/
 venv/
 ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+.venv
 
 # Flask
 instance/
@@ -32,11 +18,21 @@ instance/
 *.sqlite
 *.sqlite3
 
-# 上传和导出文件
+# 上传文件
 uploads/*
 !uploads/.gitkeep
+
+# 导出文件
 exports/*
 !exports/.gitkeep
+
+# 日志
+*.log
+server.log
+
+# 环境变量
+.env
+.env.local
 
 # IDE
 .vscode/
@@ -45,21 +41,14 @@ exports/*
 *.swo
 *~
 
-# 环境变量
-.env
-.env.local
-
-# 日志
-*.log
-
 # 操作系统
 .DS_Store
 Thumbs.db
 
 # 临时文件
-nul
 *.tmp
+*.bak
 
-# 上传的文档文件（保留目录结构但忽略内容）
-static/interview_docs/*.docx
-!static/interview_docs/.gitkeep
+# 部署相关
+.railway/
+.fly/
