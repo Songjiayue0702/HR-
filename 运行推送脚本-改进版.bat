@@ -7,3 +7,4 @@ REM 使用 -Command 直接执行脚本，而不是 -File
 powershell.exe -NoExit -ExecutionPolicy Bypass -Command "& {Set-Location '%~dp0'; . '%~dp0推送代码-改进版.ps1'}"
 
 
+

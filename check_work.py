@@ -1,12 +1,11 @@
 import sys
 sys.path.insert(0, '.')
 from models import get_db_session, Resume
-from utils.file_parser import extract_text, init_ocr_engine
+from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
-from config import Config
 import re
 
-init_ocr_engine(Config.OCR_ENABLED, Config.OCR_ENGINE, Config.OCR_USE_GPU)
+# OCR功能已移除，统一使用AI API处理
 db = get_db_session()
 
 r = db.query(Resume).filter_by(name='邱曙光').first()

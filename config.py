@@ -24,12 +24,7 @@ class Config:
     # 允许的文件扩展名
     ALLOWED_EXTENSIONS = {'pdf', 'doc', 'docx'}
     
-    # 外部API配置（需要替换为实际API密钥）
-    QICHACHA_API_KEY = os.environ.get('QICHACHA_API_KEY') or ''
-    QICHACHA_API_URL = 'https://api.qichacha.com/ECIV4/GetBasicDetailsByName'
-    
-    SCHOOL_API_URL = os.environ.get('SCHOOL_API_URL') or ''
-    MAJOR_API_URL = os.environ.get('MAJOR_API_URL') or ''
+    # 外部API验证已移除，统一使用AI API智能识别
     
     # AI辅助解析配置
     AI_ENABLED = os.environ.get('AI_ENABLED', 'true').lower() == 'true'
@@ -48,10 +43,7 @@ class Config:
         {'value': 'qwen-plus', 'label': 'Qwen Plus (阿里云)', 'provider': 'Alibaba'},
     ]
     
-    # OCR配置（用于图片PDF识别）
-    OCR_ENABLED = os.environ.get('OCR_ENABLED', 'false').lower() == 'true'  # 是否启用OCR（默认禁用，避免启动问题）
-    OCR_ENGINE = os.environ.get('OCR_ENGINE', 'easyocr')  # 可选: 'paddleocr' 或 'easyocr'（当前使用easyocr）
-    OCR_USE_GPU = os.environ.get('OCR_USE_GPU', 'false').lower() == 'true'  # 是否使用GPU加速
+    # OCR功能已移除，所有文档通过AI API处理
     
     # 教育层级选项（用于面试登记表学历下拉）
     EDUCATION_LEVELS = ['博士', '硕士', '本科', '大专', '高中', '职高', '初中', '其他']

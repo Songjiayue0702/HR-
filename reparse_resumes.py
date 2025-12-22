@@ -10,7 +10,7 @@ from datetime import datetime
 from models import get_db_session, Resume
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
-from utils.api_integration import APIIntegration
+# 外部API验证已移除，统一使用AI API智能识别
 
 def reparse_all_resumes():
     """重新解析所有简历"""
@@ -75,43 +75,21 @@ def reparse_all_resumes():
                 resume.raw_text = text
                 resume.error_message = None
                 
-                # 处理工作经历和公司验证
+                # 处理工作经历（统一使用AI API智能识别，无需外部验证）
                 work_experiences = info.get('work_experience', [])
-                for exp in work_experiences:
-                    company_name = exp.get('company')
-                    if company_name:
-                        standardized, status, confidence, code, alternatives = \
-                            APIIntegration.verify_company(company_name)
-                        if standardized:
-                            exp['company_standardized'] = standardized
-                            exp['company_code'] = code
-                            exp['company_match_status'] = status
-                            exp['company_confidence'] = confidence
-                            exp['company_alternatives'] = alternatives
-                
                 resume.work_experience = work_experiences
                 
-                # 处理学校验证
+                # 处理学校信息（统一使用AI API智能识别，无需外部验证）
                 school_original = info.get('school')
                 if school_original:
+                    resume.school = school_original
                     resume.school_original = school_original
-                    standardized, status, confidence, code, alternatives = \
-                        APIIntegration.verify_school(school_original)
-                    resume.school = standardized or school_original
-                    resume.school_code = code
-                    resume.school_match_status = status
-                    resume.school_confidence = confidence
                 
-                # 处理专业验证
+                # 处理专业信息（统一使用AI API智能识别，无需外部验证）
                 major_original = info.get('major')
                 if major_original:
+                    resume.major = major_original
                     resume.major_original = major_original
-                    standardized, status, confidence, code, alternatives = \
-                        APIIntegration.verify_major(major_original, resume.school_code)
-                    resume.major = standardized or major_original
-                    resume.major_code = code
-                    resume.major_match_status = status
-                    resume.major_confidence = confidence
                 
                 # 计算最早工作年份
                 if work_experiences:

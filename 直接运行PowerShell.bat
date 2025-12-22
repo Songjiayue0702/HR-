@@ -22,3 +22,4 @@ REM 打开 PowerShell 并切换到项目目录
 start powershell.exe -NoExit -Command "cd '%~dp0'; Write-Host '已在项目目录中，可以执行推送脚本' -ForegroundColor Green; Write-Host ''; Write-Host '执行命令: .\推送代码-改进版.ps1' -ForegroundColor Cyan; Write-Host '或手动执行: ssh-add `$env:USERPROFILE\.ssh\id_ed25519' -ForegroundColor Yellow"
 
 
+

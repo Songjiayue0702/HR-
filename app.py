@@ -13,7 +13,6 @@ from config import Config
 from models import get_db_session, Resume, Position, Interview, User
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
-from utils.api_integration import APIIntegration
 from utils.ai_extractor import AIExtractor
 from utils.duplicate_checker import check_duplicate
 from utils.export import export_resumes_to_excel, export_interviews_to_excel
@@ -69,14 +68,7 @@ app.config.from_object(Config)
 # 注册中文字体
 pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
 
-# 初始化OCR引擎（如果启用）
-if app.config.get('OCR_ENABLED', True):
-    from utils.file_parser import init_ocr_engine
-    init_ocr_engine(
-        ocr_enabled=app.config.get('OCR_ENABLED', True),
-        engine=app.config.get('OCR_ENGINE', 'paddleocr'),
-        use_gpu=app.config.get('OCR_USE_GPU', False)
-    )
+# OCR功能已移除，所有文档通过AI API处理
 
 def allowed_file(filename):
     """检查文件扩展名是否允许"""
@@ -184,20 +176,8 @@ def process_resume_async(resume_id, file_path):
         resume.raw_text = text
         resume.error_message = None
         
-        # 处理工作经历和公司验证
+        # 处理工作经历（统一使用AI API智能识别，无需外部验证）
         work_experiences = info.get('work_experience', [])
-        for exp in work_experiences:
-            company_name = exp.get('company')
-            if company_name:
-                standardized, status, confidence, code, alternatives = \
-                    APIIntegration.verify_company(company_name)
-                if standardized:
-                    exp['company_standardized'] = standardized
-                    exp['company_code'] = code
-                    exp['company_match_status'] = status
-                    exp['company_confidence'] = confidence
-                    exp['company_alternatives'] = alternatives
-        
         resume.work_experience = work_experiences
         
         # 处理学校信息（仅保留原文提取）
