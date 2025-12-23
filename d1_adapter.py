@@ -5,7 +5,7 @@ Cloudflare D1数据库适配器
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from werkzeug.security import generate_password_hash, check_password_hash
+from utils.password_hash import generate_password_hash, check_password_hash
 
 
 class D1Adapter:

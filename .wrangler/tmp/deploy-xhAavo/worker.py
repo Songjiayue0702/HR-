@@ -5,7 +5,6 @@ API Gateway / Reverse Proxy for Cloudflare Workers
 """
 
 from urllib.parse import urlparse
-from js import Request, Response, fetch  # Cloudflare Workers globals
 
 # 后端基地址（Railway）
 BACKEND_BASE_URL = "https://web-production-5db0.up.railway.app"
