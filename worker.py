@@ -76,3 +76,8 @@ async def on_fetch(request: Request, env) -> Response:
         print(f"Proxy error: {e}")
         return with_cors(Response("Internal Server Error", status=500))
 
+
+# Cloudflare Workers Python 事件处理器注册
+# Wrangler 会查找 export 中的 fetch 对应处理函数
+export = {"fetch": on_fetch}
+
