@@ -5,6 +5,7 @@ API Gateway / Reverse Proxy for Cloudflare Workers
 """
 
 from urllib.parse import urlparse
+from js import Request, Response, fetch  # Cloudflare Workers globals
 
 # 后端基地址（Railway）
 BACKEND_BASE_URL = "https://web-production-5db0.up.railway.app"
@@ -18,23 +19,20 @@ CORS_HEADERS = {
 }
 
 
-def with_cors(resp):
+def with_cors(resp: Response) -> Response:
     """附加 CORS 头"""
     for k, v in CORS_HEADERS.items():
-        resp.headers.set(k, v)
+        resp.headers[k] = v
     return resp
 
 
-async def handle_options():
+async def handle_options(_: Request) -> Response:
     """处理预检请求"""
-    from js import Response
     return Response(None, status=204, headers=CORS_HEADERS)
 
 
-async def forward(request):
+async def forward(request: Request) -> Response:
     """将 /api/* 请求转发到后端"""
-    from js import Response, fetch
-
     parsed = urlparse(request.url)
     if not parsed.path.startswith("/api/"):
         return with_cors(Response("Not Found", status=404))
@@ -45,10 +43,7 @@ async def forward(request):
         target += f"?{parsed.query}"
 
     # 复制请求头，去掉 host
-    headers = {}
-    for k, v in request.headers.items():
-        if k.lower() != "host":
-            headers[k] = v
+    headers = {k: v for k, v in request.headers.items() if k.lower() != "host"}
 
     # 读取请求体（GET/HEAD 不需要 body）
     body = None
@@ -71,16 +66,18 @@ async def forward(request):
     return with_cors(resp)
 
 
-# 这是 Cloudflare Python Workers 的入口点
-# 函数名必须是 fetch
-async def fetch(request, env, context):
-    """Worker 入口 - Python Workers 必须使用这个函数名"""
+async def on_fetch(request: Request, env) -> Response:
+    """Worker 入口"""
     try:
         if request.method == "OPTIONS":
-            return await handle_options()
+            return await handle_options(request)
         return await forward(request)
     except Exception as e:
         print(f"Proxy error: {e}")
-        from js import Response
         return with_cors(Response("Internal Server Error", status=500))
+
+
+# Cloudflare Workers Python 事件处理器注册
+# Wrangler 会查找 export 中的 fetch 对应处理函数
+export = {"fetch": on_fetch}
 
