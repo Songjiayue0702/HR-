@@ -4,7 +4,7 @@
 所有文档通过AI API处理，无需OCR
 """
 import os
-import PyPDF2
+import fitz  # PyMuPDF
 from docx import Document
 import re
 
@@ -73,68 +73,36 @@ def extract_text_from_pdf(file_path):
     仅支持文本PDF，图片PDF需要通过AI API处理
     
     策略：
-    1. 文本PDF：直接使用PyPDF2提取，保持页面顺序和结构
+    1. 文本PDF：直接使用PyMuPDF提取，保持页面顺序和结构
     2. 图片PDF：如果无法提取文本，将返回空字符串，提示用户使用AI API处理
     """
     text = ""
     page_texts = []  # 存储每页文本，保持页面顺序
     
     try:
-        # 首先尝试直接提取文本（保持页面顺序和结构）
-        with open(file_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            total_pages = len(pdf_reader.pages)
+        # 使用PyMuPDF提取文本（保持页面顺序和结构）
+        pdf_doc = fitz.open(file_path)
+        total_pages = len(pdf_doc)
+        
+        for page_num in range(total_pages):
+            page = pdf_doc[page_num]
+            page_text = page.get_text()
             
-            for page_num, page in enumerate(pdf_reader.pages, 1):
-                # 尝试多种提取方法，确保获取完整文本
-                page_text = ""
-                
-                # 方法1：标准提取
-                try:
-                    page_text = page.extract_text()
-                    # 如果提取结果为空或过短，尝试其他方法
-                    if not page_text or len(page_text.strip()) < 10:
-                        # 方法2：尝试使用PyMuPDF（如果可用）作为备选
-                        try:
-                            import fitz  # PyMuPDF
-                            pdf_doc = fitz.open(file_path)
-                            if page_num <= len(pdf_doc):
-                                page_obj = pdf_doc[page_num - 1]
-                                page_text_pymupdf = page_obj.get_text()
-                                if page_text_pymupdf and len(page_text_pymupdf.strip()) > len(page_text.strip() if page_text else ""):
-                                    page_text = page_text_pymupdf
-                                    print(f"页面 {page_num} 使用PyMuPDF提取，文本长度: {len(page_text)}")
-                            pdf_doc.close()
-                        except Exception as e:
-                            # PyMuPDF不可用或提取失败，继续使用标准方法
-                            pass
-                except Exception as e:
-                    print(f"页面 {page_num} 标准提取失败: {e}")
-                    # 尝试使用PyMuPDF作为备选
-                    try:
-                        import fitz  # PyMuPDF
-                        pdf_doc = fitz.open(file_path)
-                        if page_num <= len(pdf_doc):
-                            page_obj = pdf_doc[page_num - 1]
-                            page_text = page_obj.get_text()
-                            print(f"页面 {page_num} 使用PyMuPDF提取（标准方法失败），文本长度: {len(page_text)}")
-                        pdf_doc.close()
-                    except Exception as e2:
-                        print(f"页面 {page_num} PyMuPDF提取也失败: {e2}")
-                
-                if page_text and isinstance(page_text, str):
-                    # 清理每页文本，但保持基本结构
-                    page_text_cleaned = page_text.strip()
-                    if page_text_cleaned:
-                        # 保持页面分隔，便于后续解析时识别上下文位置
-                        # 在页面之间添加明确的分隔符（仅在多页时）
-                        if total_pages > 1:
-                            page_texts.append(f"--- 第{page_num}页 ---\n{page_text_cleaned}")
-                        else:
-                            page_texts.append(page_text_cleaned)
-            
-            # 合并所有页面文本，保持顺序
-            text = "\n\n".join(page_texts)
+            if page_text and isinstance(page_text, str):
+                # 清理每页文本，但保持基本结构
+                page_text_cleaned = page_text.strip()
+                if page_text_cleaned:
+                    # 保持页面分隔，便于后续解析时识别上下文位置
+                    # 在页面之间添加明确的分隔符（仅在多页时）
+                    if total_pages > 1:
+                        page_texts.append(f"--- 第{page_num + 1}页 ---\n{page_text_cleaned}")
+                    else:
+                        page_texts.append(page_text_cleaned)
+        
+        pdf_doc.close()
+        
+        # 合并所有页面文本，保持顺序
+        text = "\n\n".join(page_texts)
         
         text_stripped = text.strip()
         
