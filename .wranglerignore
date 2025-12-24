@@ -1,0 +1,39 @@
+# Cloudflare Workers 忽略文件
+
+# Flask 应用文件
+app.py
+config.py
+models.py
+create_admin.py
+create_req.py
+
+# 测试和检查脚本
+check_results.py
+check_work.py
+test_*.py
+reparse_*.py
+
+# 适配器
+d1_adapter.py
+r2_storage.py
+
+# 目录
+utils/
+scripts/
+static/
+templates/
+uploads/
+exports/
+.venv/
+venv/
+__pycache__/
+node_modules/
+
+# 其他文件
+*.db
+*.log
+*.md
+*.txt
+*.bat
+*.ps1
+*.sh

@@ -25,11 +25,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
-from openpyxl import Workbook
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
 import threading
 from sqlalchemy import and_
 from sqlalchemy.orm import make_transient
@@ -3292,25 +3287,38 @@ if __name__ == '__main__':
     # 支持生产环境部署（Railway、Render 等）
     # 从环境变量读取端口和主机，如果没有则使用默认值
     port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '0.0.0.0')
+    # 本地开发默认使用 127.0.0.1，生产环境可通过环境变量设置为 0.0.0.0
+    host = os.environ.get('HOST', '127.0.0.1')
     debug = os.environ.get('DEBUG', 'True').lower() == 'true'
     
-    # 本地开发时检查端口是否被占用
-    if host == '0.0.0.0' or host == '127.0.0.1':
-        def is_port_in_use(port):
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                return s.connect_ex(('localhost', port)) == 0
-        
-        if is_port_in_use(port):
-            print(f'错误: 端口 {port} 已被占用！')
-            print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
-            sys.exit(1)
+    # 检查端口是否被占用（更可靠的检查方法）
+    def is_port_in_use(port):
+        """检查端口是否被占用"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            try:
+                # 尝试绑定端口，如果失败说明端口被占用
+                s.bind(('127.0.0.1', port))
+                return False
+            except OSError:
+                return True
+    
+    if is_port_in_use(port):
+        print(f'错误: 端口 {port} 已被占用！')
+        print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
+        print()
+        print('提示：可以通过以下命令查看占用端口的进程：')
+        print(f'  netstat -ano | findstr :{port}')
+        sys.exit(1)
     
     print('=' * 50)
     print('智能简历数据库系统')
     print('=' * 50)
-    print(f'服务器地址: http://127.0.0.1:{port}')
-    print(f'局域网地址: http://{host}:{port}')
+    if host == '0.0.0.0':
+        print(f'服务器地址: http://127.0.0.1:{port}')
+        print(f'局域网地址: http://0.0.0.0:{port}')
+    else:
+        print(f'服务器地址: http://{host}:{port}')
     print(f'调试模式: {debug}')
     print('=' * 50)
     print('按 Ctrl+C 停止服务器')

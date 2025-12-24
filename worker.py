@@ -28,16 +28,17 @@ def with_cors(resp):
 async def handle_options():
     """处理预检请求"""
     from js import Response
-    return Response(None, status=204, headers=CORS_HEADERS)
+    return Response.new(None, {"status": 204, "headers": CORS_HEADERS})
 
 
 async def forward(request):
     """将 /api/* 请求转发到后端"""
     from js import Response, fetch
-
+    
     parsed = urlparse(request.url)
     if not parsed.path.startswith("/api/"):
-        return with_cors(Response("Not Found", status=404))
+        from js import Response
+        return with_cors(Response.new("Not Found", {"status": 404}))
 
     # 构造目标 URL，保留查询参数
     target = f"{BACKEND_BASE_URL}{parsed.path}"
@@ -67,20 +68,27 @@ async def forward(request):
 
     # 回传上游响应（状态码、头、体）
     resp_body = await upstream.arrayBuffer()
-    resp = Response(resp_body, status=upstream.status, headers=upstream.headers)
+    resp = Response.new(resp_body, {
+        "status": upstream.status,
+        "headers": upstream.headers,
+    })
     return with_cors(resp)
 
 
-# 这是 Cloudflare Python Workers 的入口点
-# 函数名必须是 fetch
-async def fetch(request, env, context):
-    """Worker 入口 - Python Workers 必须使用这个函数名"""
+async def fetch(request, env):
+    """Worker 入口 - Python Workers 必须使用这个函数名 (Python Workers)"""
     try:
         if request.method == "OPTIONS":
             return await handle_options()
         return await forward(request)
     except Exception as e:
         print(f"Proxy error: {e}")
+        import traceback
+        traceback.print_exc()
         from js import Response
-        return with_cors(Response("Internal Server Error", status=500))
+        return with_cors(Response.new("Internal Server Error", {"status": 500}))
 
+
+# Cloudflare Workers Python 事件处理器注册
+# 使用 export 字典注册 fetch 处理器
+export = {"fetch": fetch}
