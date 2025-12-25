@@ -63,6 +63,35 @@ app.config.from_object(Config)
 # 注册中文字体
 pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
 
+# 数据库初始化状态
+db_initialized = False
+
+def ensure_database_initialized():
+    """确保数据库已初始化（延迟初始化）"""
+    global db_initialized
+    if db_initialized:
+        return True
+    
+    try:
+        from models import init_database, migrate_database
+        init_database()
+        migrate_database()
+        db_initialized = True
+        return True
+    except Exception as e:
+        print(f"警告: 数据库初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# 在应用启动时初始化数据库（立即执行，不等待第一个请求）
+try:
+    ensure_database_initialized()
+    print("✓ 数据库初始化完成")
+except Exception as e:
+    print(f"⚠️  数据库初始化警告: {e}")
+    print("应用将继续启动，数据库将在首次使用时初始化")
+
 # OCR功能已移除，所有文档通过AI API处理
 
 def allowed_file(filename):
@@ -70,6 +99,112 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """健康检查端点，供 Railway 等平台监控"""
+    try:
+        # 确保数据库已初始化
+        ensure_database_initialized()
+        
+        # 检查数据库连接
+        from sqlalchemy import text
+        db = get_db_session()
+        result = db.execute(text('SELECT 1'))
+        result.fetchone()  # 执行查询
+        db.close()
+        
+        return jsonify({
+            'status': 'healthy',
+            'database': 'connected',
+            'timestamp': datetime.now().isoformat()
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 503
+
+# 权限装饰器（需要在路由之前定义）
+def login_required(f):
+    """要求登录的装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    """要求管理员权限的装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
+        db = get_db_session()
+        try:
+            user = db.query(User).filter_by(id=session['user_id']).first()
+            if not user or user.role != 'admin':
+                return jsonify({'success': False, 'message': '需要管理员权限'}), 403
+        finally:
+            db.close()
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/api/database/init', methods=['POST'])
+@admin_required
+def init_database_api():
+    """手动初始化数据库（管理员权限）"""
+    try:
+        success = ensure_database_initialized()
+        if success:
+            return jsonify({
+                'success': True,
+                'message': '数据库初始化成功'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '数据库初始化失败，请查看日志'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'数据库初始化失败: {str(e)}'
+        }), 500
+
+@app.route('/api/database/status', methods=['GET'])
+def database_status():
+    """获取数据库状态"""
+    try:
+        db = get_db_session()
+        
+        # 检查表是否存在
+        tables_status = {}
+        tables_to_check = ['resumes', 'positions', 'interviews', 'users']
+        
+        for table_name in tables_to_check:
+            try:
+                db.execute(f'SELECT 1 FROM {table_name} LIMIT 1')
+                tables_status[table_name] = 'exists'
+            except Exception:
+                tables_status[table_name] = 'missing'
+        
+        db.close()
+        
+        return jsonify({
+            'success': True,
+            'initialized': db_initialized,
+            'tables': tables_status,
+            'all_tables_exist': all(status == 'exists' for status in tables_status.values())
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @app.route('/api/education-levels', methods=['GET'])
 def get_education_levels():
@@ -220,32 +355,6 @@ def process_resume_async(resume_id, file_path):
         print(f"处理简历失败: {e}")
     finally:
         db.close()
-
-# 权限装饰器
-def login_required(f):
-    """要求登录的装饰器"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
-        return f(*args, **kwargs)
-    return decorated_function
-
-def admin_required(f):
-    """要求管理员权限的装饰器"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
-        db = get_db_session()
-        try:
-            user = db.query(User).filter_by(id=session['user_id']).first()
-            if not user or user.role != 'admin':
-                return jsonify({'success': False, 'message': '需要管理员权限'}), 403
-        finally:
-            db.close()
-        return f(*args, **kwargs)
-    return decorated_function
 
 def get_current_user():
     """获取当前登录用户"""
@@ -3287,29 +3396,32 @@ if __name__ == '__main__':
     # 支持生产环境部署（Railway、Render 等）
     # 从环境变量读取端口和主机，如果没有则使用默认值
     port = int(os.environ.get('PORT', 5000))
-    # 本地开发默认使用 127.0.0.1，生产环境可通过环境变量设置为 0.0.0.0
-    host = os.environ.get('HOST', '127.0.0.1')
-    debug = os.environ.get('DEBUG', 'True').lower() == 'true'
+    # 本地开发默认使用 127.0.0.1，生产环境（Railway）自动使用 0.0.0.0
+    # 如果设置了 PORT 环境变量，说明是生产环境，使用 0.0.0.0
+    is_production = 'PORT' in os.environ
+    host = os.environ.get('HOST', '0.0.0.0' if is_production else '127.0.0.1')
+    debug = os.environ.get('DEBUG', 'False' if is_production else 'True').lower() == 'true'
     
-    # 检查端口是否被占用（更可靠的检查方法）
-    def is_port_in_use(port):
-        """检查端口是否被占用"""
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            try:
-                # 尝试绑定端口，如果失败说明端口被占用
-                s.bind(('127.0.0.1', port))
-                return False
-            except OSError:
-                return True
-    
-    if is_port_in_use(port):
-        print(f'错误: 端口 {port} 已被占用！')
-        print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
-        print()
-        print('提示：可以通过以下命令查看占用端口的进程：')
-        print(f'  netstat -ano | findstr :{port}')
-        sys.exit(1)
+    # 只在本地开发环境检查端口占用（生产环境由平台管理）
+    if not is_production:
+        def is_port_in_use(port):
+            """检查端口是否被占用"""
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                try:
+                    # 尝试绑定端口，如果失败说明端口被占用
+                    s.bind(('127.0.0.1', port))
+                    return False
+                except OSError:
+                    return True
+        
+        if is_port_in_use(port):
+            print(f'错误: 端口 {port} 已被占用！')
+            print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
+            print()
+            print('提示：可以通过以下命令查看占用端口的进程：')
+            print(f'  netstat -ano | findstr :{port}')
+            sys.exit(1)
     
     print('=' * 50)
     print('智能简历数据库系统')

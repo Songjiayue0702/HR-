@@ -112,71 +112,99 @@ class Resume(Base):
 
 # 数据库初始化
 engine = create_engine(f'sqlite:///{Config.DATABASE_PATH}', echo=False)
-Base.metadata.create_all(engine)
 
-# 简单的列更新，确保新增字段存在
-with engine.connect() as conn:
-    result = conn.execute(text("PRAGMA table_info(resumes)"))
-    columns = {row[1] for row in result}
-    if 'phone' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
-    if 'email' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
-    if 'applied_position' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
-    if 'earliest_work_year' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
-    if 'age_from_resume' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
-    if 'duplicate_status' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
-    if 'duplicate_similarity' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
-    if 'duplicate_resume_id' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
-    if 'match_score' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
-    if 'match_level' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
-    if 'match_position' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
-    if 'created_by' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
-    if 'updated_by' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
-    if 'created_at' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
-    if 'updated_at' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
-    conn.commit()
-    
-    # 为 positions 表添加字段
-    result = conn.execute(text("PRAGMA table_info(positions)"))
-    columns = {row[1] for row in result}
-    if 'created_by' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN created_by VARCHAR(100)"))
-    if 'updated_by' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN updated_by VARCHAR(100)"))
-    if 'created_at' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN created_at DATETIME"))
-    if 'updated_at' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN updated_at DATETIME"))
-    conn.commit()
-    
-    # 为 interviews 表添加字段
-    result = conn.execute(text("PRAGMA table_info(interviews)"))
-    columns = {row[1] for row in result}
-    if 'created_by' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN created_by VARCHAR(100)"))
-    if 'updated_by' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_by VARCHAR(100)"))
-    if 'created_at' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN created_at DATETIME"))
-    if 'updated_at' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_at DATETIME"))
-    if 'analyzed_by' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN analyzed_by VARCHAR(100)"))
-    conn.commit()
+def init_database():
+    """初始化数据库，创建所有表"""
+    try:
+        Base.metadata.create_all(engine)
+        print("✓ 数据库表已创建")
+    except Exception as e:
+        print(f"✗ 创建数据库表失败: {e}")
+        raise
+
+def migrate_database():
+    """迁移数据库，添加新字段（仅在表存在时）"""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("PRAGMA table_info(resumes)"))
+            columns = {row[1] for row in result}
+            if 'phone' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
+            if 'email' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
+            if 'applied_position' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
+            if 'earliest_work_year' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
+            if 'age_from_resume' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
+            if 'duplicate_status' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
+            if 'duplicate_similarity' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
+            if 'duplicate_resume_id' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
+            if 'match_score' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
+            if 'match_level' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
+            if 'match_position' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
+            if 'created_by' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
+            if 'updated_by' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
+            if 'created_at' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
+            if 'updated_at' not in columns:
+                conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
+            conn.commit()
+            
+            # 为 positions 表添加字段（先检查表是否存在）
+            try:
+                # 检查表是否存在
+                conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
+                # 表存在，检查并添加字段
+                result = conn.execute(text("PRAGMA table_info(positions)"))
+                columns = {row[1] for row in result}
+                if 'created_by' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN created_by VARCHAR(100)"))
+                if 'updated_by' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN updated_by VARCHAR(100)"))
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN created_at DATETIME"))
+                if 'updated_at' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN updated_at DATETIME"))
+                conn.commit()
+            except Exception:
+                # 表不存在，稍后会在初始化时创建
+                pass
+            
+            # 为 interviews 表添加字段（先检查表是否存在）
+            try:
+                # 检查表是否存在
+                conn.execute(text("SELECT 1 FROM interviews LIMIT 1"))
+                # 表存在，检查并添加字段
+                result = conn.execute(text("PRAGMA table_info(interviews)"))
+                columns = {row[1] for row in result}
+                if 'created_by' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN created_by VARCHAR(100)"))
+                if 'updated_by' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_by VARCHAR(100)"))
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN created_at DATETIME"))
+                if 'updated_at' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_at DATETIME"))
+                if 'analyzed_by' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN analyzed_by VARCHAR(100)"))
+                conn.commit()
+            except Exception:
+                # 表不存在，稍后会在初始化时创建
+                pass
+    except Exception as e:
+        print(f"警告: 数据库迁移时出错（可能表不存在）: {e}")
+        # 不抛出异常，让应用继续启动
+
 Session = sessionmaker(bind=engine)
 
 class Position(Base):
@@ -489,6 +517,9 @@ with engine.connect() as conn:
         session.close()
 
 # 检查positions/interviews表是否存在，如果不存在则创建；并做简单列补全
+# 注意：这段代码已移至 init_database() 和 migrate_database() 函数中，延迟执行
+# 以下代码保留作为备用，但不会在导入时执行
+"""
 with engine.connect() as conn:
     try:
         conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
@@ -633,6 +664,14 @@ with engine.connect() as conn:
         conn.execute(text(f"ALTER TABLE interviews {clause}"))
 
     conn.commit()
+"""
+
+# 延迟初始化：不在导入时执行，而是在应用启动时调用
+# 先创建表结构
+init_database()
+
+# 然后执行迁移（添加新字段）
+migrate_database()
 
 def get_db_session():
     """获取数据库会话"""
