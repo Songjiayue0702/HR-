@@ -250,3 +250,5 @@ result = await extractor.extract_with_ai(text, fetch_func=fetch)  # 异步调用
 - 只保留必要的标准库
 - Workers环境可能无需额外依赖
 
+
+

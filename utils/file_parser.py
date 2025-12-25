@@ -4,9 +4,26 @@
 所有文档通过AI API处理，无需OCR
 """
 import os
-import fitz  # PyMuPDF
-from docx import Document
 import re
+
+# 可选导入 PyMuPDF (fitz)
+try:
+    import fitz  # PyMuPDF
+    FITZ_AVAILABLE = True
+except ImportError:
+    FITZ_AVAILABLE = False
+    print("警告: PyMuPDF (fitz) 未安装，PDF文本提取功能将不可用。")
+    print("      请运行: pip install PyMuPDF")
+    print("      或者系统将使用AI API处理PDF文件。")
+
+# 可选导入 python-docx
+try:
+    from docx import Document
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+    print("警告: python-docx 未安装，Word文档解析功能将不可用。")
+    print("      请运行: pip install python-docx")
 
 
 def clean_text(text):
@@ -76,6 +93,12 @@ def extract_text_from_pdf(file_path):
     1. 文本PDF：直接使用PyMuPDF提取，保持页面顺序和结构
     2. 图片PDF：如果无法提取文本，将返回空字符串，提示用户使用AI API处理
     """
+    # 检查 PyMuPDF 是否可用
+    if not FITZ_AVAILABLE:
+        print(f"提示: PyMuPDF 未安装，无法直接提取PDF文本。")
+        print(f"      系统将使用AI API处理PDF文件: {file_path}")
+        return ""  # 返回空字符串，让AI API处理
+    
     text = ""
     page_texts = []  # 存储每页文本，保持页面顺序
     
@@ -142,6 +165,10 @@ def extract_text_from_word(file_path):
     从Word文档提取文本
     支持 .docx 格式，提取段落和表格中的内容
     """
+    # 检查 python-docx 是否可用
+    if not DOCX_AVAILABLE:
+        raise Exception("python-docx 未安装，无法解析Word文档。请运行: pip install python-docx")
+    
     # 检查文件是否存在
     if not os.path.exists(file_path):
         raise Exception(f"文件不存在: {file_path}")
