@@ -11,6 +11,7 @@ from datetime import datetime
 from functools import wraps
 from config import Config
 from models import get_db_session, Resume, Position, Interview, User
+from database_manager import get_database_manager
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.ai_extractor import AIExtractor
@@ -100,6 +101,41 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
 
+@app.route('/')
+def index_page():
+    """首页，展示架构和数据库状态"""
+    try:
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        test_result = db_manager.test_connection()
+        
+        # 检查环境变量
+        env_info = {
+            'PORT': os.environ.get('PORT', '未设置'),
+            'HOST': os.environ.get('HOST', '未设置'),
+            'CF_ACCOUNT_ID': '已设置' if os.environ.get('CF_ACCOUNT_ID') else '未设置',
+            'CF_D1_DATABASE_ID': '已设置' if os.environ.get('CF_D1_DATABASE_ID') else '未设置',
+            'CF_API_TOKEN': '已设置' if os.environ.get('CF_API_TOKEN') else '未设置',
+            'DATABASE_PATH': os.environ.get('DATABASE_PATH', '使用默认值'),
+        }
+        
+        return render_template('status.html', 
+                             db_status=db_status,
+                             test_result=test_result,
+                             env_info=env_info)
+    except Exception as e:
+        return f"""
+        <html>
+        <head><title>系统状态</title></head>
+        <body>
+            <h1>系统状态</h1>
+            <p>错误: {str(e)}</p>
+            <p><a href="/health">健康检查</a></p>
+            <p><a href="/api/status">API 状态</a></p>
+        </body>
+        </html>
+        """, 500
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """健康检查端点，供 Railway 等平台监控"""
@@ -107,18 +143,24 @@ def health_check():
         # 确保数据库已初始化
         ensure_database_initialized()
         
-        # 检查数据库连接
-        from sqlalchemy import text
-        db = get_db_session()
-        result = db.execute(text('SELECT 1'))
-        result.fetchone()  # 执行查询
-        db.close()
+        # 使用 DatabaseManager 测试连接
+        db_manager = get_database_manager()
+        test_result = db_manager.test_connection()
         
-        return jsonify({
-            'status': 'healthy',
-            'database': 'connected',
-            'timestamp': datetime.now().isoformat()
-        }), 200
+        if test_result['success']:
+            return jsonify({
+                'status': 'healthy',
+                'database': 'connected',
+                'db_type': test_result.get('db_type', 'unknown'),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        else:
+            return jsonify({
+                'status': 'unhealthy',
+                'database': 'disconnected',
+                'error': test_result.get('error', 'Unknown error'),
+                'timestamp': datetime.now().isoformat()
+            }), 503
     except Exception as e:
         return jsonify({
             'status': 'unhealthy',
@@ -175,28 +217,79 @@ def init_database_api():
             'message': f'数据库初始化失败: {str(e)}'
         }), 500
 
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    """API 状态信息"""
+    try:
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        test_result = db_manager.test_connection()
+        
+        # 环境信息
+        env_info = {
+            'PORT': os.environ.get('PORT', '未设置'),
+            'HOST': os.environ.get('HOST', '未设置'),
+            'CF_ACCOUNT_ID': '已设置' if os.environ.get('CF_ACCOUNT_ID') else '未设置',
+            'CF_D1_DATABASE_ID': '已设置' if os.environ.get('CF_D1_DATABASE_ID') else '未设置',
+            'CF_API_TOKEN': '已设置' if os.environ.get('CF_API_TOKEN') else '未设置',
+            'CF_R2_ACCOUNT_ID': '已设置' if os.environ.get('CF_R2_ACCOUNT_ID') else '未设置',
+            'CF_R2_ACCESS_KEY_ID': '已设置' if os.environ.get('CF_R2_ACCESS_KEY_ID') else '未设置',
+            'CF_R2_SECRET_ACCESS_KEY': '已设置' if os.environ.get('CF_R2_SECRET_ACCESS_KEY') else '未设置',
+            'DATABASE_PATH': os.environ.get('DATABASE_PATH', '使用默认值'),
+        }
+        
+        return jsonify({
+            'success': True,
+            'app': {
+                'name': '智能简历数据库系统',
+                'version': '1.0.0',
+                'status': 'running'
+            },
+            'database': {
+                'status': db_status,
+                'test': test_result
+            },
+            'environment': env_info,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
 @app.route('/api/database/status', methods=['GET'])
 def database_status():
-    """获取数据库状态"""
+    """获取数据库状态（兼容旧接口）"""
     try:
-        db = get_db_session()
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
         
         # 检查表是否存在
         tables_status = {}
         tables_to_check = ['resumes', 'positions', 'interviews', 'users']
         
-        for table_name in tables_to_check:
-            try:
-                db.execute(f'SELECT 1 FROM {table_name} LIMIT 1')
-                tables_status[table_name] = 'exists'
-            except Exception:
-                tables_status[table_name] = 'missing'
-        
-        db.close()
+        if db_status.get('tables'):
+            for table_name in tables_to_check:
+                tables_status[table_name] = 'exists' if table_name in db_status['tables'] else 'missing'
+        else:
+            # 如果无法获取表列表，尝试直接查询
+            db = get_db_session()
+            if db:
+                from sqlalchemy import text
+                for table_name in tables_to_check:
+                    try:
+                        db.execute(text(f'SELECT 1 FROM {table_name} LIMIT 1'))
+                        tables_status[table_name] = 'exists'
+                    except Exception:
+                        tables_status[table_name] = 'missing'
+                db.close()
         
         return jsonify({
             'success': True,
-            'initialized': db_initialized,
+            'initialized': db_status.get('initialized', False),
+            'db_type': db_status.get('db_type', 'unknown'),
             'tables': tables_status,
             'all_tables_exist': all(status == 'exists' for status in tables_status.values())
         })
@@ -205,6 +298,113 @@ def database_status():
             'success': False,
             'error': str(e)
         }), 500
+
+@app.route('/init-db', methods=['GET', 'POST'])
+def init_database_route():
+    """初始化数据库表"""
+    try:
+        from models import init_database, migrate_database
+        
+        # 初始化数据库
+        init_database()
+        migrate_database()
+        
+        # 获取数据库状态
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        
+        return jsonify({
+            'success': True,
+            'message': '数据库初始化成功',
+            'status': db_status,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'数据库初始化失败: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/test-d1', methods=['GET'])
+def test_d1_connection():
+    """测试 D1 数据库连接"""
+    try:
+        db_manager = get_database_manager()
+        test_result = db_manager.test_connection()
+        
+        return jsonify({
+            'success': test_result['success'],
+            'db_type': test_result.get('db_type', 'unknown'),
+            'message': test_result.get('message', ''),
+            'error': test_result.get('error'),
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/env-check', methods=['GET'])
+def env_check():
+    """检查环境变量配置"""
+    env_vars = {
+        'PORT': os.environ.get('PORT'),
+        'HOST': os.environ.get('HOST'),
+        'SECRET_KEY': '已设置' if os.environ.get('SECRET_KEY') else '未设置',
+        'DEBUG': os.environ.get('DEBUG', 'False'),
+        # Cloudflare D1
+        'CF_ACCOUNT_ID': os.environ.get('CF_ACCOUNT_ID'),
+        'CF_D1_DATABASE_ID': os.environ.get('CF_D1_DATABASE_ID'),
+        'CF_API_TOKEN': '已设置' if os.environ.get('CF_API_TOKEN') else '未设置',
+        # Cloudflare R2
+        'CF_R2_ACCOUNT_ID': os.environ.get('CF_R2_ACCOUNT_ID'),
+        'CF_R2_ACCESS_KEY_ID': os.environ.get('CF_R2_ACCESS_KEY_ID'),
+        'CF_R2_SECRET_ACCESS_KEY': '已设置' if os.environ.get('CF_R2_SECRET_ACCESS_KEY') else '未设置',
+        'CF_R2_BUCKET_NAME': os.environ.get('CF_R2_BUCKET_NAME'),
+        # 数据库
+        'DATABASE_PATH': os.environ.get('DATABASE_PATH'),
+        # AI 配置
+        'AI_ENABLED': os.environ.get('AI_ENABLED', 'true'),
+        'AI_API_KEY': '已设置' if os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') else '未设置',
+        'AI_MODEL': os.environ.get('AI_MODEL', 'gpt-3.5-turbo'),
+    }
+    
+    # 检查关键配置
+    checks = {
+        'railway_configured': bool(os.environ.get('PORT')),
+        'd1_configured': bool(os.environ.get('CF_D1_DATABASE_ID') and os.environ.get('CF_ACCOUNT_ID')),
+        'r2_configured': bool(os.environ.get('CF_R2_ACCOUNT_ID') and os.environ.get('CF_R2_ACCESS_KEY_ID')),
+        'database_path_set': bool(os.environ.get('DATABASE_PATH')),
+    }
+    
+    return jsonify({
+        'success': True,
+        'environment_variables': env_vars,
+        'configuration_checks': checks,
+        'recommendations': _get_env_recommendations(checks),
+        'timestamp': datetime.now().isoformat()
+    })
+
+def _get_env_recommendations(checks: dict) -> list:
+    """获取环境配置建议"""
+    recommendations = []
+    
+    if not checks['railway_configured']:
+        recommendations.append('建议设置 PORT 环境变量（Railway 会自动设置）')
+    
+    if not checks['d1_configured']:
+        recommendations.append('如需使用 Cloudflare D1，请设置 CF_ACCOUNT_ID 和 CF_D1_DATABASE_ID')
+    
+    if not checks['r2_configured']:
+        recommendations.append('如需使用 Cloudflare R2，请设置 CF_R2_ACCOUNT_ID 和 CF_R2_ACCESS_KEY_ID')
+    
+    if not os.environ.get('SECRET_KEY'):
+        recommendations.append('建议设置 SECRET_KEY 环境变量以提高安全性')
+    
+    return recommendations
 
 @app.route('/api/education-levels', methods=['GET'])
 def get_education_levels():
@@ -366,9 +566,9 @@ def get_current_user():
     finally:
         db.close()
 
-@app.route('/')
+@app.route('/app')
 def index():
-    """首页"""
+    """应用首页（需要登录）"""
     # 检查是否已登录
     if 'user_id' not in session:
         return redirect(url_for('login_page'))
