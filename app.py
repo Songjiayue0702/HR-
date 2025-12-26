@@ -41,20 +41,18 @@ def initialize_app():
         # 设置NLTK数据路径
         nltk.data.path.append(nltk_data_path)
         
-        # 尝试下载必要的数据（如果不存在）
+        # 检查必要的数据（如果不存在，不阻塞启动）
         try:
             nltk.data.find('tokenizers/punkt')
+            print("✓ NLTK punkt数据已存在")
         except LookupError:
-            print("正在下载NLTK punkt数据...")
-            nltk.download('punkt', quiet=True, download_dir=nltk_data_path)
+            print("⚠ NLTK punkt数据不存在（将在需要时下载，不阻塞启动）")
         
         try:
             nltk.data.find('tokenizers/punkt_tab')
+            print("✓ NLTK punkt_tab数据已存在")
         except LookupError:
-            print("正在下载NLTK punkt_tab数据...")
-            nltk.download('punkt_tab', quiet=True, download_dir=nltk_data_path)
-        
-        print("✓ NLTK数据已准备")
+            print("⚠ NLTK punkt_tab数据不存在（将在需要时下载，不阻塞启动）")
     except ImportError:
         print("⚠ NLTK未安装，跳过NLTK数据下载")
     except Exception as e:
@@ -79,12 +77,15 @@ def initialize_app():
     except ImportError:
         print("⚠ pytesseract (OCR) 未安装")
     
-    print("=" * 60)
-    print("应用初始化完成")
-    print("=" * 60)
+        print("=" * 60)
+        print("应用初始化完成")
+        print("=" * 60)
+    except Exception as e:
+        # 初始化失败不应该阻止应用启动
+        print(f"⚠ 初始化过程中出现错误: {e}")
+        print("应用将继续启动...")
 
-# 执行初始化
-initialize_app()
+# 初始化将在应用启动时执行（见文件末尾）
 from models import get_db_session, Resume, Position, Interview, User, GlobalAIConfig
 from database_manager import get_database_manager
 from utils.file_parser import extract_text
@@ -4225,6 +4226,13 @@ def analyze_resume_match(resume_id):
         }), 500
 
 if __name__ == '__main__':
+    # 执行初始化（仅在直接运行时）
+    try:
+        initialize_app()
+    except Exception as e:
+        print(f"⚠ 初始化警告: {e}")
+        print("应用将继续启动...")
+    
     import socket
     import sys
     
