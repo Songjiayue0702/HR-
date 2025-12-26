@@ -10,7 +10,7 @@ import secrets
 from datetime import datetime
 from functools import wraps
 from config import Config
-from models import get_db_session, Resume, Position, Interview, User
+from models import get_db_session, Resume, Position, Interview, User, GlobalAIConfig
 from database_manager import get_database_manager
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
@@ -99,6 +99,96 @@ def allowed_file(filename):
     """检查文件扩展名是否允许"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+
+# ============================================================================
+# AI配置管理辅助函数
+# ============================================================================
+
+def get_effective_ai_config():
+    """
+    获取当前有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
+    
+    Returns:
+        dict: AI配置字典，包含：
+            - ai_enabled: bool
+            - ai_api_key: str
+            - ai_api_base: str
+            - ai_model: str
+    """
+    config = {
+        'ai_enabled': True,
+        'ai_api_key': '',
+        'ai_api_base': '',
+        'ai_model': 'gpt-3.5-turbo'
+    }
+    
+    # 优先级1: 用户session配置（临时配置）
+    if 'ai_config' in session and isinstance(session['ai_config'], dict):
+        user_config = session['ai_config']
+        if user_config.get('ai_enabled') is not None:
+            config['ai_enabled'] = bool(user_config.get('ai_enabled'))
+        if user_config.get('ai_api_key'):
+            config['ai_api_key'] = user_config.get('ai_api_key', '')
+        if user_config.get('ai_api_base'):
+            config['ai_api_base'] = user_config.get('ai_api_base', '')
+        if user_config.get('ai_model'):
+            config['ai_model'] = user_config.get('ai_model', 'gpt-3.5-turbo')
+        return config
+    
+    # 优先级2: 全局配置（管理员设置，存储在数据库）
+    db = get_db_session()
+    try:
+        global_config = db.query(GlobalAIConfig).first()
+        if global_config:
+            from utils.encryption import decrypt_value
+            config['ai_enabled'] = bool(global_config.ai_enabled)
+            config['ai_api_key'] = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
+            config['ai_api_base'] = global_config.ai_api_base or ''
+            config['ai_model'] = global_config.ai_model or 'gpt-3.5-turbo'
+            return config
+    finally:
+        db.close()
+    
+    # 优先级3: 环境变量（默认配置）
+    config['ai_enabled'] = Config.AI_ENABLED
+    config['ai_api_key'] = Config.AI_API_KEY
+    config['ai_api_base'] = Config.AI_API_BASE
+    config['ai_model'] = Config.AI_MODEL
+    
+    return config
+
+def create_ai_extractor(ai_config=None):
+    """
+    创建AI提取器实例
+    
+    Args:
+        ai_config: 可选的AI配置字典，如果为None则使用get_effective_ai_config()
+    
+    Returns:
+        AIExtractor实例或None（如果AI未启用）
+    """
+    if ai_config is None:
+        ai_config = get_effective_ai_config()
+    
+    # 检查AI是否启用
+    if not ai_config.get('ai_enabled', True):
+        return None
+    
+    # 检查API密钥
+    api_key = ai_config.get('ai_api_key', '')
+    if not api_key:
+        return None
+    
+    try:
+        return AIExtractor(
+            api_key=api_key,
+            api_base=ai_config.get('ai_api_base', ''),
+            model=ai_config.get('ai_model', 'gpt-3.5-turbo')
+        )
+    except Exception as e:
+        print(f"创建AI提取器失败: {e}")
+        return None
 
 
 @app.route('/')
@@ -270,6 +360,276 @@ def api_status():
             'success': False,
             'error': str(e),
             'timestamp': datetime.now().isoformat()
+        }), 500
+
+# ============================================================================
+# AI配置管理API - 管理员全局配置
+# ============================================================================
+
+@app.route('/api/admin/ai-config', methods=['GET'])
+@admin_required
+def get_global_ai_config():
+    """获取全局AI配置（管理员权限）"""
+    try:
+        db = get_db_session()
+        try:
+            global_config = db.query(GlobalAIConfig).first()
+            if global_config:
+                return jsonify({
+                    'success': True,
+                    'data': global_config.to_dict(include_key=True)
+                })
+            else:
+                # 返回默认配置
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'id': None,
+                        'ai_enabled': Config.AI_ENABLED,
+                        'ai_api_key': '',
+                        'ai_api_key_set': False,
+                        'ai_api_base': Config.AI_API_BASE,
+                        'ai_model': Config.AI_MODEL,
+                        'created_by': None,
+                        'updated_by': None,
+                        'created_at': None,
+                        'updated_at': None
+                    }
+                })
+        finally:
+            db.close()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/admin/ai-config', methods=['POST'])
+@admin_required
+def set_global_ai_config():
+    """设置全局AI配置（管理员权限）"""
+    try:
+        data = request.json or {}
+        
+        # 验证必填字段
+        ai_enabled = data.get('ai_enabled', True)
+        ai_model = data.get('ai_model', 'gpt-3.5-turbo')
+        
+        # 获取当前用户
+        current_user = get_current_user()
+        username = current_user.username if current_user else 'admin'
+        
+        db = get_db_session()
+        try:
+            # 查找或创建全局配置（单例模式）
+            global_config = db.query(GlobalAIConfig).first()
+            
+            if not global_config:
+                global_config = GlobalAIConfig()
+                global_config.created_by = username
+                db.add(global_config)
+            
+            # 更新配置
+            global_config.ai_enabled = 1 if ai_enabled else 0
+            global_config.ai_model = ai_model
+            global_config.ai_api_base = data.get('ai_api_base', '')
+            global_config.updated_by = username
+            
+            # 处理API密钥（加密存储）
+            if 'ai_api_key' in data:
+                api_key = data.get('ai_api_key', '').strip()
+                if api_key:
+                    from utils.encryption import encrypt_value
+                    global_config.ai_api_key = encrypt_value(api_key)
+                elif api_key == '':
+                    # 如果传入空字符串，清除密钥
+                    global_config.ai_api_key = None
+            
+            db.commit()
+            
+            return jsonify({
+                'success': True,
+                'message': '全局AI配置已保存',
+                'data': global_config.to_dict(include_key=False)
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'保存配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/admin/ai-config/test', methods=['POST'])
+@admin_required
+def test_global_ai_config():
+    """测试全局AI配置连接（管理员权限）"""
+    try:
+        data = request.json or {}
+        
+        # 构建测试配置
+        test_config = {
+            'ai_enabled': data.get('ai_enabled', True),
+            'ai_api_key': data.get('ai_api_key', ''),
+            'ai_api_base': data.get('ai_api_base', ''),
+            'ai_model': data.get('ai_model', 'gpt-3.5-turbo')
+        }
+        
+        # 创建AI提取器并测试
+        ai_extractor = create_ai_extractor(test_config)
+        if not ai_extractor:
+            return jsonify({
+                'success': False,
+                'message': 'AI未启用或API密钥为空'
+            }), 400
+        
+        # 执行简单测试
+        try:
+            test_result = ai_extractor.extract_info("测试文本：姓名张三，年龄25岁")
+            if test_result:
+                return jsonify({
+                    'success': True,
+                    'message': 'AI配置测试成功',
+                    'test_result': test_result
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI配置测试失败：未返回结果'
+                }), 400
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'AI配置测试失败: {str(e)}'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 500
+
+# ============================================================================
+# AI配置管理API - 用户个人配置
+# ============================================================================
+
+@app.route('/api/user/ai-config', methods=['GET'])
+@login_required
+def get_user_ai_config():
+    """获取用户个人AI配置（登录用户）"""
+    try:
+        user_config = session.get('ai_config', {})
+        return jsonify({
+            'success': True,
+            'data': user_config if user_config else {
+                'ai_enabled': None,
+                'ai_api_key': '',
+                'ai_api_base': '',
+                'ai_model': ''
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/user/ai-config', methods=['POST'])
+@login_required
+def set_user_ai_config():
+    """设置用户个人AI配置（登录用户，存储在session）"""
+    try:
+        data = request.json or {}
+        
+        # 更新session中的配置
+        user_config = {
+            'ai_enabled': data.get('ai_enabled'),
+            'ai_api_key': data.get('ai_api_key', '').strip(),
+            'ai_api_base': data.get('ai_api_base', '').strip(),
+            'ai_model': data.get('ai_model', 'gpt-3.5-turbo')
+        }
+        
+        # 只保存非空值
+        session['ai_config'] = {k: v for k, v in user_config.items() if v is not None and v != ''}
+        
+        return jsonify({
+            'success': True,
+            'message': '个人AI配置已保存',
+            'data': session.get('ai_config', {})
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'保存配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/user/ai-config', methods=['DELETE'])
+@login_required
+def clear_user_ai_config():
+    """清除用户个人AI配置（登录用户）"""
+    try:
+        if 'ai_config' in session:
+            del session['ai_config']
+        
+        return jsonify({
+            'success': True,
+            'message': '个人AI配置已清除，将使用全局配置或环境变量'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'清除配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/user/ai-config/test', methods=['POST'])
+@login_required
+def test_user_ai_config():
+    """测试用户个人AI配置连接（登录用户）"""
+    try:
+        data = request.json or {}
+        
+        # 构建测试配置（优先使用请求中的配置，否则使用session中的配置）
+        if data:
+            test_config = {
+                'ai_enabled': data.get('ai_enabled', True),
+                'ai_api_key': data.get('ai_api_key', ''),
+                'ai_api_base': data.get('ai_api_base', ''),
+                'ai_model': data.get('ai_model', 'gpt-3.5-turbo')
+            }
+        else:
+            # 使用当前有效的配置
+            test_config = get_effective_ai_config()
+        
+        # 创建AI提取器并测试
+        ai_extractor = create_ai_extractor(test_config)
+        if not ai_extractor:
+            return jsonify({
+                'success': False,
+                'message': 'AI未启用或API密钥为空'
+            }), 400
+        
+        # 执行简单测试
+        try:
+            test_result = ai_extractor.extract_info("测试文本：姓名张三，年龄25岁")
+            if test_result:
+                return jsonify({
+                    'success': True,
+                    'message': 'AI配置测试成功',
+                    'test_result': test_result
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI配置测试失败：未返回结果'
+                }), 400
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'AI配置测试失败: {str(e)}'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
         }), 500
 
 @app.route('/api/database/status', methods=['GET'])
@@ -446,26 +806,37 @@ def process_resume_async(resume_id, file_path):
         file_ext = os.path.splitext(file_path)[1].lower()
         is_word_file = file_ext in ['.doc', '.docx']
         
-        # 检查是否启用AI（从配置或请求参数）
-        ai_enabled = app.config.get('AI_ENABLED', True)
-        ai_api_key = app.config.get('AI_API_KEY', '')
-        ai_api_base = app.config.get('AI_API_BASE', '')
-        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
-        
-        # 如果配置中没有API密钥，尝试从环境变量获取
-        if not ai_api_key:
-            ai_api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or os.environ.get('DEEPSEEK_API_KEY') or ''
+        # 异步任务使用全局配置（不依赖session）
+        # 优先级：全局配置 > 环境变量
+        db_config = get_db_session()
+        try:
+            global_config = db_config.query(GlobalAIConfig).first()
+            if global_config:
+                from utils.encryption import decrypt_value
+                ai_enabled = bool(global_config.ai_enabled)
+                ai_api_key = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
+                ai_api_base = global_config.ai_api_base or ''
+                ai_model = global_config.ai_model or 'gpt-3.5-turbo'
+            else:
+                # 使用环境变量
+                ai_enabled = Config.AI_ENABLED
+                ai_api_key = Config.AI_API_KEY
+                ai_api_base = Config.AI_API_BASE
+                ai_model = Config.AI_MODEL
+        finally:
+            db_config.close()
         
         # 如果链接了AI API，优先使用AI优化文本提取
         text = raw_text
         ai_extractor = None
         if ai_enabled and ai_api_key:
             try:
-                ai_extractor = AIExtractor(
-                    api_key=ai_api_key,
-                    api_base=ai_api_base if ai_api_base else None,
-                    model=ai_model
-                )
+                ai_extractor = create_ai_extractor({
+                    'ai_enabled': ai_enabled,
+                    'ai_api_key': ai_api_key,
+                    'ai_api_base': ai_api_base,
+                    'ai_model': ai_model
+                })
                 # 使用AI优化文本提取
                 optimized_text = ai_extractor.optimize_text_extraction(raw_text)
                 if optimized_text:
@@ -2368,6 +2739,9 @@ def analyze_interview_doc(interview_id):
             session.close()
             return jsonify({'success': False, 'message': '文档文件不存在，请重新上传'}), 400
 
+        # 获取有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
+        ai_config = get_effective_ai_config()
+        
         # 提取文档文本
         try:
             doc_text = extract_text(file_path)
@@ -2379,23 +2753,12 @@ def analyze_interview_doc(interview_id):
             session.close()
             return jsonify({'success': False, 'message': '文档内容为空，无法分析'}), 400
 
-        # 检查AI配置
-        ai_enabled = app.config.get('AI_ENABLED', True)
-        ai_api_key = app.config.get('AI_API_KEY', '')
-        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
-        ai_api_base = app.config.get('AI_API_BASE', '')
-
-        if not ai_enabled or not ai_api_key:
+        # 使用有效的AI配置创建提取器
+        ai_extractor = create_ai_extractor(ai_config)
+        
+        if not ai_extractor:
             session.close()
             return jsonify({'success': False, 'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'}), 400
-
-        # 使用AI进行面试文档分析
-        from utils.ai_extractor import AIExtractor
-        ai_extractor = AIExtractor(
-            api_key=ai_api_key,
-            api_base=ai_api_base if ai_api_base else None,
-            model=ai_model
-        )
 
         # 读取岗位信息（用于结合岗位要求分析）
         position_info_text = ""
@@ -3386,25 +3749,17 @@ def analyze_resume_match(resume_id):
         
         session.close()
         
-        # 检查AI配置
-        ai_enabled = app.config.get('AI_ENABLED', True)
-        ai_api_key = app.config.get('AI_API_KEY', '')
-        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
-        ai_api_base = app.config.get('AI_API_BASE', '')
+        # 获取有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
+        ai_config = get_effective_ai_config()
         
-        if not ai_enabled or not ai_api_key:
+        # 创建AI提取器
+        ai_extractor = create_ai_extractor(ai_config)
+        
+        if not ai_extractor:
             return jsonify({
                 'success': False,
                 'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'
             }), 400
-        
-        # 使用AI进行匹配度分析
-        from utils.ai_extractor import AIExtractor
-        ai_extractor = AIExtractor(
-            api_key=ai_api_key,
-            api_base=ai_api_base if ai_api_base else None,
-            model=ai_model
-        )
         
         # 构建分析提示
         resume_info = f"""

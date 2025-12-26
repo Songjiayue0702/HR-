@@ -431,6 +431,51 @@ class Interview(Base):
             'registration_form_token': self.registration_form_token,
         }
 
+class GlobalAIConfig(Base):
+    """全局AI配置数据模型（管理员设置）"""
+    __tablename__ = 'global_ai_config'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 配置项（单例模式，只保留一条记录）
+    ai_enabled = Column(Integer, default=1)  # 是否启用AI：1 启用，0 禁用
+    ai_api_key = Column(Text)  # API密钥（加密存储）
+    ai_api_base = Column(String(500))  # API基础URL
+    ai_model = Column(String(100), default='gpt-3.5-turbo')  # AI模型
+    
+    # 操作记录
+    created_by = Column(String(100))  # 创建者（管理员用户名）
+    updated_by = Column(String(100))  # 最后更新者
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    def to_dict(self, include_key=False):
+        """
+        转换为字典
+        
+        Args:
+            include_key: 是否包含API密钥（解密后）
+        """
+        result = {
+            'id': self.id,
+            'ai_enabled': bool(self.ai_enabled),
+            'ai_api_base': self.ai_api_base,
+            'ai_model': self.ai_model,
+            'created_by': self.created_by,
+            'updated_by': self.updated_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+        
+        if include_key:
+            # 解密API密钥
+            from utils.encryption import decrypt_value
+            result['ai_api_key'] = decrypt_value(self.ai_api_key) if self.ai_api_key else ''
+        else:
+            # 不返回密钥，只返回是否已设置
+            result['ai_api_key_set'] = bool(self.ai_api_key)
+        
+        return result
+
 class User(Base):
     """用户数据模型"""
     __tablename__ = 'users'
