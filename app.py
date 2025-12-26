@@ -107,6 +107,8 @@ from sqlalchemy import and_
 from sqlalchemy.orm import make_transient
 import traceback
 import sys
+import re
+import re
 
 
 center_wrap_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -859,7 +861,6 @@ def test_parser():
                     pdf_doc.close()
                     
                     text = "\n\n".join(page_texts)
-                    import re
                     chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
                     
                     results['methods']['PyMuPDF'] = {
@@ -895,8 +896,7 @@ def test_parser():
                                 page_texts.append(page_text.strip())
                         
                         text = "\n\n".join(page_texts)
-                        import re
-                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                        chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
                         
                         results['methods']['pdfplumber'] = {
                             'success': True,
@@ -943,7 +943,6 @@ def test_parser():
                     pdf_doc.close()
                     
                     text = "\n\n".join(ocr_texts)
-                    import re
                     chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
                     
                     results['methods']['OCR'] = {
