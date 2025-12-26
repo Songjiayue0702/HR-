@@ -15,6 +15,7 @@ pytesseract==0.3.10
 Pillow==10.2.0
 nltk==3.8.1
 certifi>=2023.0.0
+pdfminer.six==20221105
 
 # OCR功能已移除，所有文档通过AI API处理
 # 如需处理图片PDF，请配置AI API（支持图片识别）

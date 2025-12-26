@@ -269,6 +269,268 @@ def create_ai_extractor(ai_config=None):
         return None
 
 
+# ============================================================================
+# 智能PDF解析功能
+# ============================================================================
+
+def extract_with_pymupdf(file_path):
+    """使用PyMuPDF提取PDF文本"""
+    try:
+        from utils.file_parser import FITZ_AVAILABLE
+        if not FITZ_AVAILABLE:
+            return ""
+        
+        import fitz
+        pdf_doc = fitz.open(file_path)
+        page_texts = []
+        
+        for page_num in range(len(pdf_doc)):
+            page = pdf_doc[page_num]
+            page_text = page.get_text()
+            if page_text:
+                page_texts.append(page_text.strip())
+        
+        pdf_doc.close()
+        return "\n\n".join(page_texts)
+    except Exception as e:
+        print(f"PyMuPDF提取失败: {e}")
+        return ""
+
+def extract_with_pdfplumber(file_path):
+    """使用pdfplumber提取PDF文本（保持布局）"""
+    try:
+        from utils.file_parser import PDFPLUMBER_AVAILABLE
+        if not PDFPLUMBER_AVAILABLE:
+            return ""
+        
+        import pdfplumber
+        page_texts = []
+        
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    page_texts.append(page_text.strip())
+        
+        return "\n\n".join(page_texts)
+    except Exception as e:
+        print(f"pdfplumber提取失败: {e}")
+        return ""
+
+def extract_with_pdfminer(file_path):
+    """使用pdfminer提取PDF文本（中文优化）"""
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract
+        text = pdfminer_extract(file_path)
+        return text.strip() if text else ""
+    except ImportError:
+        print("pdfminer.six 未安装，跳过pdfminer提取")
+        return ""
+    except Exception as e:
+        print(f"pdfminer提取失败: {e}")
+        return ""
+
+def select_best_result(results):
+    """
+    从多个提取结果中选择最佳结果
+    
+    Args:
+        results: [(method_name, text), ...] 格式的列表
+    
+    Returns:
+        最佳文本内容
+    """
+    if not results:
+        return ""
+    
+    best_text = ""
+    best_score = 0
+    
+    for method_name, text in results:
+        if not text or not text.strip():
+            continue
+        
+        # 计算评分：文本长度 + 中文字符数 * 2
+        text_length = len(text)
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+        unique_chars = len(set(text))
+        
+        # 判断是否为有效文本
+        if text_length < 50:
+            continue
+        
+        chinese_ratio = chinese_chars / text_length if text_length > 0 else 0
+        
+        # 评分标准：中文字符数、文本长度、唯一字符数
+        score = text_length + chinese_chars * 2 + unique_chars
+        
+        # 如果中文字符占比太低，降低评分
+        if chinese_ratio < 0.05:
+            score *= 0.5
+        
+        if score > best_score:
+            best_score = score
+            best_text = text
+    
+    return best_text if best_text else (results[0][1] if results else "")
+
+def should_merge(prev_line, current_line):
+    """
+    判断两行是否应该合并
+    
+    Args:
+        prev_line: 前一行文本
+        current_line: 当前行文本
+    
+    Returns:
+        bool: 是否应该合并
+    """
+    if not prev_line or not current_line:
+        return False
+    
+    # 如果前一行以中文标点结束，不合并
+    if re.search(r'[。！？；：，、]$', prev_line):
+        return False
+    
+    # 如果前一行以英文标点结束，不合并
+    if re.search(r'[.!?;:,\-]$', prev_line):
+        return False
+    
+    # 如果当前行以标点符号开头，不合并
+    if re.match(r'^[。！？；：，、.!?;:]', current_line):
+        return False
+    
+    # 如果前一行以数字或字母结尾，当前行以数字或字母开头，可能需要合并
+    if re.search(r'[0-9a-zA-Z]$', prev_line) and re.match(r'^[0-9a-zA-Z]', current_line):
+        return True
+    
+    # 如果前一行以中文字符结尾，当前行以中文字符开头，可能需要合并
+    if re.search(r'[\u4e00-\u9fa5]$', prev_line) and re.match(r'^[\u4e00-\u9fa5]', current_line):
+        # 检查前一行长度，如果太短可能是被错误分割的
+        if len(prev_line) < 20:
+            return True
+    
+    # 如果前一行以空格或短横线结尾，可能是被错误分割的
+    if prev_line.endswith(' ') or prev_line.endswith('-'):
+        return True
+    
+    return False
+
+def is_complete_sentence(text):
+    """
+    判断文本是否是完整的句子
+    
+    Args:
+        text: 文本内容
+    
+    Returns:
+        bool: 是否是完整句子
+    """
+    if not text:
+        return False
+    
+    # 以中文标点结束
+    if re.search(r'[。！？；]$', text):
+        return True
+    
+    # 以英文标点结束
+    if re.search(r'[.!?;]$', text):
+        return True
+    
+    # 如果文本长度超过50且包含多个中文字符，可能是完整段落
+    if len(text) > 50 and len(re.findall(r'[\u4e00-\u9fa5]', text)) > 10:
+        return True
+    
+    return False
+
+def repair_line_breaks(text):
+    """
+    修复PDF提取的行混乱问题
+    合并被错误分割的中文行
+    
+    Args:
+        text: 原始文本
+    
+    Returns:
+        修复后的文本
+    """
+    if not text:
+        return text
+    
+    lines = text.split('\n')
+    repaired = []
+    buffer = ""
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            # 空行：如果buffer有内容，先保存buffer
+            if buffer:
+                repaired.append(buffer)
+                buffer = ""
+            continue
+        
+        if buffer:
+            # 判断是否需要合并
+            if should_merge(buffer, line):
+                buffer += line
+            else:
+                # 不合并，保存buffer，开始新行
+                repaired.append(buffer)
+                buffer = line
+        else:
+            buffer = line
+        
+        # 检查buffer是否完整（以标点结束）
+        if is_complete_sentence(buffer):
+            repaired.append(buffer)
+            buffer = ""
+    
+    # 处理剩余的buffer
+    if buffer:
+        repaired.append(buffer)
+    
+    return '\n'.join(repaired)
+
+def extract_pdf_intelligent(file_path):
+    """
+    智能PDF提取：尝试多种方法，选择最佳结果，并修复行混乱问题
+    
+    Args:
+        file_path: PDF文件路径
+    
+    Returns:
+        提取并修复后的文本
+    """
+    results = []
+    
+    # 方法1：PyMuPDF（快速）
+    text1 = extract_with_pymupdf(file_path)
+    if text1:
+        results.append(("pymupdf", text1))
+    
+    # 方法2：pdfplumber（布局保持）
+    text2 = extract_with_pdfplumber(file_path)
+    if text2:
+        results.append(("pdfplumber", text2))
+    
+    # 方法3：pdfminer（中文优化）
+    text3 = extract_with_pdfminer(file_path)
+    if text3:
+        results.append(("pdfminer", text3))
+    
+    # 选择字符最多且中文比例合理的结果
+    best_text = select_best_result(results)
+    
+    if not best_text:
+        return ""
+    
+    # 修复行混乱问题
+    repaired_text = repair_line_breaks(best_text)
+    
+    return repaired_text
+
+
 @app.route('/')
 def index():
     """
@@ -1063,14 +1325,20 @@ def process_resume_async(resume_id, file_path):
         resume.parse_status = 'processing'
         db.commit()
         
-        # 提取文本
-        raw_text = extract_text(file_path)
-        if not raw_text:
-            raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
-        
         # 检测文件类型
         file_ext = os.path.splitext(file_path)[1].lower()
         is_word_file = file_ext in ['.doc', '.docx']
+        
+        # 提取文本（PDF使用智能提取，Word使用原有方法）
+        if file_ext == '.pdf':
+            # PDF文件使用智能提取（多方法融合+行修复）
+            raw_text = extract_pdf_intelligent(file_path)
+        else:
+            # Word文件使用原有方法
+            raw_text = extract_text(file_path)
+        
+        if not raw_text:
+            raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
         
         # 异步任务使用全局配置（不依赖session）
         # 优先级：全局配置 > 环境变量
@@ -3008,9 +3276,13 @@ def analyze_interview_doc(interview_id):
         # 获取有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
         ai_config = get_effective_ai_config()
         
-        # 提取文档文本
+        # 提取文档文本（PDF使用智能提取）
         try:
-            doc_text = extract_text(file_path)
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext == '.pdf':
+                doc_text = extract_pdf_intelligent(file_path)
+            else:
+                doc_text = extract_text(file_path)
         except Exception as e:
             session.close()
             return jsonify({'success': False, 'message': f'文档内容提取失败: {str(e)}'}), 500
