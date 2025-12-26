@@ -102,8 +102,21 @@ def allowed_file(filename):
 
 
 @app.route('/')
-def index_page():
-    """首页，展示架构和数据库状态"""
+def index():
+    """
+    首页 - 智能重定向
+    - 未登录用户：重定向到登录页面
+    - 已登录用户：重定向到应用主页面
+    """
+    # 检查是否已登录
+    if 'user_id' not in session:
+        return redirect(url_for('login_page'))
+    else:
+        return redirect(url_for('app_index'))
+
+@app.route('/system-status')
+def system_status():
+    """系统状态页面 - 展示架构和数据库状态"""
     try:
         db_manager = get_database_manager()
         db_status = db_manager.get_status()
@@ -567,7 +580,7 @@ def get_current_user():
         db.close()
 
 @app.route('/app')
-def index():
+def app_index():
     """应用首页（需要登录）"""
     # 检查是否已登录
     if 'user_id' not in session:
@@ -577,8 +590,9 @@ def index():
 @app.route('/login', methods=['GET'])
 def login_page():
     """登录页面"""
+    # 如果已登录，重定向到应用主页面
     if 'user_id' in session:
-        return redirect(url_for('index'))
+        return redirect(url_for('app_index'))
     return render_template('login.html')
 
 @app.route('/api/login', methods=['POST'])
