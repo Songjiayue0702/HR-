@@ -76,14 +76,21 @@ async def forward(request):
 
 
 # Cloudflare Workers Python 事件处理器
-# 定义 fetch 处理函数
-async def fetch_handler(request, env):
+# Python Workers 会自动识别名为 'fetch' 的异步函数作为事件处理器
+# 函数签名必须是: async def fetch(request, env)
+# 注意：Python 不支持 export 变量，直接定义 fetch 函数即可
+async def fetch(request, env):
     """
     Worker 入口函数 - 处理所有 HTTP 请求
     
+    Cloudflare Workers Python 会自动将此函数注册为 fetch 事件处理器
+    
     Args:
-        request: Request 对象
-        env: 环境变量和绑定（包含 DB, UPLOADS_BUCKET, EXPORTS_BUCKET 等）
+        request: Request 对象，包含请求信息
+        env: 环境变量和绑定对象，包含：
+            - DB: D1 数据库绑定
+            - UPLOADS_BUCKET: R2 存储桶绑定（上传文件）
+            - EXPORTS_BUCKET: R2 存储桶绑定（导出文件）
     
     Returns:
         Response 对象
@@ -101,10 +108,3 @@ async def fetch_handler(request, env):
         traceback.print_exc()
         from js import Response
         return with_cors(Response.new("Internal Server Error", {"status": 500}))
-
-
-# Cloudflare Workers Python 要求显式导出 fetch 函数
-# 使用 export 字典导出事件处理器
-export = {
-    "fetch": fetch_handler
-}
