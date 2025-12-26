@@ -75,11 +75,25 @@ async def forward(request):
     return with_cors(resp)
 
 
-async def fetch(request, env):
-    """Worker 入口 - Python Workers 必须使用这个函数名 (Python Workers)"""
+# Cloudflare Workers Python 事件处理器
+# 定义 fetch 处理函数
+async def fetch_handler(request, env):
+    """
+    Worker 入口函数 - 处理所有 HTTP 请求
+    
+    Args:
+        request: Request 对象
+        env: 环境变量和绑定（包含 DB, UPLOADS_BUCKET, EXPORTS_BUCKET 等）
+    
+    Returns:
+        Response 对象
+    """
     try:
+        # 处理 CORS 预检请求
         if request.method == "OPTIONS":
             return await handle_options()
+        
+        # 转发其他请求到后端
         return await forward(request)
     except Exception as e:
         print(f"Proxy error: {e}")
@@ -89,6 +103,8 @@ async def fetch(request, env):
         return with_cors(Response.new("Internal Server Error", {"status": 500}))
 
 
-# Cloudflare Workers Python 事件处理器注册
-# 使用 export 字典注册 fetch 处理器
-export = {"fetch": fetch}
+# Cloudflare Workers Python 要求显式导出 fetch 函数
+# 使用 export 字典导出事件处理器
+export = {
+    "fetch": fetch_handler
+}
