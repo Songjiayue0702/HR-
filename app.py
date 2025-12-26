@@ -10,6 +10,81 @@ import secrets
 from datetime import datetime
 from functools import wraps
 from config import Config
+import ssl
+import certifi
+
+# ============================================================================
+# 启动时初始化
+# ============================================================================
+
+def initialize_app():
+    """应用启动时的初始化操作"""
+    print("=" * 60)
+    print("应用初始化中...")
+    print("=" * 60)
+    
+    # 1. SSL上下文设置（解决证书验证问题）
+    try:
+        # 设置默认SSL上下文
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        ssl._create_default_https_context = ssl._create_unverified_context
+        print("✓ SSL上下文已设置")
+    except Exception as e:
+        print(f"⚠ SSL上下文设置失败: {e}")
+    
+    # 2. NLTK数据下载（如果需要）
+    try:
+        import nltk
+        nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
+        os.makedirs(nltk_data_path, exist_ok=True)
+        
+        # 设置NLTK数据路径
+        nltk.data.path.append(nltk_data_path)
+        
+        # 尝试下载必要的数据（如果不存在）
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+            print("正在下载NLTK punkt数据...")
+            nltk.download('punkt', quiet=True, download_dir=nltk_data_path)
+        
+        try:
+            nltk.data.find('tokenizers/punkt_tab')
+        except LookupError:
+            print("正在下载NLTK punkt_tab数据...")
+            nltk.download('punkt_tab', quiet=True, download_dir=nltk_data_path)
+        
+        print("✓ NLTK数据已准备")
+    except ImportError:
+        print("⚠ NLTK未安装，跳过NLTK数据下载")
+    except Exception as e:
+        print(f"⚠ NLTK数据下载失败: {e}")
+    
+    # 3. 检查PDF解析库
+    try:
+        import fitz
+        print("✓ PyMuPDF (fitz) 可用")
+    except ImportError:
+        print("⚠ PyMuPDF (fitz) 未安装")
+    
+    try:
+        import pdfplumber
+        print("✓ pdfplumber 可用")
+    except ImportError:
+        print("⚠ pdfplumber 未安装")
+    
+    try:
+        import pytesseract
+        print("✓ pytesseract (OCR) 可用")
+    except ImportError:
+        print("⚠ pytesseract (OCR) 未安装")
+    
+    print("=" * 60)
+    print("应用初始化完成")
+    print("=" * 60)
+
+# 执行初始化
+initialize_app()
 from models import get_db_session, Resume, Position, Interview, User, GlobalAIConfig
 from database_manager import get_database_manager
 from utils.file_parser import extract_text
@@ -718,6 +793,197 @@ def test_d1_connection():
             'success': False,
             'error': str(e),
             'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/test-parser', methods=['POST'])
+@login_required
+def test_parser():
+    """
+    测试PDF解析功能 - 对比三种解析方法的效果
+    
+    请求体：
+    {
+        "file_path": "文件路径（相对于uploads目录）",
+        "test_methods": ["PyMuPDF", "pdfplumber", "OCR"]  # 可选，默认全部测试
+    }
+    """
+    try:
+        data = request.json or {}
+        file_path = data.get('file_path', '')
+        
+        if not file_path:
+            return jsonify({
+                'success': False,
+                'message': '请提供文件路径'
+            }), 400
+        
+        # 构建完整路径
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], file_path)
+        if not os.path.exists(full_path):
+            return jsonify({
+                'success': False,
+                'message': f'文件不存在: {file_path}'
+            }), 404
+        
+        # 检查文件类型
+        file_ext = os.path.splitext(full_path)[1].lower()
+        if file_ext != '.pdf':
+            return jsonify({
+                'success': False,
+                'message': '目前仅支持PDF文件测试'
+            }), 400
+        
+        test_methods = data.get('test_methods', ['PyMuPDF', 'pdfplumber', 'OCR'])
+        results = {
+            'file_path': file_path,
+            'file_size': os.path.getsize(full_path),
+            'methods': {}
+        }
+        
+        # 测试 PyMuPDF
+        if 'PyMuPDF' in test_methods:
+            try:
+                from utils.file_parser import FITZ_AVAILABLE
+                if FITZ_AVAILABLE:
+                    import fitz
+                    pdf_doc = fitz.open(full_path)
+                    page_count = len(pdf_doc)
+                    
+                    page_texts = []
+                    for page_num in range(page_count):
+                        page = pdf_doc[page_num]
+                        page_text = page.get_text()
+                        if page_text:
+                            page_texts.append(page_text.strip())
+                    pdf_doc.close()
+                    
+                    text = "\n\n".join(page_texts)
+                    import re
+                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                    
+                    results['methods']['PyMuPDF'] = {
+                        'success': True,
+                        'text_length': len(text),
+                        'chinese_chars': chinese_chars,
+                        'page_count': page_count,
+                        'preview': text[:500] + '...' if len(text) > 500 else text
+                    }
+                else:
+                    results['methods']['PyMuPDF'] = {
+                        'success': False,
+                        'error': 'PyMuPDF 未安装'
+                    }
+            except Exception as e:
+                results['methods']['PyMuPDF'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # 测试 pdfplumber
+        if 'pdfplumber' in test_methods:
+            try:
+                from utils.file_parser import PDFPLUMBER_AVAILABLE
+                if PDFPLUMBER_AVAILABLE:
+                    import pdfplumber
+                    with pdfplumber.open(full_path) as pdf:
+                        page_count = len(pdf.pages)
+                        page_texts = []
+                        for page in pdf.pages:
+                            page_text = page.extract_text()
+                            if page_text:
+                                page_texts.append(page_text.strip())
+                        
+                        text = "\n\n".join(page_texts)
+                        import re
+                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                        
+                        results['methods']['pdfplumber'] = {
+                            'success': True,
+                            'text_length': len(text),
+                            'chinese_chars': chinese_chars,
+                            'page_count': page_count,
+                            'preview': text[:500] + '...' if len(text) > 500 else text
+                        }
+                else:
+                    results['methods']['pdfplumber'] = {
+                        'success': False,
+                        'error': 'pdfplumber 未安装'
+                    }
+            except Exception as e:
+                results['methods']['pdfplumber'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # 测试 OCR
+        if 'OCR' in test_methods:
+            try:
+                from utils.file_parser import OCR_AVAILABLE
+                if OCR_AVAILABLE:
+                    import fitz
+                    import pytesseract
+                    from PIL import Image
+                    from io import BytesIO
+                    
+                    pdf_doc = fitz.open(full_path)
+                    page_count = len(pdf_doc)
+                    ocr_texts = []
+                    
+                    for page_num in range(min(page_count, 3)):  # 最多测试3页
+                        page = pdf_doc[page_num]
+                        mat = fitz.Matrix(2.0, 2.0)
+                        pix = page.get_pixmap(matrix=mat)
+                        img_data = pix.tobytes("png")
+                        img = Image.open(BytesIO(img_data))
+                        ocr_text = pytesseract.image_to_string(img, lang='chi_sim+eng')
+                        if ocr_text:
+                            ocr_texts.append(ocr_text.strip())
+                    
+                    pdf_doc.close()
+                    
+                    text = "\n\n".join(ocr_texts)
+                    import re
+                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                    
+                    results['methods']['OCR'] = {
+                        'success': True,
+                        'text_length': len(text),
+                        'chinese_chars': chinese_chars,
+                        'pages_tested': min(page_count, 3),
+                        'preview': text[:500] + '...' if len(text) > 500 else text
+                    }
+                else:
+                    results['methods']['OCR'] = {
+                        'success': False,
+                        'error': 'OCR (pytesseract) 未安装'
+                    }
+            except Exception as e:
+                results['methods']['OCR'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # 推荐最佳方法
+        best_method = None
+        best_score = 0
+        for method, result in results['methods'].items():
+            if result.get('success'):
+                score = result.get('text_length', 0) + result.get('chinese_chars', 0) * 2
+                if score > best_score:
+                    best_score = score
+                    best_method = method
+        
+        results['recommended_method'] = best_method
+        results['timestamp'] = datetime.now().isoformat()
+        
+        return jsonify({
+            'success': True,
+            'data': results
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
         }), 500
 
 @app.route('/env-check', methods=['GET'])

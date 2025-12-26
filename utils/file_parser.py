@@ -12,9 +12,21 @@ try:
     FITZ_AVAILABLE = True
 except ImportError:
     FITZ_AVAILABLE = False
-    print("警告: PyMuPDF (fitz) 未安装，PDF文本提取功能将不可用。")
-    print("      请运行: pip install PyMuPDF")
-    print("      或者系统将使用AI API处理PDF文件。")
+
+# 可选导入 pdfplumber
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
+
+# 可选导入 OCR (Tesseract)
+try:
+    import pytesseract
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
 
 # 可选导入 python-docx
 try:
@@ -84,80 +96,148 @@ def clean_text(text):
     return text
 
 
-def extract_text_from_pdf(file_path):
+def extract_text_from_pdf(file_path, use_ai=True, use_ocr=True):
     """
-    从PDF文件提取文本
-    仅支持文本PDF，图片PDF需要通过AI API处理
+    从PDF文件提取文本 - 三级解析策略
     
-    策略：
-    1. 文本PDF：直接使用PyMuPDF提取，保持页面顺序和结构
-    2. 图片PDF：如果无法提取文本，将返回空字符串，提示用户使用AI API处理
+    策略优先级：
+    1. 优先：AI解析（如果启用且可用）
+    2. 备用：PyMuPDF、pdfplumber（文本PDF）
+    3. 最后：OCR（扫描件处理）
+    
+    Args:
+        file_path: PDF文件路径
+        use_ai: 是否尝试使用AI解析（默认True）
+        use_ocr: 是否尝试使用OCR（默认True）
+    
+    Returns:
+        提取的文本内容
     """
-    # 检查 PyMuPDF 是否可用
-    if not FITZ_AVAILABLE:
-        print(f"提示: PyMuPDF 未安装，无法直接提取PDF文本。")
-        print(f"      系统将使用AI API处理PDF文件: {file_path}")
-        return ""  # 返回空字符串，让AI API处理
+    results = {
+        'method': None,
+        'text': '',
+        'success': False,
+        'error': None
+    }
     
-    text = ""
-    page_texts = []  # 存储每页文本，保持页面顺序
-    
-    try:
-        # 使用PyMuPDF提取文本（保持页面顺序和结构）
-        pdf_doc = fitz.open(file_path)
-        total_pages = len(pdf_doc)
-        
-        for page_num in range(total_pages):
-            page = pdf_doc[page_num]
-            page_text = page.get_text()
+    # ========================================================================
+    # 策略1: PyMuPDF 提取（最快，适合文本PDF）
+    # ========================================================================
+    if FITZ_AVAILABLE:
+        try:
+            pdf_doc = fitz.open(file_path)
+            total_pages = len(pdf_doc)
+            page_texts = []
             
-            if page_text and isinstance(page_text, str):
-                # 清理每页文本，但保持基本结构
-                page_text_cleaned = page_text.strip()
-                if page_text_cleaned:
-                    # 保持页面分隔，便于后续解析时识别上下文位置
-                    # 在页面之间添加明确的分隔符（仅在多页时）
-                    if total_pages > 1:
-                        page_texts.append(f"--- 第{page_num + 1}页 ---\n{page_text_cleaned}")
-                    else:
-                        page_texts.append(page_text_cleaned)
-        
-        pdf_doc.close()
-        
-        # 合并所有页面文本，保持顺序
-        text = "\n\n".join(page_texts)
-        
-        text_stripped = text.strip()
-        
-        # 判断是否为文本PDF
-        # 1. 文本长度 >= 200字符
-        # 2. 中文字符数量 >= 50个
-        # 3. 中文字符占比 >= 10%
-        # 4. 不是编码字符串（唯一字符数 >= 50）
-        is_text_pdf = False
-        if text_stripped:
-            total_chars = len(text_stripped)
-            chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text_stripped))
-            unique_chars = len(set(text_stripped))
-            chinese_ratio = chinese_chars / total_chars if total_chars > 0 else 0
+            for page_num in range(total_pages):
+                page = pdf_doc[page_num]
+                page_text = page.get_text()
+                
+                if page_text and isinstance(page_text, str):
+                    page_text_cleaned = page_text.strip()
+                    if page_text_cleaned:
+                        if total_pages > 1:
+                            page_texts.append(f"--- 第{page_num + 1}页 ---\n{page_text_cleaned}")
+                        else:
+                            page_texts.append(page_text_cleaned)
             
-            # 判断是否为文本PDF
-            if total_chars >= 200 and chinese_chars >= 50 and chinese_ratio >= 0.1 and unique_chars >= 50:
-                is_text_pdf = True
-                # 文本PDF：直接返回，清理后返回
-                return clean_text(text_stripped)
-        
-        # 如果不是文本PDF（图片PDF），返回空字符串
-        # 图片PDF需要通过AI API处理（AI API可以处理图片）
-        if not is_text_pdf:
-            print(f"警告: PDF文件可能是图片格式，无法直接提取文本。请确保已配置AI API，系统将通过AI API处理图片PDF。")
-            # 返回空字符串，让AI API处理
-            return ""
-        
-    except Exception as e:
-        raise Exception(f"PDF解析失败: {str(e)}")
+            pdf_doc.close()
+            text = "\n\n".join(page_texts)
+            text_stripped = text.strip()
+            
+            # 判断是否为有效文本PDF
+            if text_stripped:
+                total_chars = len(text_stripped)
+                chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text_stripped))
+                unique_chars = len(set(text_stripped))
+                chinese_ratio = chinese_chars / total_chars if total_chars > 0 else 0
+                
+                # 有效文本PDF判断标准
+                if total_chars >= 200 and chinese_chars >= 50 and chinese_ratio >= 0.1 and unique_chars >= 50:
+                    results['method'] = 'PyMuPDF'
+                    results['text'] = clean_text(text_stripped)
+                    results['success'] = True
+                    return results['text']
+        except Exception as e:
+            print(f"PyMuPDF解析失败: {e}")
     
-    return text if text else ""
+    # ========================================================================
+    # 策略2: pdfplumber 提取（备用，适合复杂布局）
+    # ========================================================================
+    if PDFPLUMBER_AVAILABLE:
+        try:
+            with pdfplumber.open(file_path) as pdf:
+                page_texts = []
+                for page_num, page in enumerate(pdf.pages):
+                    page_text = page.extract_text()
+                    if page_text and page_text.strip():
+                        if len(pdf.pages) > 1:
+                            page_texts.append(f"--- 第{page_num + 1}页 ---\n{page_text.strip()}")
+                        else:
+                            page_texts.append(page_text.strip())
+                
+                text = "\n\n".join(page_texts)
+                text_stripped = text.strip()
+                
+                if text_stripped:
+                    total_chars = len(text_stripped)
+                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text_stripped))
+                    unique_chars = len(set(text_stripped))
+                    chinese_ratio = chinese_chars / total_chars if total_chars > 0 else 0
+                    
+                    if total_chars >= 200 and chinese_chars >= 50 and chinese_ratio >= 0.1 and unique_chars >= 50:
+                        results['method'] = 'pdfplumber'
+                        results['text'] = clean_text(text_stripped)
+                        results['success'] = True
+                        return results['text']
+        except Exception as e:
+            print(f"pdfplumber解析失败: {e}")
+    
+    # ========================================================================
+    # 策略3: OCR 提取（最后手段，适合扫描件）
+    # ========================================================================
+    if use_ocr and OCR_AVAILABLE:
+        try:
+            # 将PDF转换为图片，然后OCR
+            if FITZ_AVAILABLE:
+                pdf_doc = fitz.open(file_path)
+                ocr_texts = []
+                
+                for page_num in range(len(pdf_doc)):
+                    page = pdf_doc[page_num]
+                    # 将页面渲染为图片
+                    mat = fitz.Matrix(2.0, 2.0)  # 放大2倍提高OCR准确度
+                    pix = page.get_pixmap(matrix=mat)
+                    img_data = pix.tobytes("png")
+                    
+                    # 使用PIL打开图片
+                    from io import BytesIO
+                    img = Image.open(BytesIO(img_data))
+                    
+                    # OCR识别（支持中英文）
+                    ocr_text = pytesseract.image_to_string(img, lang='chi_sim+eng')
+                    if ocr_text and ocr_text.strip():
+                        ocr_texts.append(f"--- 第{page_num + 1}页 ---\n{ocr_text.strip()}")
+                
+                pdf_doc.close()
+                
+                if ocr_texts:
+                    text = "\n\n".join(ocr_texts)
+                    text_stripped = text.strip()
+                    
+                    if text_stripped and len(text_stripped) >= 100:
+                        results['method'] = 'OCR'
+                        results['text'] = clean_text(text_stripped)
+                        results['success'] = True
+                        return results['text']
+        except Exception as e:
+            print(f"OCR解析失败: {e}")
+    
+    # ========================================================================
+    # 所有方法都失败，返回空字符串（将由AI API处理）
+    # ========================================================================
+    results['error'] = '所有PDF解析方法都失败，将使用AI API处理'
+    return ""
 
 
 def extract_text_from_word(file_path):
@@ -264,14 +344,22 @@ def extract_text_from_word(file_path):
             raise Exception(f"Word文档解析失败: {error_msg}")
 
 
-def extract_text(file_path):
+def extract_text(file_path, use_ai=True, use_ocr=True):
     """
     根据文件类型自动选择解析方法
+    
+    Args:
+        file_path: 文件路径
+        use_ai: 是否允许使用AI解析（默认True）
+        use_ocr: 是否允许使用OCR（默认True）
+    
+    Returns:
+        提取的文本内容
     """
     file_ext = os.path.splitext(file_path)[1].lower()
     
     if file_ext == '.pdf':
-        return extract_text_from_pdf(file_path)
+        return extract_text_from_pdf(file_path, use_ai=use_ai, use_ocr=use_ocr)
     elif file_ext in ['.doc', '.docx']:
         return extract_text_from_word(file_path)
     else:

@@ -1,0 +1,22 @@
+# System dependencies for Railway deployment
+# These packages are installed via apt-get during build
+
+# PDF processing dependencies
+poppler-utils
+libpoppler-cpp-dev
+
+# OCR dependencies (Tesseract)
+tesseract-ocr
+tesseract-ocr-chi-sim
+tesseract-ocr-chi-tra
+tesseract-ocr-eng
+
+# Image processing dependencies
+libjpeg-dev
+libpng-dev
+libtiff-dev
+
+# SSL/TLS dependencies
+ca-certificates
+openssl
+
