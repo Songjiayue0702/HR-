@@ -405,6 +405,7 @@ class Interview(Base):
             'registration_form_contact': self.registration_form_contact,
             'registration_form_email': self.registration_form_email,
             'registration_form_birth_date': self.registration_form_birth_date,
+            'registration_form_gender': self.registration_form_gender,
             'registration_form_ethnicity': self.registration_form_ethnicity,
             'registration_form_marital_status': self.registration_form_marital_status,
             'registration_form_has_children': self.registration_form_has_children,

@@ -194,6 +194,9 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
             c.showPage()
             c.setFont(CH_FONT_NAME, 11)
             y = height - 60
+            # 确保字体正确设置
+            if hasattr(c, '_fontname'):
+                c.setFont(CH_FONT_NAME, 11)
     
     def draw_section(title: str):
         nonlocal y
@@ -271,52 +274,73 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
         weaknesses = analysis.get("weaknesses") or []
         suggestions = analysis.get("suggestions") or []
 
+        # 显示匹配度分数和等级
         if match_score is not None:
+            check_page_break()
             y = _draw_wrapped_text(c, f"匹配度分数：{match_score}", margin_left, y, max_text_width)
         if match_level:
+            check_page_break()
             y = _draw_wrapped_text(c, f"匹配等级：{match_level}", margin_left, y, max_text_width)
-        y -= 5
+        y -= 10
 
+        # 详细分析（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "详细分析：", margin_left, y, max_text_width)
         if detailed:
             check_page_break()
-            y = _draw_wrapped_text(c, "详细分析：", margin_left, y, max_text_width)
-            check_page_break()
             y = _draw_wrapped_text(c, detailed, margin_left + 20, y, max_text_width - 20)
-            y -= 5
-
-        if strengths:
+        else:
             check_page_break()
-            y = _draw_wrapped_text(c, "优势：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, "暂无详细分析内容。", margin_left + 20, y, max_text_width - 20)
+        y -= 10
+
+        # 优势匹配点（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "优势匹配点：", margin_left, y, max_text_width)
+        if strengths:
             for s in strengths:
                 check_page_break()
                 y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
-            y -= 5
-
-        if weaknesses:
+        else:
             check_page_break()
-            y = _draw_wrapped_text(c, "不足：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, "暂无优势匹配点。", margin_left + 20, y, max_text_width - 20)
+        y -= 10
+
+        # 不足匹配点（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "不足匹配点：", margin_left, y, max_text_width)
+        if weaknesses:
             for w in weaknesses:
                 check_page_break()
                 y = _draw_wrapped_text(c, f"• {w}", margin_left + 20, y, max_text_width - 20)
-            y -= 5
-
-        if suggestions:
+        else:
             check_page_break()
-            y = _draw_wrapped_text(c, "面试重点考核项及对应面试问题：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, "暂无不足匹配点。", margin_left + 20, y, max_text_width - 20)
+        y -= 10
+
+        # 面试重点考核项及对应面试问题（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "面试重点考核项及对应面试问题：", margin_left, y, max_text_width)
+        if suggestions:
             import re
             for s in suggestions:
                 check_page_break()
                 # 解析格式化的字符串：【考核重点】xxx - 【面试问题】xxx
-                match = re.match(r'【考核重点】(.*?)\s*-\s*【面试问题】(.*)', s)
+                match = re.match(r'【考核重点】(.*?)\s*[-—–]\s*【面试问题】(.*)', s)
                 if match:
                     focus = match.group(1).strip()
                     question = match.group(2).strip()
+                    check_page_break()
                     y = _draw_wrapped_text(c, f"• 【考核重点】{focus}", margin_left + 20, y, max_text_width - 20)
                     check_page_break()
                     y = _draw_wrapped_text(c, f"  【面试问题】{question}", margin_left + 40, y, max_text_width - 40)
                 else:
                     # 如果没有匹配到格式，直接显示原内容
+                    check_page_break()
                     y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
+        else:
+            check_page_break()
+            y = _draw_wrapped_text(c, "暂无面试重点考核项及对应面试问题。", margin_left + 20, y, max_text_width - 20)
     else:
         y = _draw_wrapped_text(c, "暂无匹配度分析结果。请在系统中先执行一次匹配分析。", margin_left, y, max_text_width)
 

@@ -4562,7 +4562,6 @@ function openRegistrationFormModal(interviewId) {
                                     <label>导出</label>
                                     <div style="display: flex; gap: 8px;">
                                         <button type="button" class="btn btn-primary btn-small" onclick="downloadRegistrationForm(${data.id}, 'excel')">下载 Excel</button>
-                                        <button type="button" class="btn btn-primary btn-small" onclick="downloadRegistrationForm(${data.id}, 'pdf')">下载 PDF</button>
                                     </div>
                                 </div>
                                 
@@ -4589,6 +4588,15 @@ function openRegistrationFormModal(interviewId) {
                                 <div class="form-group">
                                     <label>出生日期 <span class="required">*</span></label>
                                     <input type="date" id="reg_birth_date" class="form-input" value="${escapeHtml(data.registration_form_birth_date || (resume && resume.birth_year ? resume.birth_year + '-01-01' : ''))}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>性别 <span class="required">*</span></label>
+                                    <select id="reg_gender" class="form-select" required>
+                                        <option value="">请选择</option>
+                                        <option value="男" ${data.registration_form_gender === '男' ? 'selected' : ''}>男</option>
+                                        <option value="女" ${data.registration_form_gender === '女' ? 'selected' : ''}>女</option>
+                                    </select>
                                 </div>
                                 
                                 <div class="form-group">
@@ -4637,6 +4645,7 @@ function openRegistrationFormModal(interviewId) {
                                         <span style="flex: 1;">岗位</span>
                                         <span style="flex: 1;">开始时间</span>
                                         <span style="flex: 1;">结束时间</span>
+                                        <span style="flex: 1;">离职原因</span>
                                     </div>
                                     <div id="reg_work_experience_container">
                                         ${renderWorkExperienceInputs(parseWorkExperiences(data.registration_form_recent_work_experience || (resume && resume.work_experience ? resume.work_experience.slice(0, 2) : [])))}
@@ -4776,15 +4785,20 @@ function parseWorkExperiences(value) {
 
 function renderWorkExperienceInputs(workExperiences) {
     if (!workExperiences || workExperiences.length === 0) {
-        return '<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" style="flex: 1;"></div>';
+        return '<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" style="flex: 1;"><input type="text" placeholder="离职原因" class="form-input" style="flex: 1;"></div>'.repeat(2);
     }
-    return workExperiences.map(exp => {
+    // 确保至少有2个工作经历项
+    const items = [];
+    for (let i = 0; i < 2; i++) {
+        const exp = workExperiences[i] || {};
         const company = escapeHtml(exp.company || '');
         const position = escapeHtml(exp.position || '');
         const startYear = exp.start_year ? (exp.start_year + '-01-01') : '';
         const endYear = exp.end_year ? (exp.end_year + '-01-01') : '';
-        return `<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" value="${company}" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" value="${position}" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" value="${startYear}" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" value="${endYear}" style="flex: 1;"></div>`;
-    }).join('');
+        const resignationReason = escapeHtml(exp.resignation_reason || '');
+        items.push(`<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" value="${company}" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" value="${position}" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" value="${startYear}" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" value="${endYear}" style="flex: 1;"><input type="text" placeholder="离职原因" class="form-input" value="${resignationReason}" style="flex: 1;"></div>`);
+    }
+    return items.join('');
 }
 
 function renderConsiderationFactors(factorsJson) {
@@ -4834,7 +4848,8 @@ function saveRegistrationForm(interviewId) {
             company: inputs[0]?.value || '',
             position: inputs[1]?.value || '',
             start_year: inputs[2]?.value ? parseInt(inputs[2].value.split('-')[0]) : null,
-            end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null
+            end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null,
+            resignation_reason: inputs[4]?.value || ''
         };
     }).filter(exp => exp.company || exp.position);
     
@@ -4847,6 +4862,7 @@ function saveRegistrationForm(interviewId) {
         registration_form_contact: document.getElementById('reg_contact')?.value || '',
         registration_form_email: document.getElementById('reg_email')?.value || '',
         registration_form_birth_date: document.getElementById('reg_birth_date')?.value || '',
+        registration_form_gender: document.getElementById('reg_gender')?.value || '',
         registration_form_ethnicity: document.getElementById('reg_ethnicity')?.value || '',
         registration_form_marital_status: document.getElementById('reg_marital_status')?.value || '',
         registration_form_has_children: document.getElementById('reg_has_children')?.value || '',

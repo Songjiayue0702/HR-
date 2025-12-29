@@ -3924,16 +3924,15 @@ def export_registration_form_to_excel(interview):
         ws['B24'].value = f"{data['address']} {data['address_detail']}"
         stylize_cell(ws['B24'], align=left)
         ws.row_dimensions[24].height = 25
-        for r in range(25, 32):
+        for r in range(25, 31):
             ws.row_dimensions[r].height = 25
-        ws.merge_cells('A25:F31')
+        ws.merge_cells('A25:F30')
         ws['A25'].value = (
             "声明人：\n"
             "\n"
             "本人保证以上内容填写真实无误，同意接受公司的调查，若有不实之处，本人愿意承担一切后果。\n"
             "\n"
             "声明人签字\n"
-            "\n"
             "\n"
             "日期"
         )
