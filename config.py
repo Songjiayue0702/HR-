@@ -30,7 +30,7 @@ class Config:
     AI_ENABLED = os.environ.get('AI_ENABLED', 'true').lower() == 'true'
     AI_API_KEY = os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or os.environ.get('DEEPSEEK_API_KEY') or ''
     AI_API_BASE = os.environ.get('OPENAI_API_BASE') or os.environ.get('AI_API_BASE') or ''  # 如果为空，将根据模型自动选择
-    AI_MODEL = os.environ.get('AI_MODEL') or 'gpt-3.5-turbo'  # 可选: gpt-3.5-turbo, gpt-4, gpt-4-turbo, deepseek-chat, deepseek-coder, qwen-turbo, qwen-plus等
+    AI_MODEL = os.environ.get('AI_MODEL') or 'deepseek-chat'  # 可选: gpt-3.5-turbo, gpt-4, gpt-4-turbo, deepseek-chat, deepseek-coder, qwen-turbo, qwen-plus等
     
     # 支持的AI模型列表（用于前端选择）
     AI_MODELS = [

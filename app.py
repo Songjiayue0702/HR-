@@ -230,7 +230,7 @@ def create_ai_extractor(ai_config=None):
         return AIExtractor(
             api_key=api_key,
             api_base=ai_config.get('ai_api_base', ''),
-            model=ai_config.get('ai_model', 'gpt-3.5-turbo')
+            model=ai_config.get('ai_model', 'deepseek-chat')
         )
     except Exception as e:
         print(f"创建AI提取器失败: {e}")
@@ -721,7 +721,7 @@ def set_global_ai_config():
         
         # 验证必填字段
         ai_enabled = data.get('ai_enabled', True)
-        ai_model = data.get('ai_model', 'gpt-3.5-turbo')
+        ai_model = data.get('ai_model', 'deepseek-chat')
         
         # 获取当前用户
         current_user = get_current_user()
@@ -1238,7 +1238,7 @@ def env_check():
         # AI 配置
         'AI_ENABLED': os.environ.get('AI_ENABLED', 'true'),
         'AI_API_KEY': '已设置' if os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') else '未设置',
-        'AI_MODEL': os.environ.get('AI_MODEL', 'gpt-3.5-turbo'),
+        'AI_MODEL': os.environ.get('AI_MODEL', 'deepseek-chat'),
     }
     
     # 检查关键配置
@@ -2389,7 +2389,7 @@ def export_resume_analysis_pdf(resume_id):
                 if position:
                     ai_enabled = app.config.get('AI_ENABLED', True)
                     ai_api_key = app.config.get('AI_API_KEY', '')
-                    ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+                    ai_model = app.config.get('AI_MODEL', 'deepseek-chat')
                     ai_api_base = app.config.get('AI_API_BASE', '')
 
                     if ai_enabled and ai_api_key:
@@ -2473,6 +2473,10 @@ def export_resume_analysis_pdf(resume_id):
 请只返回JSON格式，不要包含其他文字说明。"""
 
                         response_text = ai_extractor._call_ai_api(prompt)
+
+                        # 检查响应是否为空
+                        if not response_text:
+                            raise Exception('AI API调用失败，未返回结果')
 
                         # 解析JSON
                         import re
@@ -3297,6 +3301,11 @@ def analyze_interview_doc(interview_id):
         try:
             response_text = ai_extractor._call_ai_api(prompt)
 
+            # 检查响应是否为空
+            if not response_text:
+                session.close()
+                return jsonify({'success': False, 'message': 'AI API调用失败，未返回结果。请检查API密钥和网络连接。'}), 500
+
             # 解析JSON
             import re
             try:
@@ -3656,7 +3665,7 @@ def get_ai_config():
         'data': {
             'ai_enabled': ai_config.get('ai_enabled', True),
             'ai_available': ai_available,  # AI是否真正可用
-            'ai_model': ai_config.get('ai_model', 'gpt-3.5-turbo'),
+            'ai_model': ai_config.get('ai_model', 'deepseek-chat'),
             'ai_api_base': ai_config.get('ai_api_base', ''),
             'ai_models': Config.AI_MODELS,
             'readonly': True,  # 标记为只读，配置来自环境变量
@@ -3683,7 +3692,7 @@ def test_ai_connection():
         
         # 允许请求中覆盖api_base和model，但api_key必须来自环境变量
         api_base = data.get('api_base') or ai_config.get('ai_api_base', '')
-        model = data.get('model') or ai_config.get('ai_model', 'gpt-3.5-turbo')
+        model = data.get('model') or ai_config.get('ai_model', 'deepseek-chat')
         api_key = ai_config.get('ai_api_key', '')
         
         if not api_key:
@@ -4318,6 +4327,13 @@ def analyze_resume_match(resume_id):
         
         try:
             response_text = ai_extractor._call_ai_api(prompt)
+            
+            # 检查响应是否为空
+            if not response_text:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI API调用失败，未返回结果。请检查API密钥和网络连接。'
+                }), 500
             
             # 尝试解析JSON响应
             try:

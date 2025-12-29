@@ -874,7 +874,7 @@ function uploadFiles(files) {
     // 添加AI配置（从本地存储或表单获取）
     const aiConfig = {
         ai_enabled: document.getElementById('aiEnabled') ? document.getElementById('aiEnabled').checked : false,
-        ai_model: document.getElementById('aiModel') ? document.getElementById('aiModel').value : 'gpt-3.5-turbo',
+        ai_model: document.getElementById('aiModel') ? document.getElementById('aiModel').value : 'deepseek-chat',
         ai_api_key: document.getElementById('aiApiKey') ? document.getElementById('aiApiKey').value : (localStorage.getItem('ai_api_key') || ''),
         ai_api_base: document.getElementById('aiApiBase') ? document.getElementById('aiApiBase').value : ''
     };
@@ -3338,7 +3338,7 @@ function loadAIConfig() {
                 // 显示AI模型（只读）
                 const aiModelInput = document.getElementById('aiModel');
                 if (aiModelInput) {
-                    aiModelInput.value = config.ai_model || 'gpt-3.5-turbo';
+                    aiModelInput.value = config.ai_model || 'deepseek-chat';
                 }
                 
                 // 显示API密钥状态（只读）
@@ -3427,7 +3427,7 @@ function testAIConnection() {
                 body: JSON.stringify({
                     // 不传递api_key，后端会使用环境变量中的配置
                     api_base: configData.data.ai_api_base || '',
-                    model: configData.data.ai_model || 'gpt-3.5-turbo'
+                    model: configData.data.ai_model || 'deepseek-chat'
                 })
             })
             .then(response => response.json())
