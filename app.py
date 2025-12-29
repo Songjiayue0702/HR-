@@ -185,7 +185,7 @@ def allowed_file(filename):
 
 def get_effective_ai_config():
     """
-    获取当前有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
+    获取当前有效的AI配置（仅从环境变量读取，Railway平台配置）
     
     Returns:
         dict: AI配置字典，包含：
@@ -194,54 +194,13 @@ def get_effective_ai_config():
             - ai_api_base: str
             - ai_model: str
     """
+    # 直接使用环境变量配置（Railway平台配置）
     config = {
-        'ai_enabled': True,
-        'ai_api_key': '',
-        'ai_api_base': '',
-        'ai_model': 'gpt-3.5-turbo'
+        'ai_enabled': Config.AI_ENABLED,
+        'ai_api_key': Config.AI_API_KEY,
+        'ai_api_base': Config.AI_API_BASE,
+        'ai_model': Config.AI_MODEL
     }
-    
-    # 优先级1: 用户session配置（临时配置）
-    if 'ai_config' in session and isinstance(session['ai_config'], dict):
-        user_config = session['ai_config']
-        if user_config.get('ai_enabled') is not None:
-            config['ai_enabled'] = bool(user_config.get('ai_enabled'))
-        if user_config.get('ai_api_key'):
-            config['ai_api_key'] = user_config.get('ai_api_key', '')
-        if user_config.get('ai_api_base'):
-            config['ai_api_base'] = user_config.get('ai_api_base', '')
-        if user_config.get('ai_model'):
-            config['ai_model'] = user_config.get('ai_model', 'gpt-3.5-turbo')
-        return config
-    
-    # 优先级2: 全局配置（管理员设置，存储在数据库）
-    # 只有当数据库配置有效（ai_enabled=True且api_key存在）时才使用，否则回退到环境变量
-    db = get_db_session()
-    try:
-        global_config = db.query(GlobalAIConfig).first()
-        if global_config:
-            from utils.encryption import decrypt_value
-            db_ai_enabled = bool(global_config.ai_enabled)
-            db_api_key = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
-            
-            # 只有当数据库配置有效时才使用它
-            if db_ai_enabled and db_api_key:
-                config['ai_enabled'] = db_ai_enabled
-                config['ai_api_key'] = db_api_key
-                config['ai_api_base'] = global_config.ai_api_base or ''
-                config['ai_model'] = global_config.ai_model or 'gpt-3.5-turbo'
-                return config
-    except Exception as e:
-        # 如果数据库查询失败，记录错误但不影响后续的环境变量回退
-        print(f"获取数据库AI配置失败: {e}")
-    finally:
-        db.close()
-    
-    # 优先级3: 环境变量（默认配置）
-    config['ai_enabled'] = Config.AI_ENABLED
-    config['ai_api_key'] = Config.AI_API_KEY
-    config['ai_api_base'] = Config.AI_API_BASE
-    config['ai_model'] = Config.AI_MODEL
     
     return config
 
@@ -1349,43 +1308,11 @@ def process_resume_async(resume_id, file_path):
         if not raw_text:
             raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
         
-        # 异步任务使用全局配置（不依赖session）
-        # 优先级：全局配置 > 环境变量（只有当全局配置有效时才使用）
-        db_config = get_db_session()
-        try:
-            global_config = db_config.query(GlobalAIConfig).first()
-            if global_config:
-                from utils.encryption import decrypt_value
-                db_ai_enabled = bool(global_config.ai_enabled)
-                db_api_key = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
-                
-                # 只有当数据库配置有效时才使用它
-                if db_ai_enabled and db_api_key:
-                    ai_enabled = db_ai_enabled
-                    ai_api_key = db_api_key
-                    ai_api_base = global_config.ai_api_base or ''
-                    ai_model = global_config.ai_model or 'gpt-3.5-turbo'
-                else:
-                    # 数据库配置无效，回退到环境变量
-                    ai_enabled = Config.AI_ENABLED
-                    ai_api_key = Config.AI_API_KEY
-                    ai_api_base = Config.AI_API_BASE
-                    ai_model = Config.AI_MODEL
-            else:
-                # 使用环境变量
-                ai_enabled = Config.AI_ENABLED
-                ai_api_key = Config.AI_API_KEY
-                ai_api_base = Config.AI_API_BASE
-                ai_model = Config.AI_MODEL
-        except Exception as e:
-            # 如果数据库查询失败，使用环境变量
-            print(f"获取数据库AI配置失败: {e}")
-            ai_enabled = Config.AI_ENABLED
-            ai_api_key = Config.AI_API_KEY
-            ai_api_base = Config.AI_API_BASE
-            ai_model = Config.AI_MODEL
-        finally:
-            db_config.close()
+        # 异步任务直接使用环境变量配置（Railway平台配置）
+        ai_enabled = Config.AI_ENABLED
+        ai_api_key = Config.AI_API_KEY
+        ai_api_base = Config.AI_API_BASE
+        ai_model = Config.AI_MODEL
         
         # 如果链接了AI API，优先使用AI优化文本提取
         text = raw_text
@@ -3300,7 +3227,7 @@ def analyze_interview_doc(interview_id):
             session.close()
             return jsonify({'success': False, 'message': '文档文件不存在，请重新上传'}), 400
 
-        # 获取有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
+        # 获取AI配置（使用环境变量配置）
         ai_config = get_effective_ai_config()
         
         # 提取文档文本（PDF使用智能提取）
@@ -3318,12 +3245,12 @@ def analyze_interview_doc(interview_id):
             session.close()
             return jsonify({'success': False, 'message': '文档内容为空，无法分析'}), 400
 
-        # 使用有效的AI配置创建提取器
+        # 使用有效的AI配置创建提取器（使用环境变量配置）
         ai_extractor = create_ai_extractor(ai_config)
         
         if not ai_extractor:
             session.close()
-            return jsonify({'success': False, 'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'}), 400
+            return jsonify({'success': False, 'message': 'AI功能未启用或未配置API密钥，请在Railway平台环境变量中配置OPENAI_API_KEY'}), 400
 
         # 读取岗位信息（用于结合岗位要求分析）
         position_info_text = ""
@@ -3717,8 +3644,8 @@ def export_interview_round_analysis_pdf(interview_id):
 
 @app.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
-    """获取AI配置（不返回密钥）"""
-    # 使用get_effective_ai_config()获取当前有效的配置（优先级：session > 全局配置 > 环境变量）
+    """获取AI配置（仅从环境变量读取，只读）"""
+    # 直接使用环境变量配置（Railway平台配置）
     ai_config = get_effective_ai_config()
     
     # 检查AI是否真正可用（启用且有API密钥）
@@ -3728,63 +3655,51 @@ def get_ai_config():
         'success': True,
         'data': {
             'ai_enabled': ai_config.get('ai_enabled', True),
-            'ai_available': ai_available,  # 新增：AI是否真正可用
+            'ai_available': ai_available,  # AI是否真正可用
             'ai_model': ai_config.get('ai_model', 'gpt-3.5-turbo'),
             'ai_api_base': ai_config.get('ai_api_base', ''),
-            'ai_models': Config.AI_MODELS
+            'ai_models': Config.AI_MODELS,
+            'readonly': True,  # 标记为只读，配置来自环境变量
+            'message': 'AI配置来自Railway平台环境变量，不可在界面修改'
         }
     })
 
 @app.route('/api/ai/config', methods=['POST'])
 def save_ai_config():
-    """保存AI配置"""
-    try:
-        data = request.json
-        ai_enabled = data.get('ai_enabled', True)
-        ai_model = data.get('ai_model', 'gpt-3.5-turbo')
-        ai_api_key = data.get('ai_api_key', '')
-        ai_api_base = data.get('ai_api_base', '')
-        
-        # 更新配置（注意：这里只是临时更新，重启后会恢复）
-        # 实际生产环境应该保存到配置文件或数据库
-        app.config['AI_ENABLED'] = ai_enabled
-        app.config['AI_MODEL'] = ai_model
-        if ai_api_key:
-            app.config['AI_API_KEY'] = ai_api_key
-        if ai_api_base:
-            app.config['AI_API_BASE'] = ai_api_base
-        
-        return jsonify({
-            'success': True,
-            'message': 'AI配置已保存（当前会话有效）'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'保存配置失败: {str(e)}'
-        }), 400
+    """保存AI配置（已禁用，配置来自环境变量）"""
+    return jsonify({
+        'success': False,
+        'message': 'AI配置来自Railway平台环境变量，不可在界面修改。请在Railway平台的环境变量中配置OPENAI_API_KEY等变量。'
+    }), 400
 
 @app.route('/api/ai/test', methods=['POST'])
 def test_ai_connection():
-    """测试AI连接"""
+    """测试AI连接（使用环境变量配置）"""
     try:
-        data = request.json
-        api_key = data.get('api_key', '')
-        api_base = data.get('api_base', '')
-        model = data.get('model', 'gpt-3.5-turbo')
+        data = request.json or {}
+        
+        # 使用环境变量配置（Railway平台配置）
+        ai_config = get_effective_ai_config()
+        
+        # 允许请求中覆盖api_base和model，但api_key必须来自环境变量
+        api_base = data.get('api_base') or ai_config.get('ai_api_base', '')
+        model = data.get('model') or ai_config.get('ai_model', 'gpt-3.5-turbo')
+        api_key = ai_config.get('ai_api_key', '')
         
         if not api_key:
             return jsonify({
                 'success': False,
-                'message': '请提供API密钥'
+                'message': 'API密钥未配置，请在Railway平台环境变量中设置OPENAI_API_KEY或AI_API_KEY'
             }), 400
         
-        # 创建临时AI提取器进行测试
-        ai_extractor = AIExtractor(
-            api_key=api_key,
-            api_base=api_base if api_base else None,
-            model=model
-        )
+        # 创建AI提取器进行测试（使用环境变量配置）
+        ai_extractor = create_ai_extractor(ai_config)
+        
+        if not ai_extractor:
+            return jsonify({
+                'success': False,
+                'message': 'AI功能未启用或配置无效，请检查环境变量配置'
+            }), 400
         
         # 使用简单的测试文本
         test_text = "姓名：张三\n性别：男\n手机：13800138000"
@@ -3793,7 +3708,7 @@ def test_ai_connection():
         if result:
             return jsonify({
                 'success': True,
-                'message': 'AI连接测试成功',
+                'message': 'AI连接测试成功（使用环境变量配置）',
                 'data': result
             })
         else:
@@ -3803,10 +3718,10 @@ def test_ai_connection():
             }), 400
             
     except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': f'测试失败: {str(e)}'
-            }), 400
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 400
 
 
 def _collect_registration_data(interview):
@@ -4315,7 +4230,7 @@ def analyze_resume_match(resume_id):
         
         session.close()
         
-        # 获取有效的AI配置（优先级：用户session > 全局配置 > 环境变量）
+        # 获取AI配置（使用环境变量配置）
         ai_config = get_effective_ai_config()
         
         # 创建AI提取器
@@ -4324,7 +4239,7 @@ def analyze_resume_match(resume_id):
         if not ai_extractor:
             return jsonify({
                 'success': False,
-                'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'
+                'message': 'AI功能未启用或未配置API密钥，请在Railway平台环境变量中配置OPENAI_API_KEY'
             }), 400
         
         # 构建分析提示

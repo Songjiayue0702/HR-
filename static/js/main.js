@@ -3324,26 +3324,49 @@ function loadAIConfig() {
         .then(data => {
             if (data.success) {
                 const config = data.data;
-                document.getElementById('aiEnabled').checked = config.ai_enabled;
-                document.getElementById('aiModel').value = config.ai_model;
-                if (config.ai_api_base) {
-                    document.getElementById('aiApiBase').value = config.ai_api_base;
+                
+                // 显示AI状态
+                const statusText = document.getElementById('aiStatusText');
+                if (statusText) {
+                    if (config.ai_available) {
+                        statusText.innerHTML = '<span style="color: green;">✓ AI功能已启用并可用</span>';
+                    } else {
+                        statusText.innerHTML = '<span style="color: red;">✗ AI功能未启用或API密钥未配置</span>';
+                    }
                 }
                 
-                // 从本地存储加载API密钥（如果存在）
-                const savedKey = localStorage.getItem('ai_api_key');
-                if (savedKey) {
-                    document.getElementById('aiApiKey').value = savedKey;
+                // 显示AI模型（只读）
+                const aiModelInput = document.getElementById('aiModel');
+                if (aiModelInput) {
+                    aiModelInput.value = config.ai_model || 'gpt-3.5-turbo';
                 }
                 
-                // 更新模型选项
-                if (config.ai_models && config.ai_models.length > 0) {
-                    updateModelOptions(config.ai_models);
+                // 显示API密钥状态（只读）
+                const aiApiKeyInput = document.getElementById('aiApiKey');
+                if (aiApiKeyInput) {
+                    if (config.ai_available) {
+                        aiApiKeyInput.value = '已配置（来自环境变量）';
+                        aiApiKeyInput.placeholder = '已配置（来自环境变量）';
+                    } else {
+                        aiApiKeyInput.value = '';
+                        aiApiKeyInput.placeholder = '未配置';
+                    }
+                }
+                
+                // 显示API基础URL（只读）
+                const aiApiBaseInput = document.getElementById('aiApiBase');
+                if (aiApiBaseInput) {
+                    aiApiBaseInput.value = config.ai_api_base || '使用默认URL';
+                    aiApiBaseInput.placeholder = config.ai_api_base || '使用默认URL';
                 }
             }
         })
         .catch(error => {
             console.error('加载AI配置失败:', error);
+            const statusText = document.getElementById('aiStatusText');
+            if (statusText) {
+                statusText.innerHTML = '<span style="color: red;">✗ 加载配置失败</span>';
+            }
         });
 }
 
@@ -3361,119 +3384,78 @@ function updateModelOptions(models) {
 }
 
 function updateAIConfig() {
-    // 实时更新配置到本地存储
-    const config = {
-        ai_enabled: document.getElementById('aiEnabled').checked,
-        ai_model: document.getElementById('aiModel').value,
-        ai_api_key: document.getElementById('aiApiKey').value,
-        ai_api_base: document.getElementById('aiApiBase').value
-    };
-    
-    // 保存API密钥到本地存储
-    if (config.ai_api_key) {
-        localStorage.setItem('ai_api_key', config.ai_api_key);
-    }
-    
-    // 保存其他配置到本地存储
-    localStorage.setItem('ai_config', JSON.stringify({
-        ai_enabled: config.ai_enabled,
-        ai_model: config.ai_model,
-        ai_api_base: config.ai_api_base
-    }));
+    // 配置来自环境变量，不需要更新
+    // 保留此函数以避免页面报错，但不执行任何操作
 }
 
 function saveAIConfig() {
-    const config = {
-        ai_enabled: document.getElementById('aiEnabled').checked,
-        ai_model: document.getElementById('aiModel').value,
-        ai_api_key: document.getElementById('aiApiKey').value,
-        ai_api_base: document.getElementById('aiApiBase').value
-    };
-    
-    fetch('/api/ai/config', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        const statusDiv = document.getElementById('aiConfigStatus');
-        if (data.success) {
-            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '，配置已自动生效</span>';
-            // 保存到本地存储
-            if (config.ai_api_key) {
-                localStorage.setItem('ai_api_key', config.ai_api_key);
-            }
-            localStorage.setItem('ai_config', JSON.stringify({
-                ai_enabled: config.ai_enabled,
-                ai_model: config.ai_model,
-                ai_api_base: config.ai_api_base
-            }));
-            // 保存后自动使用，不需要重新连接
-            updateAIConfig();
-            // 更新简历列表中的AI状态显示
-            checkAIStatus().then(() => {
-                updateAIStatusDisplay();
-            });
-        } else {
-            statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
-        }
+    // 配置来自环境变量，不能保存
+    const statusDiv = document.getElementById('aiConfigStatus');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<span style="color: orange;">⚠ AI配置来自Railway平台环境变量，不可在界面修改。请在Railway平台的环境变量中配置。</span>';
         setTimeout(() => {
             statusDiv.innerHTML = '';
-        }, 3000);
-    })
-    .catch(error => {
-        console.error('保存AI配置失败:', error);
-        const statusDiv = document.getElementById('aiConfigStatus');
-        statusDiv.innerHTML = '<span style="color: red;">✗ 保存失败，请重试</span>';
-        setTimeout(() => {
-            statusDiv.innerHTML = '';
-        }, 3000);
-    });
+        }, 5000);
+    }
 }
 
 function testAIConnection() {
-    const config = {
-        api_key: document.getElementById('aiApiKey').value,
-        api_base: document.getElementById('aiApiBase').value,
-        model: document.getElementById('aiModel').value
-    };
-    
-    if (!config.api_key) {
-        alert('请先输入API密钥');
-        return;
-    }
-    
+    // 使用后端环境变量配置进行测试
     const statusDiv = document.getElementById('aiConfigStatus');
-    statusDiv.innerHTML = '<span style="color: blue;">测试连接中...</span>';
+    if (!statusDiv) return;
     
-    fetch('/api/ai/test', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
-        } else {
-            statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
-        }
-        setTimeout(() => {
-            statusDiv.innerHTML = '';
-        }, 5000);
-    })
-    .catch(error => {
-        console.error('测试AI连接失败:', error);
-        statusDiv.innerHTML = '<span style="color: red;">✗ 测试失败，请检查网络连接</span>';
-        setTimeout(() => {
-            statusDiv.innerHTML = '';
-        }, 5000);
-    });
+    statusDiv.innerHTML = '<span style="color: blue;">测试连接中（使用环境变量配置）...</span>';
+    
+    // 先获取当前配置
+    fetch('/api/ai/config')
+        .then(response => response.json())
+        .then(configData => {
+            if (!configData.success || !configData.data.ai_available) {
+                statusDiv.innerHTML = '<span style="color: red;">✗ AI未启用或API密钥未配置，请检查Railway环境变量</span>';
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+                return;
+            }
+            
+            // 使用后端配置进行测试（不传递密钥，后端会使用环境变量）
+            fetch('/api/ai/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    // 不传递api_key，后端会使用环境变量中的配置
+                    api_base: configData.data.ai_api_base || '',
+                    model: configData.data.ai_model || 'gpt-3.5-turbo'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
+                } else {
+                    statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
+                }
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            })
+            .catch(error => {
+                console.error('测试AI连接失败:', error);
+                statusDiv.innerHTML = '<span style="color: red;">✗ 测试失败，请检查网络连接</span>';
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            });
+        })
+        .catch(error => {
+            console.error('获取AI配置失败:', error);
+            statusDiv.innerHTML = '<span style="color: red;">✗ 获取配置失败</span>';
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 5000);
+        });
 }
 
 // 模块切换功能
@@ -4014,7 +3996,7 @@ function analyzeResumeMatch(resumeId, appliedPosition) {
     })
     .catch(error => {
         console.error('分析简历匹配度失败:', error);
-        resultDiv.innerHTML = '<div class="error">分析失败，请检查AI配置是否正确</div>';
+        resultDiv.innerHTML = '<div class="error">分析失败，请检查Railway平台环境变量中的OPENAI_API_KEY配置</div>';
     });
 }
 
