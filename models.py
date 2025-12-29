@@ -319,6 +319,7 @@ class Interview(Base):
     registration_form_contact = Column(String(50))  # 联系方式（可修改）
     registration_form_email = Column(String(100))  # 邮箱（可修改）
     registration_form_birth_date = Column(String(50))  # 出生日期（可修改）
+    registration_form_gender = Column(String(10))  # 性别（男/女）
     registration_form_ethnicity = Column(String(50))  # 民族
     registration_form_marital_status = Column(String(50))  # 婚姻状况（未婚、已婚、离异）
     registration_form_has_children = Column(String(10))  # 有无子女（有、无）
@@ -654,6 +655,8 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN registration_form_email VARCHAR(100)")
     if 'registration_form_birth_date' not in i_columns:
         add_cols.append("ADD COLUMN registration_form_birth_date VARCHAR(50)")
+    if 'registration_form_gender' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_gender VARCHAR(10)")
     if 'registration_form_ethnicity' not in i_columns:
         add_cols.append("ADD COLUMN registration_form_ethnicity VARCHAR(50)")
     if 'registration_form_marital_status' not in i_columns:

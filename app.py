@@ -2184,7 +2184,7 @@ def download_resume_file(resume_id):
             return jsonify({'success': False, 'message': '文件不存在'}), 404
         
         # 获取原始文件名
-        file_name = resume.file_name or os.path.basename(file_path)
+        original_file_name = resume.file_name or os.path.basename(file_path)
         
         # 检查是否为预览模式（通过查询参数）
         as_attachment = request.args.get('download', 'false').lower() == 'true'
@@ -2197,10 +2197,14 @@ def download_resume_file(resume_id):
         elif file_ext in ['.doc', '.docx']:
             mimetype = 'application/msword' if file_ext == '.doc' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         
+        # 文件名称格式：姓名_原文件名
+        candidate_name = resume.name or f"简历{resume_id}"
+        download_name = f"{candidate_name}_{original_file_name}" if as_attachment else None
+        
         return send_file(
             file_path,
             as_attachment=as_attachment,
-            download_name=file_name if as_attachment else None,
+            download_name=download_name,
             mimetype=mimetype
         )
     except Exception as e:
@@ -2350,7 +2354,8 @@ def export_single(resume_id):
         return jsonify({'success': False, 'message': '简历不存在'}), 404
     
     file_path = export_resume_to_excel(resume)
-    return send_file(file_path, as_attachment=True, download_name=f'简历_{resume.name or resume.id}.xlsx')
+    candidate_name = resume.name or f"简历{resume_id}"
+    return send_file(file_path, as_attachment=True, download_name=f'{candidate_name}_简历.xlsx')
 
 @app.route('/api/export/batch', methods=['POST'])
 def export_batch():
@@ -2381,7 +2386,27 @@ def export_resume_analysis_pdf(resume_id):
         applied_position = (resume.applied_position or '').strip()
         analysis = None
 
+        # 首先检查简历是否已有匹配度分析结果
+        # 如果简历有匹配度分析结果且岗位匹配，优先使用已保存的结果
+        if resume.match_score is not None and resume.match_level:
+            # 检查岗位是否匹配（如果简历有match_position字段，需要匹配）
+            position_matched = True
+            if hasattr(resume, 'match_position') and resume.match_position:
+                position_matched = (resume.match_position == applied_position)
+            
+            if position_matched:
+                # 使用已保存的匹配度结果构建analysis字典
+                analysis = {
+                    'match_score': resume.match_score,
+                    'match_level': resume.match_level,
+                    'detailed_analysis': '',  # 简历记录中没有保存详细分析
+                    'strengths': [],
+                    'weaknesses': [],
+                    'suggestions': []
+                }
+
         # 如果有应聘岗位且AI可用，则在导出前实时执行一次匹配分析，保证PDF中的匹配度内容是最新的
+        # 如果已有分析结果，仍然尝试获取更详细的AI分析结果（包含详细分析、优势、不足、建议等）
         try:
             if applied_position:
                 # 获取岗位信息
@@ -2532,13 +2557,28 @@ def export_resume_analysis_pdf(resume_id):
                         except Exception:
                             pass
         except Exception as _:
-            # 匹配度分析失败时，不影响PDF导出，只是不带匹配信息
-            analysis = None
+            # 匹配度分析失败时，不影响PDF导出
+            # 如果之前已经有保存的匹配度结果，保持使用；否则analysis仍为None
+            if analysis is None and resume.match_score is not None and resume.match_level:
+                # 如果AI分析失败，但简历有已保存的匹配度结果，使用已保存的结果
+                position_matched = True
+                if hasattr(resume, 'match_position') and resume.match_position:
+                    position_matched = (resume.match_position == applied_position)
+                
+                if position_matched:
+                    analysis = {
+                        'match_score': resume.match_score,
+                        'match_level': resume.match_level,
+                        'detailed_analysis': '',
+                        'strengths': [],
+                        'weaknesses': [],
+                        'suggestions': []
+                    }
 
         file_path = export_resume_analysis_to_pdf(resume, analysis)
-        # 文件名称格式：候选人姓名-简历分析报告
+        # 文件名称格式：姓名_简历分析报告
         candidate_name = resume.name or f"简历{resume_id}"
-        download_name = f"{candidate_name}-简历分析报告.pdf"
+        download_name = f"{candidate_name}_简历分析报告.pdf"
         return send_file(file_path, as_attachment=True, download_name=download_name)
     except Exception as e:
         return jsonify({'success': False, 'message': f'导出分析报告失败: {str(e)}'}), 500
@@ -3355,6 +3395,9 @@ def update_registration_form(interview_id):
         if 'registration_form_birth_date' in data:
             interview.registration_form_birth_date = _normalize_field(
                 data.get('registration_form_birth_date'))
+        if 'registration_form_gender' in data:
+            interview.registration_form_gender = _normalize_field(
+                data.get('registration_form_gender'))
         if 'registration_form_ethnicity' in data:
             interview.registration_form_ethnicity = _normalize_field(
                 data.get('registration_form_ethnicity'))
@@ -3553,6 +3596,9 @@ def submit_registration_form():
         if 'registration_form_birth_date' in data:
             interview.registration_form_birth_date = _normalize_field(
                 data.get('registration_form_birth_date'))
+        if 'registration_form_gender' in data:
+            interview.registration_form_gender = _normalize_field(
+                data.get('registration_form_gender'))
         if 'registration_form_ethnicity' in data:
             interview.registration_form_ethnicity = _normalize_field(
                 data.get('registration_form_ethnicity'))
@@ -3646,7 +3692,8 @@ def export_interview_round_analysis_pdf(interview_id):
             return jsonify({'success': False, 'message': '当前轮次暂无AI分析结果，请先执行AI分析'}), 400
 
         file_path = export_interview_round_analysis_to_pdf(interview, round_name, analysis_text)
-        download_name = f'{round_name}面试反馈报告_{interview.name or interview_id}.pdf'
+        candidate_name = interview.name or f"面试{interview_id}"
+        download_name = f'{candidate_name}_{round_name}面试反馈报告.pdf'
         return send_file(file_path, as_attachment=True, download_name=download_name)
     except Exception as e:
         return jsonify({'success': False, 'message': f'导出AI分析报告失败: {str(e)}'}), 500
@@ -3736,7 +3783,7 @@ def test_ai_connection():
 def _collect_registration_data(interview):
     return {
         'name': interview.name or '',
-        'gender': '',  # 性别字段需要根据实际模型字段调整
+        'gender': interview.registration_form_gender or '',  # 性别
         'ethnicity': interview.registration_form_ethnicity or '',  # 民族
         'birth_date': interview.registration_form_birth_date or '',
         'marital_status': interview.registration_form_marital_status or '',
@@ -3804,7 +3851,7 @@ def export_registration_form_to_excel(interview):
         ws['A2'].value = f"应聘岗位：{data['applied_position']}"
         ws['C2'].value = f"填表日期：{data['fill_date']}"
         for cell in ['A2','C2']:
-            stylize_cell(ws[cell], font=bold, align=center)
+            stylize_cell(ws[cell], font=bold, align=left)
 
         def section_row(row, title):
             ws.row_dimensions[row].height = 25
@@ -3814,13 +3861,13 @@ def export_registration_form_to_excel(interview):
             stylize_cell(cell, font=bold, align=center, fill=section_fill)
 
         section_row(3, '个人基本信息')
-        _fill_row(ws, 4, ['姓名', data['name'], '性别', data['gender'], '出生年月', data['birth_date']], border, center)
-        _fill_row(ws, 5, ['民族', data['origin'], '婚姻状况', data['marital_status'], '有无子女', data['has_children']], border, center)
-        _fill_row(ws, 6, ['学历', data['degree'], '联系电话', data['contact'], '电子邮箱', data['email']], border, center)
-        _fill_row(ws, 7, ['籍贯', data['origin'], '身份证号', data['id_card'], '', ''], border, center)
+        _fill_row(ws, 4, ['姓名', data['name'], '性别', data['gender'], '出生年月', data['birth_date']], border, left)
+        _fill_row(ws, 5, ['民族', data['ethnicity'], '婚姻状况', data['marital_status'], '有无子女', data['has_children']], border, left)
+        _fill_row(ws, 6, ['学历', data['degree'], '联系电话', data['contact'], '电子邮箱', data['email']], border, left)
+        _fill_row(ws, 7, ['籍贯', data['origin'], '身份证号', data['id_card'], '', ''], border, left)
 
         section_row(8, '教育经历')
-        _fill_row(ws, 9, ['开始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'], border, center)
+        _fill_row(ws, 9, ['开始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'], border, left)
         _fill_row(ws, 10, [
             data['education_start_date'],
             data['education_end_date'],
@@ -3828,10 +3875,10 @@ def export_registration_form_to_excel(interview):
             data['major'],
             data['degree'],
             data['full_time']
-        ], border, center)
+        ], border, left)
 
         section_row(12, '工作经历（从最近开始）')
-        _fill_row(ws, 13, ['开始时间', '结束时间', '单位名称', '', '职务', '离职原因'], border, center)
+        _fill_row(ws, 13, ['开始时间', '结束时间', '单位名称', '', '职务', '离职原因'], border, left)
         ws.merge_cells('C13:D13')
         def job_list_row(row, entry):
             _fill_row(ws, row, [
@@ -3840,12 +3887,12 @@ def export_registration_form_to_excel(interview):
                 entry.get('company', ''),
                 '',
                 entry.get('position', ''),
-                entry.get('departure_reason', '')
-            ], border, center)
+                entry.get('resignation_reason', '')
+            ], border, left)
             ws.merge_cells(f'C{row}:D{row}')
         job_list_row(14, data['work_experience'][0] if data['work_experience'] else {})
         job_list_row(15, data['work_experience'][1] if len(data['work_experience']) > 1 else {})
-        _fill_row(ws, 16, ['', '', '', '', '', ''], border, center)
+        _fill_row(ws, 16, ['', '', '', '', '', ''], border, left)
 
         section_row(17, '考虑新公司主要原因')
         factor_texts = [
@@ -3862,8 +3909,8 @@ def export_registration_form_to_excel(interview):
         for idx, defaultText in enumerate(factor_texts):
             value = factors[idx] if idx < len(factors) and factors[idx] else defaultText
             factor_row.append(f"{idx + 1}、{value}")
-        _fill_row(ws, 18, factor_row[:6], border, center)
-        _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, center)
+        _fill_row(ws, 18, factor_row[:6], border, left)
+        _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, left)
 
         section_row(21, '个人爱好及专长')
         ws.row_dimensions[22].height = 25
@@ -3871,15 +3918,15 @@ def export_registration_form_to_excel(interview):
         ws['A22'].value = data['hobbies']
         stylize_cell(ws['A22'], align=left)
 
-        _fill_row(ws, 23, ['原月薪', data['current_salary'], '期望月薪', data['expected_salary'], '最快到岗时间', data['available_date']], border, center)
+        _fill_row(ws, 23, ['原月薪', data['current_salary'], '期望月薪', data['expected_salary'], '最快到岗时间', data['available_date']], border, left)
         ws['A24'].value = '现住址'
         ws.merge_cells('B24:F24')
         ws['B24'].value = f"{data['address']} {data['address_detail']}"
-        stylize_cell(ws['B24'], align=center)
+        stylize_cell(ws['B24'], align=left)
         ws.row_dimensions[24].height = 25
-        for r in range(25, 30):
+        for r in range(25, 32):
             ws.row_dimensions[r].height = 25
-        ws.merge_cells('A25:F29')
+        ws.merge_cells('A25:F31')
         ws['A25'].value = (
             "声明人：\n"
             "\n"
@@ -3890,7 +3937,7 @@ def export_registration_form_to_excel(interview):
             "\n"
             "日期"
         )
-        stylize_cell(ws['A25'], align=center)
+        stylize_cell(ws['A25'], align=left)
 
         buffer = io.BytesIO()
         wb.save(buffer)
@@ -4016,12 +4063,14 @@ def export_registration_form_to_pdf(interview):
         work_positions = ''
         work_start_times = ''
         work_end_times = ''
+        work_resignation_reasons = ''
     elif len(work_exp) == 1:
         exp = work_exp[0]
         work_companies = exp.get('company', '')
         work_positions = exp.get('position', '')
         work_start_times = str(exp.get('start_year', '')) if exp.get('start_year') else ''
         work_end_times = str(exp.get('end_year', '')) if exp.get('end_year') else ''
+        work_resignation_reasons = exp.get('resignation_reason', '')
     else:
         # 显示两个工作经历，用换行符分隔
         exp1 = work_exp[0]
@@ -4030,11 +4079,12 @@ def export_registration_form_to_pdf(interview):
         work_positions = f"{exp1.get('position', '')}\n{exp2.get('position', '')}"
         work_start_times = f"{exp1.get('start_year', '') if exp1.get('start_year') else ''}\n{exp2.get('start_year', '') if exp2.get('start_year') else ''}"
         work_end_times = f"{exp1.get('end_year', '') if exp1.get('end_year') else ''}\n{exp2.get('end_year', '') if exp2.get('end_year') else ''}"
+        work_resignation_reasons = f"{exp1.get('resignation_reason', '')}\n{exp2.get('resignation_reason', '')}"
     
     draw_section_2rows(
         '工作经历',
-        ['公司名称', '岗位', '开始时间', '结束时间'],
-        [work_companies, work_positions, work_start_times, work_end_times]
+        ['公司名称', '岗位', '开始时间', '结束时间', '离职原因'],
+        [work_companies, work_positions, work_start_times, work_end_times, work_resignation_reasons]
     )
     
     # 4. 个人信息（其他所有内容）
@@ -4072,19 +4122,20 @@ def export_registration_form(interview_id):
         interview = session.query(Interview).filter(Interview.id == interview_id).first()
         if not interview:
             return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        candidate_name = interview.name or f"面试{interview_id}"
         if fmt == 'pdf':
             pdf_file = export_registration_form_to_pdf(interview)
             return send_file(
                 pdf_file,
                 as_attachment=True,
-                download_name=f'面试登记表_{interview.name or interview_id}.pdf',
+                download_name=f'{candidate_name}_面试登记表.pdf',
                 mimetype='application/pdf'
             )
         excel_file = export_registration_form_to_excel(interview)
         return send_file(
             excel_file,
             as_attachment=True,
-            download_name=f'面试登记表_{interview.name or interview_id}.xlsx',
+            download_name=f'{candidate_name}_面试登记表.xlsx',
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
     except Exception as e:
