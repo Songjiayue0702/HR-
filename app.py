@@ -3736,7 +3736,8 @@ def test_ai_connection():
 def _collect_registration_data(interview):
     return {
         'name': interview.name or '',
-        'gender': interview.registration_form_ethnicity or '',
+        'gender': '',  # 性别字段需要根据实际模型字段调整
+        'ethnicity': interview.registration_form_ethnicity or '',  # 民族
         'birth_date': interview.registration_form_birth_date or '',
         'marital_status': interview.registration_form_marital_status or '',
         'has_children': interview.registration_form_has_children or '',
@@ -3904,6 +3905,21 @@ def export_registration_form_to_excel(interview):
 
 def export_registration_form_to_pdf(interview):
     data = _collect_registration_data(interview)
+    
+    # 获取关联的简历信息以获取性别
+    session = get_db_session()
+    try:
+        resume = None
+        if hasattr(interview, 'resume_id') and interview.resume_id:
+            resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+            # 如果简历中有性别信息，使用简历中的性别
+            if resume and resume.gender:
+                data['gender'] = resume.gender
+    except:
+        pass
+    finally:
+        session.close()
+    
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -3911,49 +3927,136 @@ def export_registration_form_to_pdf(interview):
     c.drawCentredString(width / 2, height - 40, '应聘人员面试登记表')
 
     y = height - 80
-    def draw_section(title, rows):
+    table_width = width - 80
+    
+    def draw_section_2rows(title, header_row, content_row):
+        """绘制2行表格：标题行灰色底纹，内容行白色底纹"""
         nonlocal y
         c.setFont('STSong-Light', 12)
         c.drawString(40, y, title)
         y -= 20
-        table = Table(rows, colWidths=[(width-80)/len(rows[0])] * len(rows[0]))
-        table.setStyle(TableStyle([
+        
+        # 确保只有2行
+        rows = [header_row, content_row]
+        num_cols = len(header_row)
+        col_width = table_width / num_cols
+        
+        # 设置行高：如果内容包含换行符，使用2行高度；否则使用1行高度（垂直居中）
+        header_height = 25
+        # 检查内容是否包含换行符
+        has_newline = any('\n' in str(cell) for cell in content_row if cell)
+        if has_newline:
+            content_height = 50  # 2行高度
+        else:
+            content_height = 25  # 1行高度，垂直居中
+        
+        table = Table(rows, colWidths=[col_width] * num_cols, rowHeights=[header_height, content_height])
+        # 创建样式
+        style = TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),  # 标题行灰色
+            ('BACKGROUND', (0, 1), (-1, 1), colors.white),  # 内容行白色
             ('FONTNAME', (0, 0), (-1, -1), 'STSong-Light'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ]))
-        table.wrapOn(c, width - 80, y)
-        table.drawOn(c, 40, y - 10 - (20 * len(rows)))
-        y -= 30 + 20 * len(rows)
-
-    draw_section('个人基本信息', [
-        ['姓名', data['name'], '性别', data['gender'], '联系方式', data['contact']],
-        ['出生日期', data['birth_date'], '民族', data['origin'], '婚姻状况', data['marital_status']],
-        ['籍贯', data['origin'], '身份证号', data['id_card'], '邮箱', data['email']],
-    ])
-    draw_section('教育/自我信息', [
-        ['最高学历', data['education'], '学位', data['degree'], '统招', data['full_time']],
-        ['毕业院校', data['institution'], '专业', data['major'], '起止时间', f"{data['education_start_date']} - {data['education_end_date']}"],
-        ['个人爱好及特长', data['hobbies'], '原月薪', data['current_salary'], '期望月薪', data['expected_salary']],
-        ['最快到岗时间', data['available_date'], '能否出差', data['can_travel'], '', '']
-    ])
-    draw_section('现住址', [
-        ['省/市/区', data['address'], '详细地址', data['address_detail'], '', '']
-    ])
-    exp_rows = [['公司名称', '岗位', '开始时间', '结束时间']]
-    for exp in data['work_experience']:
-        exp_rows.append([
-            exp.get('company', ''),
-            exp.get('position', ''),
-            exp.get('start_year') or '',
-            exp.get('end_year') or ''
+            ('FONTSIZE', (0, 0), (-1, 0), 11),  # 标题行字体
+            ('FONTSIZE', (0, 1), (-1, 1), 10),  # 内容行字体
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),  # 标题行居中
+            ('ALIGN', (0, 1), (-1, 1), 'LEFT'),  # 内容行左对齐
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ])
-    if len(exp_rows) == 1:
-        exp_rows.append(['暂无工作经历', '', '', ''])
-    draw_section('近两份工作经历', exp_rows)
-    factor_rows = [['排序结果']] + [[f'{idx + 1}. {factor}'] for idx, factor in enumerate(data['factors'] or ['未填写'])]
-    draw_section('考虑新公司的主要因素', factor_rows)
+        
+        # 如果内容需要换行，确保文本能够自动换行
+        if has_newline:
+            # 对于需要换行的单元格，使用LEFT对齐和TOP对齐以便多行显示
+            style.add('VALIGN', (0, 1), (-1, 1), 'TOP')
+        
+        table.setStyle(style)
+        table.wrapOn(c, table_width, y)
+        table.drawOn(c, 40, y - header_height - content_height)
+        y -= 30 + header_height + content_height
+
+    # 1. 个人基本信息
+    draw_section_2rows(
+        '个人基本信息',
+        ['姓名', '性别', '出生日期', '民族', '婚姻状况', '籍贯', '身份证号', '联系方式', '邮箱'],
+        [
+            data['name'] or '',
+            data['gender'] or '',
+            data['birth_date'] or '',
+            data['ethnicity'] or '',
+            data['marital_status'] or '',
+            data['origin'] or '',
+            data['id_card'] or '',
+            data['contact'] or '',
+            data['email'] or ''
+        ]
+    )
+    
+    # 2. 教育信息
+    draw_section_2rows(
+        '教育信息',
+        ['起始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'],
+        [
+            data['education_start_date'] or '',
+            data['education_end_date'] or '',
+            data['institution'] or '',
+            data['major'] or '',
+            data['degree'] or '',
+            data['full_time'] or ''
+        ]
+    )
+    
+    # 3. 工作经历
+    work_exp = data['work_experience'] or []
+    if len(work_exp) == 0:
+        work_companies = '暂无工作经历'
+        work_positions = ''
+        work_start_times = ''
+        work_end_times = ''
+    elif len(work_exp) == 1:
+        exp = work_exp[0]
+        work_companies = exp.get('company', '')
+        work_positions = exp.get('position', '')
+        work_start_times = str(exp.get('start_year', '')) if exp.get('start_year') else ''
+        work_end_times = str(exp.get('end_year', '')) if exp.get('end_year') else ''
+    else:
+        # 显示两个工作经历，用换行符分隔
+        exp1 = work_exp[0]
+        exp2 = work_exp[1]
+        work_companies = f"{exp1.get('company', '')}\n{exp2.get('company', '')}"
+        work_positions = f"{exp1.get('position', '')}\n{exp2.get('position', '')}"
+        work_start_times = f"{exp1.get('start_year', '') if exp1.get('start_year') else ''}\n{exp2.get('start_year', '') if exp2.get('start_year') else ''}"
+        work_end_times = f"{exp1.get('end_year', '') if exp1.get('end_year') else ''}\n{exp2.get('end_year', '') if exp2.get('end_year') else ''}"
+    
+    draw_section_2rows(
+        '工作经历',
+        ['公司名称', '岗位', '开始时间', '结束时间'],
+        [work_companies, work_positions, work_start_times, work_end_times]
+    )
+    
+    # 4. 个人信息（其他所有内容）
+    personal_info_content = f"个人爱好及特长：{data['hobbies'] or ''}；原月薪：{data['current_salary'] or ''}；期望月薪：{data['expected_salary'] or ''}；最快到岗时间：{data['available_date'] or ''}；能否出差：{data['can_travel'] or ''}；现住址：{data['address'] or ''} {data['address_detail'] or ''}"
+    draw_section_2rows(
+        '个人信息',
+        ['内容'],
+        [personal_info_content]
+    )
+    
+    # 5. 考虑新公司的主要因素
+    factors = data['factors'] or []
+    if not factors:
+        factors_content = '未填写'
+    else:
+        factors_content = '；'.join([f'{idx + 1}. {factor}' for idx, factor in enumerate(factors)])
+    
+    draw_section_2rows(
+        '考虑新公司的主要因素',
+        ['排序结果'],
+        [factors_content]
+    )
 
     c.showPage()
     c.save()

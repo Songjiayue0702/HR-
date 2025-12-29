@@ -94,6 +94,33 @@
             .form-grid {
                 grid-template-columns: 1fr;
             }
+            .work-exp-header {
+                display: none; /* 移动端隐藏表头 */
+            }
+            .work-exp-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+                padding: 12px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background: #f8f9fa;
+            }
+            .work-exp-item input {
+                width: 100%;
+            }
+            .education-row {
+                flex-direction: column;
+            }
+            .education-field {
+                min-width: 100%;
+            }
+            .address-row {
+                flex-direction: column;
+            }
+            .address-row select {
+                width: 100%;
+            }
         }
         .work-exp-item {
             display: flex;
@@ -103,6 +130,16 @@
         }
         .work-exp-item input {
             flex: 1;
+            min-width: 0; /* 允许flex项目缩小 */
+        }
+        .education-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .education-field {
+            flex: 1;
+            min-width: 140px;
         }
         .sortable-list {
             list-style: none;
@@ -255,32 +292,29 @@
                     <span>结束时间</span>
                 </div>
                 <div id="work_experience_container">
+                    {% set work_experiences = [] %}
                     {% if interview.registration_form_recent_work_experience %}
-                        {% for exp in interview.registration_form_recent_work_experience %}
-                        <div class="work-exp-item">
-                            <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
-                            <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
-                            <input type="date" placeholder="开始时间" class="form-input" value="{{ exp.start_year|string + '-01-01' if exp.start_year else '' }}">
-                            <input type="date" placeholder="结束时间" class="form-input" value="{{ exp.end_year|string + '-01-01' if exp.end_year else '' }}">
-                        </div>
-                        {% endfor %}
+                        {% set work_experiences = interview.registration_form_recent_work_experience[:2] %}
                     {% elif resume and resume.work_experience %}
-                        {% for exp in resume.work_experience[:2] %}
-                        <div class="work-exp-item">
+                        {% set work_experiences = resume.work_experience[:2] %}
+                    {% endif %}
+                    
+                    {% for i in [0, 1] %}
+                    <div class="work-exp-item">
+                        {% if i < work_experiences|length %}
+                            {% set exp = work_experiences[i] %}
                             <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
                             <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
-                            <input type="date" placeholder="开始时间" class="form-input" value="{{ exp.start_year|string + '-01-01' if exp.start_year else '' }}">
-                            <input type="date" placeholder="结束时间" class="form-input" value="{{ exp.end_year|string + '-01-01' if exp.end_year else '' }}">
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="work-exp-item">
+                            <input type="date" placeholder="开始时间" class="form-input" value="{{ (exp.start_year|string + '-01-01') if exp.start_year else '' }}">
+                            <input type="date" placeholder="结束时间" class="form-input" value="{{ (exp.end_year|string + '-01-01') if exp.end_year else '' }}">
+                        {% else %}
                             <input type="text" placeholder="公司名称" class="form-input">
                             <input type="text" placeholder="岗位" class="form-input">
                             <input type="date" placeholder="开始时间" class="form-input">
                             <input type="date" placeholder="结束时间" class="form-input">
-                        </div>
-                    {% endif %}
+                        {% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
             
@@ -486,7 +520,12 @@
                 { id: 'has_children', name: '有无子女' },
                 { id: 'origin', name: '籍贯' },
                 { id: 'first_work_date', name: '首次工作时间' },
-                { id: 'education', name: '最高学历院校及专业及起始时间' },
+                { id: 'education_start_date', name: '教育起始时间' },
+                { id: 'education_end_date', name: '教育结束时间' },
+                { id: 'institution', name: '毕业院校' },
+                { id: 'major', name: '专业' },
+                { id: 'degree', name: '学历' },
+                { id: 'full_time', name: '是否为全日制统招' },
                 { id: 'hobbies', name: '个人爱好及特长' },
                 { id: 'current_salary', name: '原月薪' },
                 { id: 'expected_salary', name: '期望月薪' },
@@ -507,13 +546,8 @@
                 }
             }
             
-            // 验证工作经历
+            // 验证工作经历（至少填写一份）
             const workExpItems = document.querySelectorAll('#work_experience_container .work-exp-item');
-            if (workExpItems.length === 0) {
-                alert('请填写至少一份工作经历');
-                return;
-            }
-            
             let hasValidWorkExp = false;
             workExpItems.forEach(item => {
                 const inputs = item.querySelectorAll('input');
@@ -523,7 +557,7 @@
             });
             
             if (!hasValidWorkExp) {
-                alert('请填写工作经历信息');
+                alert('请至少填写一份工作经历信息');
                 return;
             }
             

@@ -16,18 +16,19 @@ from typing import Dict, Any, List
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
 
 from config import Config
 
 # 全局中文字体名称
-CH_FONT_NAME = "SimSun"
+CH_FONT_NAME = "STSong-Light"
 
 
 def _register_chinese_font() -> str:
     """
     注册中文字体，返回可用的字体名称。
-    优先使用常见的 Windows 中文字体（宋体 / 黑体 / 微软雅黑）。
+    优先使用reportlab内置的CID字体（跨平台支持），如果失败则尝试系统字体。
     """
     global CH_FONT_NAME
 
@@ -38,12 +39,32 @@ def _register_chinese_font() -> str:
     except KeyError:
         pass
 
+    # 优先使用reportlab内置的CID字体（跨平台，支持中文）
+    cid_fonts = [
+        "STSong-Light",      # 华文宋体（简体中文）
+        "STSongStd-Light",   # 华文宋体标准版
+        "STHeiti-Light",     # 华文黑体（简体中文）
+        "STHeitiStd-Light",  # 华文黑体标准版
+    ]
+    
+    for font_name in cid_fonts:
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+            CH_FONT_NAME = font_name
+            return CH_FONT_NAME
+        except Exception:
+            continue
+
+    # 如果CID字体都不可用，尝试使用系统字体（仅Windows/Linux本地开发环境）
     font_candidates = [
         ("SimSun", r"C:\Windows\Fonts\simsun.ttc"),
         ("SimSun", r"C:\Windows\Fonts\simsun.ttf"),
         ("SimHei", r"C:\Windows\Fonts\simhei.ttf"),
         ("MSYH", r"C:\Windows\Fonts\msyh.ttc"),
         ("MSYH", r"C:\Windows\Fonts\msyh.ttf"),
+        # Linux常见字体路径
+        ("SimSun", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        ("SimSun", "/usr/share/fonts/truetype/arphic/uming.ttc"),
     ]
 
     for name, path in font_candidates:
@@ -55,8 +76,13 @@ def _register_chinese_font() -> str:
             except Exception:
                 continue
 
-    # 如果找不到中文字体，只能退回默认 Helvetica（中文会显示为方块）
-    CH_FONT_NAME = "Helvetica"
+    # 如果所有字体都不可用，使用CID字体（即使注册失败，reportlab也会尝试使用）
+    # 这比Helvetica好，至少会尝试渲染中文
+    CH_FONT_NAME = "STSong-Light"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont(CH_FONT_NAME))
+    except Exception:
+        pass
     return CH_FONT_NAME
 
 
@@ -98,8 +124,9 @@ def _draw_wrapped_text(
                 c.showPage()
                 c.setFont(CH_FONT_NAME, 11)
                 y = page_height - 60
-            c.drawString(x, y, current_line)
-            y -= leading
+            if current_line:  # 只有在有内容时才绘制
+                c.drawString(x, y, current_line)
+                y -= leading
             current_line = ""
             continue
 
