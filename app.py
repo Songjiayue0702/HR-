@@ -215,16 +215,25 @@ def get_effective_ai_config():
         return config
     
     # 优先级2: 全局配置（管理员设置，存储在数据库）
+    # 只有当数据库配置有效（ai_enabled=True且api_key存在）时才使用，否则回退到环境变量
     db = get_db_session()
     try:
         global_config = db.query(GlobalAIConfig).first()
         if global_config:
             from utils.encryption import decrypt_value
-            config['ai_enabled'] = bool(global_config.ai_enabled)
-            config['ai_api_key'] = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
-            config['ai_api_base'] = global_config.ai_api_base or ''
-            config['ai_model'] = global_config.ai_model or 'gpt-3.5-turbo'
-            return config
+            db_ai_enabled = bool(global_config.ai_enabled)
+            db_api_key = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
+            
+            # 只有当数据库配置有效时才使用它
+            if db_ai_enabled and db_api_key:
+                config['ai_enabled'] = db_ai_enabled
+                config['ai_api_key'] = db_api_key
+                config['ai_api_base'] = global_config.ai_api_base or ''
+                config['ai_model'] = global_config.ai_model or 'gpt-3.5-turbo'
+                return config
+    except Exception as e:
+        # 如果数据库查询失败，记录错误但不影响后续的环境变量回退
+        print(f"获取数据库AI配置失败: {e}")
     finally:
         db.close()
     
@@ -1341,22 +1350,40 @@ def process_resume_async(resume_id, file_path):
             raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
         
         # 异步任务使用全局配置（不依赖session）
-        # 优先级：全局配置 > 环境变量
+        # 优先级：全局配置 > 环境变量（只有当全局配置有效时才使用）
         db_config = get_db_session()
         try:
             global_config = db_config.query(GlobalAIConfig).first()
             if global_config:
                 from utils.encryption import decrypt_value
-                ai_enabled = bool(global_config.ai_enabled)
-                ai_api_key = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
-                ai_api_base = global_config.ai_api_base or ''
-                ai_model = global_config.ai_model or 'gpt-3.5-turbo'
+                db_ai_enabled = bool(global_config.ai_enabled)
+                db_api_key = decrypt_value(global_config.ai_api_key) if global_config.ai_api_key else ''
+                
+                # 只有当数据库配置有效时才使用它
+                if db_ai_enabled and db_api_key:
+                    ai_enabled = db_ai_enabled
+                    ai_api_key = db_api_key
+                    ai_api_base = global_config.ai_api_base or ''
+                    ai_model = global_config.ai_model or 'gpt-3.5-turbo'
+                else:
+                    # 数据库配置无效，回退到环境变量
+                    ai_enabled = Config.AI_ENABLED
+                    ai_api_key = Config.AI_API_KEY
+                    ai_api_base = Config.AI_API_BASE
+                    ai_model = Config.AI_MODEL
             else:
                 # 使用环境变量
                 ai_enabled = Config.AI_ENABLED
                 ai_api_key = Config.AI_API_KEY
                 ai_api_base = Config.AI_API_BASE
                 ai_model = Config.AI_MODEL
+        except Exception as e:
+            # 如果数据库查询失败，使用环境变量
+            print(f"获取数据库AI配置失败: {e}")
+            ai_enabled = Config.AI_ENABLED
+            ai_api_key = Config.AI_API_KEY
+            ai_api_base = Config.AI_API_BASE
+            ai_model = Config.AI_MODEL
         finally:
             db_config.close()
         
@@ -3691,19 +3718,20 @@ def export_interview_round_analysis_pdf(interview_id):
 @app.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
     """获取AI配置（不返回密钥）"""
-    ai_enabled = app.config.get('AI_ENABLED', True)
-    ai_api_key = app.config.get('AI_API_KEY', '')
+    # 使用get_effective_ai_config()获取当前有效的配置（优先级：session > 全局配置 > 环境变量）
+    ai_config = get_effective_ai_config()
+    
     # 检查AI是否真正可用（启用且有API密钥）
-    ai_available = ai_enabled and bool(ai_api_key)
+    ai_available = ai_config.get('ai_enabled', True) and bool(ai_config.get('ai_api_key', ''))
     
     return jsonify({
         'success': True,
         'data': {
-            'ai_enabled': ai_enabled,
+            'ai_enabled': ai_config.get('ai_enabled', True),
             'ai_available': ai_available,  # 新增：AI是否真正可用
-            'ai_model': app.config.get('AI_MODEL', 'gpt-3.5-turbo'),
-            'ai_api_base': app.config.get('AI_API_BASE', ''),
-            'ai_models': app.config.get('AI_MODELS', [])
+            'ai_model': ai_config.get('ai_model', 'gpt-3.5-turbo'),
+            'ai_api_base': ai_config.get('ai_api_base', ''),
+            'ai_models': Config.AI_MODELS
         }
     })
 
