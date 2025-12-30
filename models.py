@@ -110,24 +110,89 @@ class Resume(Base):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
-# 数据库初始化
-engine = create_engine(f'sqlite:///{Config.DATABASE_PATH}', echo=False)
+# 数据库初始化 - 使用 database_manager
+def _get_engine():
+    """获取数据库引擎（从 database_manager）"""
+    from database_manager import get_database_manager
+    manager = get_database_manager()
+    manager.initialize()
+    # 支持 SQLite 和 D1
+    if manager.engine:
+        return manager.engine
+    # 如果无法获取引擎，返回 None
+    return None
+
+def _get_table_columns(engine, table_name, db_type, inspector=None):
+    """获取表的列名列表（支持 SQLite）"""
+    if db_type == 'sqlite':
+        with engine.connect() as conn:
+            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+            return {row[1] for row in result}
+    else:
+        return set()
 
 def init_database():
-    """初始化数据库，创建所有表"""
+    """初始化数据库，创建所有表，并创建默认管理员用户"""
     try:
-        Base.metadata.create_all(engine)
-        print("✓ 数据库表已创建")
+        engine = _get_engine()
+        if engine:
+            Base.metadata.create_all(engine)
+            print("✓ 数据库表已创建")
+            
+            # 确保默认管理员用户存在
+            from database_manager import get_db_session
+            session = get_db_session()
+            if session:
+                try:
+                    admin_user = session.query(User).filter_by(username='admin').first()
+                    if not admin_user:
+                        # 如果没有admin用户，创建默认管理员账户
+                        admin = User(
+                            username='admin',
+                            role='admin',
+                            real_name='系统管理员',
+                            is_active=1
+                        )
+                        admin.set_password('admin123')  # 默认密码，建议首次登录后修改
+                        session.add(admin)
+                        session.commit()
+                        print("✓ 默认管理员账户已创建（用户名: admin, 密码: admin123）")
+                    session.close()
+                except Exception as e:
+                    print(f"⚠️  创建默认管理员账户失败: {e}")
+                    if session:
+                        session.close()
+        else:
+            print("⚠️  无法获取数据库引擎，跳过表创建（可能使用 D1 或其他数据库）")
     except Exception as e:
         print(f"✗ 创建数据库表失败: {e}")
         raise
 
 def migrate_database():
-    """迁移数据库，添加新字段（仅在表存在时）"""
+    """迁移数据库，添加新字段（仅在表存在时）- 支持 SQLite"""
     try:
+        from database_manager import get_database_manager
+        manager = get_database_manager()
+        manager.initialize()
+        
+        engine = _get_engine()
+        if not engine:
+            print("⚠️  数据库迁移仅支持 SQLite，跳过迁移")
+            return
+        
+        db_type = manager.db_type
+        
+        if db_type != 'sqlite':
+            print(f"⚠️  数据库类型 {db_type} 不支持迁移，跳过")
+            return
+        
+        inspector = None
+        
         with engine.connect() as conn:
-            result = conn.execute(text("PRAGMA table_info(resumes)"))
-            columns = {row[1] for row in result}
+            # 迁移 resumes 表
+            try:
+                conn.execute(text("SELECT 1 FROM resumes LIMIT 1"))
+                columns = _get_table_columns(engine, 'resumes', db_type, inspector)
             if 'phone' not in columns:
                 conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
             if 'email' not in columns:
@@ -165,8 +230,7 @@ def migrate_database():
                 # 检查表是否存在
                 conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
                 # 表存在，检查并添加字段
-                result = conn.execute(text("PRAGMA table_info(positions)"))
-                columns = {row[1] for row in result}
+                columns = _get_table_columns(engine, 'positions', db_type, inspector)
                 if 'created_by' not in columns:
                     conn.execute(text("ALTER TABLE positions ADD COLUMN created_by VARCHAR(100)"))
                 if 'updated_by' not in columns:
@@ -185,8 +249,7 @@ def migrate_database():
                 # 检查表是否存在
                 conn.execute(text("SELECT 1 FROM interviews LIMIT 1"))
                 # 表存在，检查并添加字段
-                result = conn.execute(text("PRAGMA table_info(interviews)"))
-                columns = {row[1] for row in result}
+                columns = _get_table_columns(engine, 'interviews', db_type, inspector)
                 if 'created_by' not in columns:
                     conn.execute(text("ALTER TABLE interviews ADD COLUMN created_by VARCHAR(100)"))
                 if 'updated_by' not in columns:
@@ -205,7 +268,7 @@ def migrate_database():
         print(f"警告: 数据库迁移时出错（可能表不存在）: {e}")
         # 不抛出异常，让应用继续启动
 
-Session = sessionmaker(bind=engine)
+# Session 不再直接创建，而是从 database_manager 获取
 
 class Position(Base):
     """岗位目录数据模型"""
@@ -526,42 +589,8 @@ class User(Base):
             # 员工权限
             return permission == 'view_personal'
 
-# 确保表存在
-Base.metadata.create_all(engine)
-
-# 检查users表是否存在，如果不存在则创建；并确保默认管理员账户存在
-with engine.connect() as conn:
-    try:
-        conn.execute(text("SELECT 1 FROM users LIMIT 1"))
-        # 表已存在，检查是否有admin用户
-        session = Session()
-        admin_user = session.query(User).filter_by(username='admin').first()
-        if not admin_user:
-            # 如果没有admin用户，创建默认管理员账户
-            admin = User(
-                username='admin',
-                role='admin',
-                real_name='系统管理员',
-                is_active=1
-            )
-            admin.set_password('admin123')  # 默认密码，建议首次登录后修改
-            session.add(admin)
-            session.commit()
-        session.close()
-    except Exception:
-        # 表不存在，创建表并创建默认管理员账户
-        User.__table__.create(engine)
-        session = Session()
-        admin = User(
-            username='admin',
-            role='admin',
-            real_name='系统管理员',
-            is_active=1
-        )
-        admin.set_password('admin123')  # 默认密码，建议首次登录后修改
-        session.add(admin)
-        session.commit()
-        session.close()
+# 表创建和默认管理员用户创建已移至 init_database() 函数中，延迟执行
+# 以下代码在 app.py 启动时通过 ensure_database_initialized() 调用
 
 # 检查positions/interviews表是否存在，如果不存在则创建；并做简单列补全
 # 注意：这段代码已移至 init_database() 和 migrate_database() 函数中，延迟执行
@@ -716,13 +745,10 @@ with engine.connect() as conn:
 """
 
 # 延迟初始化：不在导入时执行，而是在应用启动时调用
-# 先创建表结构
-init_database()
-
-# 然后执行迁移（添加新字段）
-migrate_database()
+# 这些函数会在 app.py 的 ensure_database_initialized() 中调用
 
 def get_db_session():
-    """获取数据库会话"""
-    return Session()
+    """获取数据库会话（从 database_manager）"""
+    from database_manager import get_db_session as get_session_from_manager
+    return get_session_from_manager()
 

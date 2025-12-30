@@ -1,6 +1,7 @@
 """
 数据库管理器
 支持 Cloudflare D1 和 SQLite 双数据库架构
+优先级：D1 > SQLite
 """
 import os
 import logging
@@ -13,80 +14,91 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseManager:
-    """数据库管理器，自动选择 D1 或 SQLite"""
+    """数据库管理器，自动选择 D1 或 SQLite（按优先级）"""
     
     def __init__(self):
         self.db_type = None
         self.engine = None
         self.Session = None
         self.d1_db = None
+        self.d1_client = None  # D1 HTTP API 客户端
         self.d1_adapter = None
         self._initialized = False
         
     def initialize(self):
-        """初始化数据库连接"""
+        """初始化数据库连接（按优先级：D1 > SQLite）"""
         if self._initialized:
             return
         
-        try:
-            # 检查是否在 Cloudflare Workers 环境
-            if self._is_cloudflare_env():
-                logger.info("检测到 Cloudflare 环境，尝试使用 D1 数据库")
+        # 优先级 1: 尝试使用 D1
+        if self._is_cloudflare_env():
+            try:
+                logger.info("检测到 Cloudflare D1 环境变量，尝试使用 D1 数据库")
                 self._init_d1()
-            else:
-                logger.info("使用 SQLite 数据库")
-                self._init_sqlite()
-            
-            self._initialized = True
-            logger.info(f"数据库初始化完成，类型: {self.db_type}")
-        except Exception as e:
-            logger.error(f"数据库初始化失败: {e}")
-            # 降级到 SQLite
-            if self.db_type != 'sqlite':
-                logger.warning("降级到 SQLite 数据库")
-                self._init_sqlite()
                 self._initialized = True
+                logger.info(f"✓ 数据库初始化完成，类型: {self.db_type}")
+                return
+            except Exception as e:
+                logger.warning(f"D1 初始化失败: {e}，降级到 SQLite")
+        
+        # 优先级 2: 使用 SQLite（降级方案）
+        try:
+            logger.info("使用 SQLite 数据库（降级方案）")
+            self._init_sqlite()
+            self._initialized = True
+            logger.info(f"✓ 数据库初始化完成，类型: {self.db_type}")
+        except Exception as e:
+            logger.error(f"SQLite 初始化失败: {e}")
+            raise
     
     def _is_cloudflare_env(self) -> bool:
         """检查是否在 Cloudflare 环境"""
-        # 检查环境变量
+        # 检查环境变量（支持两种命名方式：CF_* 和 D1_*）
         cf_vars = [
-            'CF_ACCOUNT_ID',
-            'CF_API_TOKEN',
-            'CF_D1_DATABASE_ID',
+            'CF_ACCOUNT_ID', 'D1_ACCOUNT_ID',
+            'CF_API_TOKEN', 'D1_API_TOKEN',
+            'CF_D1_DATABASE_ID', 'D1_DATABASE_ID',
             'DB'  # Cloudflare Workers 中的 D1 数据库对象
         ]
         return any(os.environ.get(var) for var in cf_vars) or hasattr(os, 'getenv') and os.getenv('DB')
     
     def _init_d1(self):
-        """初始化 Cloudflare D1 数据库"""
+        """初始化 Cloudflare D1 数据库（通过 HTTP API）"""
         try:
-            # 尝试从环境获取 D1 数据库对象
-            # 在 Cloudflare Workers 中，DB 对象通过 env 传递
-            # 这里我们检查是否有相关的环境变量或全局对象
+            # 支持两种环境变量命名方式：CF_* 和 D1_*
+            d1_db_id = os.environ.get('CF_D1_DATABASE_ID') or os.environ.get('D1_DATABASE_ID')
+            account_id = os.environ.get('CF_ACCOUNT_ID') or os.environ.get('D1_ACCOUNT_ID')
+            api_token = os.environ.get('CF_API_TOKEN') or os.environ.get('D1_API_TOKEN')
             
-            # 检查是否有 D1 相关的环境变量
-            d1_db_id = os.environ.get('CF_D1_DATABASE_ID')
-            account_id = os.environ.get('CF_ACCOUNT_ID')
-            api_token = os.environ.get('CF_API_TOKEN')
+            if not all([d1_db_id, account_id, api_token]):
+                raise Exception("D1 数据库配置不完整，需要 D1_ACCOUNT_ID, D1_API_TOKEN, D1_DATABASE_ID")
             
-            if d1_db_id and account_id and api_token:
-                # 使用 Cloudflare API 连接 D1
-                logger.info("使用 Cloudflare API 连接 D1 数据库")
-                # 注意：实际实现需要根据 Cloudflare API 文档
-                # 这里只是示例
-                self.db_type = 'd1'
-                # 在实际 Cloudflare Workers 环境中，DB 对象会通过 env 传递
-                # self.d1_db = env.DB
-                # from d1_adapter import D1Adapter
-                # self.d1_adapter = D1Adapter(self.d1_db)
-            else:
-                # 检查是否有全局 DB 对象（在 Workers 环境中）
-                # 这通常不会在本地环境存在，所以会降级到 SQLite
-                raise Exception("D1 数据库配置不完整")
-                
+            # 使用 HTTP API 客户端连接 D1
+            from d1_http_client import D1HTTPClient
+            from d1_sqlalchemy_adapter import D1Engine, D1Session
+            
+            self.d1_client = D1HTTPClient(account_id, api_token, d1_db_id)
+            
+            # 测试连接
+            if not self.d1_client.test_connection():
+                raise Exception("D1 连接测试失败")
+            
+            # 创建兼容 SQLAlchemy 的 Engine 和 Session
+            self.engine = D1Engine(self.d1_client)
+            
+            # 创建 Session 类（使用 D1Session）
+            def make_d1_session():
+                return D1Session(self.d1_client)
+            
+            self.Session = make_d1_session
+            self.db_type = 'd1'
+            logger.info("D1 数据库已通过 HTTP API 初始化并连接成功")
+            
+        except ImportError as e:
+            logger.error(f"无法导入 D1 模块: {e}")
+            raise Exception(f"D1 模块导入失败: {e}")
         except Exception as e:
-            logger.warning(f"D1 初始化失败: {e}，将使用 SQLite")
+            logger.warning(f"D1 初始化失败: {e}")
             raise
     
     def _init_sqlite(self):
@@ -107,12 +119,12 @@ class DatabaseManager:
         self.db_type = 'sqlite'
         logger.info(f"SQLite 数据库已初始化: {database_path}")
     
-    def get_session(self) -> Optional[Session]:
-        """获取数据库会话（SQLite）"""
+    def get_session(self):
+        """获取数据库会话（D1 或 SQLite）"""
         if not self._initialized:
             self.initialize()
         
-        if self.db_type == 'sqlite' and self.Session:
+        if self.Session:
             return self.Session()
         return None
     
@@ -121,18 +133,19 @@ class DatabaseManager:
         if not self._initialized:
             self.initialize()
         
-        if self.db_type == 'd1' and self.d1_adapter:
-            # D1 数据库（异步，需要特殊处理）
-            # 在实际 Workers 环境中，这应该是异步的
-            # 这里返回一个占位符
-            logger.warning("D1 执行需要异步环境，当前使用 SQLite")
-            return self._execute_sqlite(sql, params)
+        if self.db_type == 'd1' and self.d1_client:
+            # D1 数据库（通过 HTTP API）
+            params_list = list(params) if params else None
+            result = self.d1_client.execute(sql, params_list)
+            # 返回类似 SQLAlchemy 的结果对象
+            from d1_sqlalchemy_adapter import D1ResultProxy
+            return D1ResultProxy(result)
         else:
             # SQLite 数据库
-            return self._execute_sqlite(sql, params)
+            return self._execute_sql(sql, params)
     
-    def _execute_sqlite(self, sql: str, params: tuple = ()) -> Any:
-        """执行 SQLite SQL 语句"""
+    def _execute_sql(self, sql: str, params: tuple = ()) -> Any:
+        """执行 SQL 语句（SQLite）"""
         if not self.engine:
             raise Exception("数据库未初始化")
         
@@ -169,8 +182,14 @@ class DatabaseManager:
                     result['message'] = '无法创建 SQLite 会话'
             elif self.db_type == 'd1':
                 # 测试 D1 连接
-                result['success'] = True
-                result['message'] = 'D1 数据库已配置（需要 Workers 环境测试）'
+                if self.d1_client:
+                    if self.d1_client.test_connection():
+                        result['success'] = True
+                        result['message'] = 'D1 数据库连接正常'
+                    else:
+                        result['message'] = 'D1 数据库连接测试失败'
+                else:
+                    result['message'] = 'D1 客户端未初始化'
             else:
                 result['message'] = '未知的数据库类型'
                 
@@ -204,7 +223,8 @@ class DatabaseManager:
         
         elif self.db_type == 'd1':
             status['d1_configured'] = True
-            status['d1_db_id'] = os.environ.get('CF_D1_DATABASE_ID')
+            status['d1_db_id'] = os.environ.get('CF_D1_DATABASE_ID') or os.environ.get('D1_DATABASE_ID')
+            status['d1_account_id'] = os.environ.get('CF_ACCOUNT_ID') or os.environ.get('D1_ACCOUNT_ID')
         
         return status
 
@@ -222,7 +242,7 @@ def get_database_manager() -> DatabaseManager:
     return _db_manager
 
 
-def get_db_session() -> Optional[Session]:
+def get_db_session():
     """获取数据库会话（兼容现有代码）"""
     manager = get_database_manager()
     return manager.get_session()
