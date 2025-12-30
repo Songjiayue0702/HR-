@@ -15,6 +15,7 @@ pytesseract==0.3.10
 Pillow==10.2.0
 nltk==3.8.1
 certifi>=2023.0.0
+boto3==1.34.0
 # pdfminer.six is a dependency of pdfplumber, let pdfplumber manage the version
 
 # OCR功能已移除，所有文档通过AI API处理

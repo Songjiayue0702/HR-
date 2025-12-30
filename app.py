@@ -3,6 +3,7 @@
 """
 from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 import io
+from io import BytesIO
 import json
 from werkzeug.utils import secure_filename
 import os
@@ -94,6 +95,14 @@ from utils.ai_extractor import AIExtractor
 from utils.duplicate_checker import check_duplicate
 from utils.export import export_resumes_to_excel, export_interviews_to_excel
 from utils.export_pdf import export_resume_analysis_to_pdf, export_interview_round_analysis_to_pdf
+
+# R2存储适配器（Railway环境）
+try:
+    from r2_s3_storage import R2StorageAdapter
+    R2_STORAGE_AVAILABLE = True
+except ImportError:
+    R2_STORAGE_AVAILABLE = False
+    print("⚠️  R2存储适配器未找到，将使用本地文件系统")
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from reportlab.lib.pagesizes import A4
@@ -170,6 +179,22 @@ try:
 except Exception as e:
     print(f"⚠️  数据库初始化警告: {e}")
     print("应用将继续启动，数据库将在首次使用时初始化")
+
+# 初始化R2存储适配器（如果环境变量已设置）
+r2_storage = None
+if R2_STORAGE_AVAILABLE and os.environ.get('CF_R2_ACCOUNT_ID'):
+    try:
+        r2_storage = R2StorageAdapter()
+        print("✓ R2存储适配器初始化成功")
+    except Exception as e:
+        print(f"⚠️  R2存储适配器初始化失败: {e}")
+        print("将使用本地文件系统存储")
+        r2_storage = None
+else:
+    if not R2_STORAGE_AVAILABLE:
+        print("ℹ️  R2存储不可用（缺少依赖），使用本地文件系统")
+    elif not os.environ.get('CF_R2_ACCOUNT_ID'):
+        print("ℹ️  R2环境变量未设置，使用本地文件系统")
 
 # OCR功能已移除，所有文档通过AI API处理
 
@@ -1285,6 +1310,7 @@ def get_education_levels():
 def process_resume_async(resume_id, file_path):
     """异步处理简历解析"""
     db = get_db_session()
+    temp_file_path = None
     try:
         resume = db.query(Resume).filter_by(id=resume_id).first()
         if not resume:
@@ -1293,6 +1319,23 @@ def process_resume_async(resume_id, file_path):
         resume.parse_status = 'processing'
         db.commit()
         
+        # 如果是R2存储的文件，需要先下载到临时文件
+        if r2_storage and _is_r2_key(file_path):
+            file_data = r2_storage.get_upload(file_path)
+            if not file_data:
+                raise Exception(f"无法从R2读取文件: {file_path}")
+            
+            # 创建临时文件
+            import tempfile
+            file_ext = os.path.splitext(file_path)[1].lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                tmp.write(file_data)
+                temp_file_path = tmp.name
+            actual_file_path = temp_file_path
+        else:
+            # 本地文件
+            actual_file_path = file_path
+        
         # 检测文件类型
         file_ext = os.path.splitext(file_path)[1].lower()
         is_word_file = file_ext in ['.doc', '.docx']
@@ -1300,10 +1343,10 @@ def process_resume_async(resume_id, file_path):
         # 提取文本（PDF使用智能提取，Word使用原有方法）
         if file_ext == '.pdf':
             # PDF文件使用智能提取（多方法融合+行修复）
-            raw_text = extract_pdf_intelligent(file_path)
+            raw_text = extract_pdf_intelligent(actual_file_path)
         else:
             # Word文件使用原有方法
-            raw_text = extract_text(file_path)
+            raw_text = extract_text(actual_file_path)
         
         if not raw_text:
             raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
@@ -1426,6 +1469,12 @@ def process_resume_async(resume_id, file_path):
         db.commit()
         print(f"处理简历失败: {e}")
     finally:
+        # 清理临时文件
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
         db.close()
 
 def get_current_user():
@@ -2043,8 +2092,18 @@ def upload_file():
                 safe_name = 'resume'
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')  # 添加微秒确保唯一性
             filename = f"{timestamp}{safe_name}{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
+            
+            # 使用R2存储或本地存储
+            if r2_storage:
+                # 读取文件数据并上传到R2
+                file_data = file.read()
+                content_type = file.content_type or 'application/octet-stream'
+                file_path = r2_storage.save_upload(file_data, filename, content_type)
+                # file_path 现在是 R2 key (例如: "uploads/20241223_123456_789_filename.pdf")
+            else:
+                # 使用本地文件系统
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(file_path)
             
             # 创建数据库记录
             db = get_db_session()
@@ -2180,8 +2239,8 @@ def download_resume_file(resume_id):
             return jsonify({'success': False, 'message': '简历不存在'}), 404
         
         file_path = resume.file_path
-        if not file_path or not os.path.exists(file_path):
-            return jsonify({'success': False, 'message': '文件不存在'}), 404
+        if not file_path:
+            return jsonify({'success': False, 'message': '文件路径不存在'}), 404
         
         # 获取原始文件名
         original_file_name = resume.file_name or os.path.basename(file_path)
@@ -2201,12 +2260,28 @@ def download_resume_file(resume_id):
         candidate_name = resume.name or f"简历{resume_id}"
         download_name = f"{candidate_name}_{original_file_name}" if as_attachment else None
         
-        return send_file(
-            file_path,
-            as_attachment=as_attachment,
-            download_name=download_name,
-            mimetype=mimetype
-        )
+        # 从R2或本地文件系统读取文件
+        if r2_storage and _is_r2_key(file_path):
+            # 从R2下载
+            file_data = r2_storage.get_upload(file_path)
+            if not file_data:
+                return jsonify({'success': False, 'message': '文件不存在'}), 404
+            return send_file(
+                BytesIO(file_data),
+                as_attachment=as_attachment,
+                download_name=download_name,
+                mimetype=mimetype
+            )
+        else:
+            # 本地文件
+            if not os.path.exists(file_path):
+                return jsonify({'success': False, 'message': '文件不存在'}), 404
+            return send_file(
+                file_path,
+                as_attachment=as_attachment,
+                download_name=download_name,
+                mimetype=mimetype
+            )
     except Exception as e:
         return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
     finally:
@@ -2275,8 +2350,27 @@ def update_resume(resume_id):
     return jsonify({'success': True, 'message': '更新成功'})
 
 
+def _is_r2_key(file_path: str) -> bool:
+    """判断文件路径是否是R2 key（而不是本地路径）"""
+    if not file_path:
+        return False
+    # R2 key 格式: "uploads/..." 或 "exports/..."
+    # 本地路径通常是绝对路径或相对于项目目录的路径
+    return file_path.startswith('uploads/') or file_path.startswith('exports/')
+
 def _remove_file_if_exists(path: str) -> None:
-    if path and os.path.exists(path):
+    """删除文件（支持本地文件和R2文件）"""
+    if not path:
+        return
+    
+    if r2_storage and _is_r2_key(path):
+        # 删除R2文件
+        if path.startswith('uploads/'):
+            r2_storage.delete_upload(path)
+        elif path.startswith('exports/'):
+            r2_storage.delete_export(path)
+    elif os.path.exists(path):
+        # 删除本地文件
         try:
             os.remove(path)
         except OSError:
