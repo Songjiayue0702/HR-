@@ -193,37 +193,41 @@ def migrate_database():
             try:
                 conn.execute(text("SELECT 1 FROM resumes LIMIT 1"))
                 columns = _get_table_columns(engine, 'resumes', db_type, inspector)
-            if 'phone' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
-            if 'email' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
-            if 'applied_position' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
-            if 'earliest_work_year' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
-            if 'age_from_resume' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
-            if 'duplicate_status' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
-            if 'duplicate_similarity' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
-            if 'duplicate_resume_id' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
-            if 'match_score' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
-            if 'match_level' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
-            if 'match_position' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
-            if 'created_by' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
-            if 'updated_by' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
-            if 'created_at' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
-            if 'updated_at' not in columns:
-                conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
-            conn.commit()
+                
+                if 'phone' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
+                if 'email' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
+                if 'applied_position' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
+                if 'earliest_work_year' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
+                if 'age_from_resume' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
+                if 'duplicate_status' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
+                if 'duplicate_similarity' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
+                if 'duplicate_resume_id' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
+                if 'match_score' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
+                if 'match_level' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
+                if 'match_position' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
+                if 'created_by' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
+                if 'updated_by' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
+                if 'updated_at' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
+                conn.commit()
+            except Exception:
+                # 表不存在，稍后会在初始化时创建
+                pass
             
             # 为 positions 表添加字段（先检查表是否存在）
             try:
