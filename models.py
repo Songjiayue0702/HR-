@@ -149,12 +149,14 @@ def init_database():
         
         # 对于 D1 数据库，需要特殊处理
         if db_type == 'd1':
+            print(f"正在为 D1 数据库创建表...")
             _init_d1_tables(manager.d1_client)
+            print("✓ D1 数据库表创建完成")
         else:
             # SQLite 或其他数据库，使用标准的 create_all
+            print(f"正在使用 SQLAlchemy create_all 创建表...")
             Base.metadata.create_all(engine)
-        
-        print("✓ 数据库表已创建")
+            print("✓ 数据库表已创建（SQLAlchemy）")
         
         # 确保默认管理员用户存在
         from database_manager import get_db_session
@@ -188,6 +190,7 @@ def init_database():
 def _init_d1_tables(d1_client):
     """为 D1 数据库创建表（通过 HTTP API）"""
     from sqlalchemy.schema import CreateTable
+    from sqlalchemy.dialects import sqlite
     
     # 获取所有表定义
     tables = [
@@ -201,30 +204,56 @@ def _init_d1_tables(d1_client):
     for table in tables:
         try:
             # 检查表是否已存在
+            table_exists = False
             try:
                 d1_client.execute(f"SELECT 1 FROM {table.name} LIMIT 1")
+                table_exists = True
                 print(f"  ✓ 表 {table.name} 已存在，跳过创建")
-                continue
-            except:
+            except Exception as check_err:
                 # 表不存在，需要创建
-                pass
+                table_exists = False
+                error_msg = str(check_err).lower()
+                # 如果错误信息中包含"no such table"，说明表确实不存在
+                if "no such table" not in error_msg and "does not exist" not in error_msg:
+                    # 其他错误，打印出来但不影响创建流程
+                    print(f"  ℹ️  检查表 {table.name} 时出现错误（将尝试创建）: {check_err}")
+            
+            if table_exists:
+                continue
             
             # 生成 CREATE TABLE SQL
             # 使用 SQLAlchemy 的 CreateTable 来生成 SQL
-            from sqlalchemy.dialects import sqlite
+            # D1 使用 SQLite 兼容语法，JSON 类型需要转换为 TEXT
             create_sql = str(CreateTable(table).compile(dialect=sqlite.dialect()))
+            
+            # D1/SQLite 不支持 JSON 类型，需要将 JSON 替换为 TEXT
+            # 但 SQLAlchemy 的 SQLite dialect 应该已经处理了，为了保险起见，我们显式替换
+            create_sql = create_sql.replace(' JSON', ' TEXT').replace(' JSON,', ' TEXT,')
+            
+            print(f"  🔧 创建表 {table.name}...")
+            print(f"      SQL: {create_sql[:200]}...")  # 打印前200个字符用于调试
             
             # 执行 CREATE TABLE
             d1_client.execute(create_sql)
             print(f"  ✓ 表 {table.name} 创建成功")
+            
+            # 验证表是否创建成功
+            try:
+                d1_client.execute(f"SELECT 1 FROM {table.name} LIMIT 1")
+                print(f"  ✓ 表 {table.name} 验证成功")
+            except Exception as verify_err:
+                print(f"  ⚠️  表 {table.name} 创建后验证失败: {verify_err}")
+                
         except Exception as e:
             # 如果表已存在或其他错误，继续处理下一个表
-            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            error_str = str(e).lower()
+            if "already exists" in error_str or "duplicate" in error_str or "table.*already exists" in error_str:
                 print(f"  ✓ 表 {table.name} 已存在，跳过创建")
             else:
-                print(f"  ⚠️  创建表 {table.name} 时出错: {e}")
+                print(f"  ✗ 创建表 {table.name} 时出错: {e}")
                 import traceback
                 traceback.print_exc()
+                # 不抛出异常，继续处理下一个表
 
 def migrate_database():
     """迁移数据库，添加新字段（仅在表存在时）- 支持 SQLite"""
