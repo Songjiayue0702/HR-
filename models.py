@@ -50,6 +50,7 @@ class Resume(Base):
     match_score = Column(Integer)  # 匹配度分数（0-100）
     match_level = Column(String(50))  # 匹配等级（高度匹配/中等匹配/低度匹配）
     match_position = Column(String(200))  # 匹配度分析对应的岗位名称
+    match_analysis_detail = Column(JSON)  # 详细分析结果（JSON格式：包含detailed_analysis, strengths, weaknesses, suggestions等）
     
     # 工作经历（JSON格式存储）
     work_experience = Column(JSON)
@@ -96,6 +97,7 @@ class Resume(Base):
             'match_score': self.match_score,
             'match_level': self.match_level,
             'match_position': self.match_position,
+            'match_analysis_detail': self.match_analysis_detail,
             'work_experience': self.work_experience,
             'parse_status': self.parse_status,
             'parse_time': self.parse_time.isoformat() if self.parse_time else None,
@@ -134,39 +136,95 @@ def _get_table_columns(engine, table_name, db_type, inspector=None):
 def init_database():
     """初始化数据库，创建所有表，并创建默认管理员用户"""
     try:
+        from database_manager import get_database_manager
+        manager = get_database_manager()
+        manager.initialize()
+        
         engine = _get_engine()
-        if engine:
-            Base.metadata.create_all(engine)
-            print("✓ 数据库表已创建")
-            
-            # 确保默认管理员用户存在
-            from database_manager import get_db_session
-            session = get_db_session()
-            if session:
-                try:
-                    admin_user = session.query(User).filter_by(username='admin').first()
-                    if not admin_user:
-                        # 如果没有admin用户，创建默认管理员账户
-                        admin = User(
-                            username='admin',
-                            role='admin',
-                            real_name='系统管理员',
-                            is_active=1
-                        )
-                        admin.set_password('admin123')  # 默认密码，建议首次登录后修改
-                        session.add(admin)
-                        session.commit()
-                        print("✓ 默认管理员账户已创建（用户名: admin, 密码: admin123）")
-                    session.close()
-                except Exception as e:
-                    print(f"⚠️  创建默认管理员账户失败: {e}")
-                    if session:
-                        session.close()
+        if not engine:
+            print("⚠️  无法获取数据库引擎，跳过表创建")
+            return
+        
+        db_type = manager.db_type
+        
+        # 对于 D1 数据库，需要特殊处理
+        if db_type == 'd1':
+            _init_d1_tables(manager.d1_client)
         else:
-            print("⚠️  无法获取数据库引擎，跳过表创建（可能使用 D1 或其他数据库）")
+            # SQLite 或其他数据库，使用标准的 create_all
+            Base.metadata.create_all(engine)
+        
+        print("✓ 数据库表已创建")
+        
+        # 确保默认管理员用户存在
+        from database_manager import get_db_session
+        session = get_db_session()
+        if session:
+            try:
+                admin_user = session.query(User).filter_by(username='admin').first()
+                if not admin_user:
+                    # 如果没有admin用户，创建默认管理员账户
+                    admin = User(
+                        username='admin',
+                        role='admin',
+                        real_name='系统管理员',
+                        is_active=1
+                    )
+                    admin.set_password('admin123')  # 默认密码，建议首次登录后修改
+                    session.add(admin)
+                    session.commit()
+                    print("✓ 默认管理员账户已创建（用户名: admin, 密码: admin123）")
+                session.close()
+            except Exception as e:
+                print(f"⚠️  创建默认管理员账户失败: {e}")
+                if session:
+                    session.close()
     except Exception as e:
         print(f"✗ 创建数据库表失败: {e}")
+        import traceback
+        traceback.print_exc()
         raise
+
+def _init_d1_tables(d1_client):
+    """为 D1 数据库创建表（通过 HTTP API）"""
+    from sqlalchemy.schema import CreateTable
+    
+    # 获取所有表定义
+    tables = [
+        Resume.__table__,
+        Position.__table__,
+        Interview.__table__,
+        User.__table__,
+        GlobalAIConfig.__table__
+    ]
+    
+    for table in tables:
+        try:
+            # 检查表是否已存在
+            try:
+                d1_client.execute(f"SELECT 1 FROM {table.name} LIMIT 1")
+                print(f"  ✓ 表 {table.name} 已存在，跳过创建")
+                continue
+            except:
+                # 表不存在，需要创建
+                pass
+            
+            # 生成 CREATE TABLE SQL
+            # 使用 SQLAlchemy 的 CreateTable 来生成 SQL
+            from sqlalchemy.dialects import sqlite
+            create_sql = str(CreateTable(table).compile(dialect=sqlite.dialect()))
+            
+            # 执行 CREATE TABLE
+            d1_client.execute(create_sql)
+            print(f"  ✓ 表 {table.name} 创建成功")
+        except Exception as e:
+            # 如果表已存在或其他错误，继续处理下一个表
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                print(f"  ✓ 表 {table.name} 已存在，跳过创建")
+            else:
+                print(f"  ⚠️  创建表 {table.name} 时出错: {e}")
+                import traceback
+                traceback.print_exc()
 
 def migrate_database():
     """迁移数据库，添加新字段（仅在表存在时）- 支持 SQLite"""
@@ -216,6 +274,9 @@ def migrate_database():
                     conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
                 if 'match_position' not in columns:
                     conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
+                if 'match_analysis_detail' not in columns:
+                    # 对于 SQLite，JSON 类型实际上存储为 TEXT
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_analysis_detail TEXT"))
                 if 'created_by' not in columns:
                     conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
                 if 'updated_by' not in columns:

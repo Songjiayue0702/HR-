@@ -4504,13 +4504,25 @@ def analyze_resume_match(resume_id):
                 'message': '简历不存在'
             }), 404
         
-        # 检查是否已有相同岗位的分析结果
+        # 检查是否已有相同岗位的分析结果（包括详细分析信息）
         if (resume.match_score is not None and 
             resume.match_level and 
-            resume.match_position == applied_position):
-            # 已有相同岗位的分析结果，直接返回
+            resume.match_position == applied_position and
+            resume.match_analysis_detail):
+            # 已有相同岗位的完整分析结果，直接返回
             session.close()
-            # 构造返回结果（只有基本信息，没有详细分析）
+            # 从数据库读取详细分析结果
+            analysis_detail = resume.match_analysis_detail
+            if isinstance(analysis_detail, str):
+                import json
+                try:
+                    analysis_detail = json.loads(analysis_detail)
+                except:
+                    analysis_detail = {}
+            elif analysis_detail is None:
+                analysis_detail = {}
+            
+            # 构造返回结果
             current_user = get_current_user()
             username = current_user.username if current_user else 'system'
             return jsonify({
@@ -4519,11 +4531,11 @@ def analyze_resume_match(resume_id):
                     'match_score': resume.match_score,
                     'match_level': resume.match_level,
                     'match_position': resume.match_position,
-                    'analyzed_by': username,
-                    'detailed_analysis': f'匹配度：{resume.match_score}分（{resume.match_level}）',
-                    'strengths': [],
-                    'weaknesses': [],
-                    'suggestions': [],
+                    'analyzed_by': analysis_detail.get('analyzed_by', username),
+                    'detailed_analysis': analysis_detail.get('detailed_analysis', f'匹配度：{resume.match_score}分（{resume.match_level}）'),
+                    'strengths': analysis_detail.get('strengths', []),
+                    'weaknesses': analysis_detail.get('weaknesses', []),
+                    'suggestions': analysis_detail.get('suggestions', []),
                     'cached': True  # 标记为已缓存的结果
                 }
             })
@@ -4707,6 +4719,15 @@ def analyze_resume_match(resume_id):
                     resume_save.match_score = analysis_result.get('match_score')
                     resume_save.match_level = analysis_result.get('match_level')
                     resume_save.match_position = applied_position
+                    # 保存详细分析结果（JSON格式）
+                    analysis_detail = {
+                        'detailed_analysis': analysis_result.get('detailed_analysis', ''),
+                        'strengths': analysis_result.get('strengths', []),
+                        'weaknesses': analysis_result.get('weaknesses', []),
+                        'suggestions': analysis_result.get('suggestions', []),
+                        'analyzed_by': username
+                    }
+                    resume_save.match_analysis_detail = analysis_detail
                     resume_save.updated_by = username
                     session_save.commit()
                 session_save.close()
