@@ -3478,9 +3478,19 @@ def update_registration_form(interview_id):
             interview.registration_form_can_travel = data.get('registration_form_can_travel')
         if 'registration_form_consideration_factors' in data:
             factors = data.get('registration_form_consideration_factors')
-            # 确保将列表转换为JSON字符串，即使是空列表也要转换为'[]'
+            # 处理可能已经序列化的字符串或列表
             if factors is not None:
-                interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                if isinstance(factors, str):
+                    # 如果是字符串，先解析再保存
+                    try:
+                        factors_list = json.loads(factors)
+                        interview.registration_form_consideration_factors = json.dumps(factors_list, ensure_ascii=False)
+                    except (ValueError, TypeError):
+                        interview.registration_form_consideration_factors = ''
+                elif isinstance(factors, list):
+                    interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                else:
+                    interview.registration_form_consideration_factors = ''
             else:
                 interview.registration_form_consideration_factors = ''
         
@@ -3614,10 +3624,31 @@ def submit_registration_form():
         if 'registration_form_id_card' in data:
             interview.registration_form_id_card = _normalize_field(
                 data.get('registration_form_id_card'))
+        if 'registration_form_first_work_date' in data:
+            interview.registration_form_first_work_date = _normalize_field(
+                data.get('registration_form_first_work_date'))
         if 'registration_form_recent_work_experience' in data:
             work_exps = data.get('registration_form_recent_work_experience')
             if work_exps is not None:
                 interview.registration_form_recent_work_experience = json.dumps(work_exps, ensure_ascii=False)
+        if 'registration_form_education_start_date' in data:
+            interview.registration_form_education_start_date = _normalize_field(
+                data.get('registration_form_education_start_date'))
+        if 'registration_form_education_end_date' in data:
+            interview.registration_form_education_end_date = _normalize_field(
+                data.get('registration_form_education_end_date'))
+        if 'registration_form_institution' in data:
+            interview.registration_form_institution = _normalize_field(
+                data.get('registration_form_institution'))
+        if 'registration_form_major' in data:
+            interview.registration_form_major = _normalize_field(
+                data.get('registration_form_major'))
+        if 'registration_form_degree' in data:
+            interview.registration_form_degree = _normalize_field(
+                data.get('registration_form_degree'))
+        if 'registration_form_full_time' in data:
+            interview.registration_form_full_time = _normalize_field(
+                data.get('registration_form_full_time'))
         if 'registration_form_education' in data:
             interview.registration_form_education = data.get('registration_form_education')
         if 'registration_form_hobbies' in data:
@@ -3640,9 +3671,19 @@ def submit_registration_form():
             interview.registration_form_can_travel = data.get('registration_form_can_travel')
         if 'registration_form_consideration_factors' in data:
             factors = data.get('registration_form_consideration_factors')
-            # 确保将列表转换为JSON字符串，即使是空列表也要转换为'[]'
+            # 处理可能已经序列化的字符串或列表
             if factors is not None:
-                interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                if isinstance(factors, str):
+                    # 如果是字符串，先解析再保存
+                    try:
+                        factors_list = json.loads(factors)
+                        interview.registration_form_consideration_factors = json.dumps(factors_list, ensure_ascii=False)
+                    except (ValueError, TypeError):
+                        interview.registration_form_consideration_factors = ''
+                elif isinstance(factors, list):
+                    interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                else:
+                    interview.registration_form_consideration_factors = ''
             else:
                 interview.registration_form_consideration_factors = ''
         
@@ -3905,12 +3946,18 @@ def export_registration_form_to_excel(interview):
             '领导风格'
         ]
         factors = data['factors'] or []
-        factor_row = []
-        for idx, defaultText in enumerate(factor_texts):
-            value = factors[idx] if idx < len(factors) and factors[idx] else defaultText
-            factor_row.append(f"{idx + 1}、{value}")
+        # 如果用户没有排序，使用默认顺序
+        if not factors:
+            factors = factor_texts
+        # 构建带编号的因子列表
+        factor_row = [f"{idx + 1}、{value}" for idx, value in enumerate(factors)]
+        # 第一行：前6个因子（每个因子一个单元格）
         _fill_row(ws, 18, factor_row[:6], border, left)
-        _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, left)
+        # 第二行：第7个因子（如果存在）
+        if len(factor_row) > 6:
+            _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, left)
+        else:
+            _fill_row(ws, 19, ['', '', '', '', '', ''], border, left)
 
         section_row(21, '个人爱好及专长')
         ws.row_dimensions[22].height = 25
@@ -3924,9 +3971,9 @@ def export_registration_form_to_excel(interview):
         ws['B24'].value = f"{data['address']} {data['address_detail']}"
         stylize_cell(ws['B24'], align=left)
         ws.row_dimensions[24].height = 25
-        for r in range(25, 31):
+        for r in range(25, 30):
             ws.row_dimensions[r].height = 25
-        ws.merge_cells('A25:F30')
+        ws.merge_cells('A25:F29')
         ws['A25'].value = (
             "声明人：\n"
             "\n"
@@ -4134,7 +4181,7 @@ def export_registration_form(interview_id):
         return send_file(
             excel_file,
             as_attachment=True,
-            download_name=f'{candidate_name}_面试登记表.xlsx',
+            download_name=f'{candidate_name}+面试登记表.xlsx',
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
     except Exception as e:
