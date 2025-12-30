@@ -3851,16 +3851,9 @@ function displayAnalysisDetail(resume) {
         </div>
     `;
         
-        // 如果有应聘岗位，检查是否有缓存的分析结果
+        // 如果有应聘岗位，调用分析API（后端会自动检查是否有已保存的结果）
         if (resume.applied_position) {
-            const cacheKey = `${resume.id}_${resume.applied_position}`;
-            if (matchAnalysisCache[cacheKey]) {
-                // 使用缓存的分析结果
-                displayMatchAnalysis(matchAnalysisCache[cacheKey]);
-            } else {
-                // 没有缓存，进行新的分析
-                analyzeResumeMatch(resume.id, resume.applied_position);
-            }
+            analyzeResumeMatch(resume.id, resume.applied_position);
         } else {
             document.getElementById('matchAnalysisResult').innerHTML = '<div class="empty-state"><p>请先选择应聘岗位，然后系统将自动进行匹配度分析</p></div>';
         }
@@ -3906,15 +3899,9 @@ function onAppliedPositionChange(resumeId) {
     const appliedPosition = select.value;
     
     if (appliedPosition) {
-        // 检查是否有缓存的分析结果
-        const cacheKey = `${resumeId}_${appliedPosition}`;
-        if (matchAnalysisCache[cacheKey]) {
-            // 使用缓存的分析结果
-            displayMatchAnalysis(matchAnalysisCache[cacheKey]);
-        } else {
-            // 没有缓存，进行新的分析
-            analyzeResumeMatch(resumeId, appliedPosition);
-        }
+        // 直接调用分析API，后端会检查是否有已保存的结果
+        // 如果岗位未变化且有已保存的结果，后端会直接返回，不重复分析
+        analyzeResumeMatch(resumeId, appliedPosition);
     } else {
         document.getElementById('matchAnalysisResult').innerHTML = '<div class="empty-state"><p>请选择应聘岗位后，系统将自动进行匹配度分析</p></div>';
     }
@@ -3938,16 +3925,9 @@ function saveAppliedPosition(resumeId) {
     .then(result => {
         if (result.success) {
             alert('应聘岗位保存成功');
-            // 如果有岗位，检查是否有缓存的分析结果
+            // 如果有岗位，调用分析API（后端会检查是否有已保存的结果）
             if (appliedPosition) {
-                const cacheKey = `${resumeId}_${appliedPosition}`;
-                if (matchAnalysisCache[cacheKey]) {
-                    // 使用缓存的分析结果
-                    displayMatchAnalysis(matchAnalysisCache[cacheKey]);
-                } else {
-                    // 没有缓存，进行新的分析
-                    analyzeResumeMatch(resumeId, appliedPosition);
-                }
+                analyzeResumeMatch(resumeId, appliedPosition);
             }
         } else {
             alert('保存失败: ' + (result.message || '未知错误'));

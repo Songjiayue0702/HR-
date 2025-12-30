@@ -2747,9 +2747,10 @@ def create_interview():
             # 如果请求中没有传递匹配度，尝试从简历记录中获取（如果岗位匹配）
             final_match_score = match_score
             final_match_level = match_level
+            applied_position_for_interview = resume.applied_position or ''
             if not final_match_score and resume.match_score and resume.match_position:
                 # 如果简历有匹配度分析结果，且岗位匹配，则使用简历中的匹配度
-                if resume.match_position == (resume.applied_position or ''):
+                if resume.match_position == applied_position_for_interview:
                     final_match_score = resume.match_score
                     final_match_level = resume.match_level
             
@@ -4502,6 +4503,30 @@ def analyze_resume_match(resume_id):
                 'success': False,
                 'message': '简历不存在'
             }), 404
+        
+        # 检查是否已有相同岗位的分析结果
+        if (resume.match_score is not None and 
+            resume.match_level and 
+            resume.match_position == applied_position):
+            # 已有相同岗位的分析结果，直接返回
+            session.close()
+            # 构造返回结果（只有基本信息，没有详细分析）
+            current_user = get_current_user()
+            username = current_user.username if current_user else 'system'
+            return jsonify({
+                'success': True,
+                'data': {
+                    'match_score': resume.match_score,
+                    'match_level': resume.match_level,
+                    'match_position': resume.match_position,
+                    'analyzed_by': username,
+                    'detailed_analysis': f'匹配度：{resume.match_score}分（{resume.match_level}）',
+                    'strengths': [],
+                    'weaknesses': [],
+                    'suggestions': [],
+                    'cached': True  # 标记为已缓存的结果
+                }
+            })
         
         # 获取岗位信息
         position = session.query(Position).filter(Position.position_name == applied_position).first()
