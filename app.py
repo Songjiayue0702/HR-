@@ -2480,27 +2480,8 @@ def export_resume_analysis_pdf(resume_id):
         applied_position = (resume.applied_position or '').strip()
         analysis = None
 
-        # 首先检查简历是否已有匹配度分析结果
-        # 如果简历有匹配度分析结果且岗位匹配，优先使用已保存的结果
-        if resume.match_score is not None and resume.match_level:
-            # 检查岗位是否匹配（如果简历有match_position字段，需要匹配）
-            position_matched = True
-            if hasattr(resume, 'match_position') and resume.match_position:
-                position_matched = (resume.match_position == applied_position)
-            
-            if position_matched:
-                # 使用已保存的匹配度结果构建analysis字典
-                analysis = {
-                    'match_score': resume.match_score,
-                    'match_level': resume.match_level,
-                    'detailed_analysis': '',  # 简历记录中没有保存详细分析
-                    'strengths': [],
-                    'weaknesses': [],
-                    'suggestions': []
-                }
-
         # 如果有应聘岗位且AI可用，则在导出前实时执行一次匹配分析，保证PDF中的匹配度内容是最新的
-        # 如果已有分析结果，仍然尝试获取更详细的AI分析结果（包含详细分析、优势、不足、建议等）
+        # 这样可以确保PDF中包含完整的分析结果（详细分析、优势、不足、建议等）
         try:
             if applied_position:
                 # 获取岗位信息
