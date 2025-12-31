@@ -184,6 +184,21 @@
                     body: JSON.stringify({ username, password })
                 });
 
+                // 检查响应状态
+                if (!response.ok) {
+                    // 尝试解析错误响应
+                    try {
+                        const errorResult = await response.json();
+                        showError(errorResult.message || '登录失败，请检查用户名和密码');
+                    } catch (e) {
+                        // 如果不是JSON响应，显示通用错误
+                        showError(`登录失败: ${response.status} ${response.statusText}`);
+                    }
+                    loginBtn.disabled = false;
+                    loginBtn.textContent = '登录';
+                    return;
+                }
+
                 const result = await response.json();
 
                 if (result.success) {

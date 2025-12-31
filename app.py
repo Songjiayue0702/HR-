@@ -1513,8 +1513,9 @@ def login():
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
     
-    db = get_db_session()
+    db = None
     try:
+        db = get_db_session()
         user = db.query(User).filter_by(username=username).first()
         if not user or not user.check_password(password):
             return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
@@ -1533,8 +1534,19 @@ def login():
             'message': '登录成功',
             'user': user.to_dict()
         })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'登录失败: {str(e)}'
+        }), 500
     finally:
-        db.close()
+        if db:
+            try:
+                db.close()
+            except:
+                pass
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
