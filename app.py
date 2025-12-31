@@ -1032,6 +1032,54 @@ def init_database_route():
             'timestamp': datetime.now().isoformat()
         }), 500
 
+@app.route('/api/create-admin', methods=['POST'])
+def create_admin_user():
+    """创建或重置 admin 用户（无需登录，用于初始化）"""
+    try:
+        db = get_db_session()
+        try:
+            # 检查是否已存在 admin 用户
+            admin_user = db.query(User).filter_by(username='admin').first()
+            
+            if admin_user:
+                # 重置密码
+                admin_user.set_password('admin123')
+                admin_user.role = 'admin'
+                admin_user.real_name = '系统管理员'
+                admin_user.is_active = 1
+                db.commit()
+                return jsonify({
+                    'success': True,
+                    'message': '管理员账户密码已重置（用户名: admin, 密码: admin123）'
+                })
+            else:
+                # 创建新用户
+                admin = User(
+                    username='admin',
+                    role='admin',
+                    real_name='系统管理员',
+                    is_active=1
+                )
+                admin.set_password('admin123')
+                db.add(admin)
+                db.commit()
+                return jsonify({
+                    'success': True,
+                    'message': '管理员账户已创建（用户名: admin, 密码: admin123）'
+                })
+        except Exception as e:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'创建管理员账户失败: {str(e)}'
+        }), 500
+
 @app.route('/test-d1', methods=['GET'])
 def test_d1_connection():
     """测试 D1 数据库连接"""
@@ -1513,19 +1561,24 @@ def login():
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
     
-    db = None
-    try:
-        db = get_db_session()
-        user = db.query(User).filter_by(username=username).first()
-        if not user:
-            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
-        
-        # 检查密码哈希是否存在
-        if not user.password_hash:
-            return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
-        
-        if not user.check_password(password):
-            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+        db = None
+        try:
+            db = get_db_session()
+            user = db.query(User).filter_by(username=username).first()
+            if not user:
+                return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+            
+            # 如果密码哈希为空，且是 admin 用户且密码是 admin123，自动设置密码
+            if not user.password_hash:
+                if username == 'admin' and password == 'admin123':
+                    # 自动设置密码
+                    user.set_password('admin123')
+                    db.commit()
+                else:
+                    return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
+            
+            if not user.check_password(password):
+                return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
         
         if user.is_active != 1:
             return jsonify({'success': False, 'message': '账户已被禁用'}), 403
