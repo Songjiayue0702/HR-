@@ -176,11 +176,22 @@ def init_database():
                     session.add(admin)
                     session.commit()
                     print("✓ 默认管理员账户已创建（用户名: admin, 密码: admin123）")
-                session.close()
+                else:
+                    # 如果用户存在但密码哈希为空，重置密码
+                    if not admin_user.password_hash:
+                        admin_user.set_password('admin123')
+                        session.commit()
+                        print("✓ 默认管理员账户密码已重置（用户名: admin, 密码: admin123）")
             except Exception as e:
                 print(f"⚠️  创建默认管理员账户失败: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
                 if session:
-                    session.close()
+                    try:
+                        session.close()
+                    except:
+                        pass
     except Exception as e:
         print(f"✗ 创建数据库表失败: {e}")
         import traceback
@@ -656,6 +667,8 @@ class User(Base):
     
     def check_password(self, password):
         """验证密码"""
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
     
     def to_dict(self):

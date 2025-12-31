@@ -1517,7 +1517,14 @@ def login():
     try:
         db = get_db_session()
         user = db.query(User).filter_by(username=username).first()
-        if not user or not user.check_password(password):
+        if not user:
+            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+        
+        # 检查密码哈希是否存在
+        if not user.password_hash:
+            return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
+        
+        if not user.check_password(password):
             return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
         
         if user.is_active != 1:
