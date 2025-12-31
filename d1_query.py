@@ -16,15 +16,33 @@ class D1Query:
         初始化查询对象
         
         Args:
-            entities: 查询的实体类（如 User, Resume 等）
+            entities: 查询的实体类（如 User, Resume 等）或列（如 Resume.applied_position）
             d1_client: D1 HTTP API 客户端
         """
         self.entities = entities
         self.d1_client = d1_client
-        self.model = entities[0] if entities else None
+        
+        # 检测是否是查询特定列（如 query(Model.column)）
+        # SQLAlchemy 的 Column 对象有 table 属性
+        if entities and len(entities) > 0:
+            first_entity = entities[0]
+            # 检查是否是 Column 对象
+            if hasattr(first_entity, 'table') and hasattr(first_entity, 'key'):
+                # 这是查询特定列的情况
+                self.model = first_entity.table  # 获取表对象
+                self._selected_columns = [first_entity.key]  # 存储列名
+            else:
+                # 这是查询整个模型的情况
+                self.model = first_entity
+                self._selected_columns = None
+        else:
+            self.model = None
+            self._selected_columns = None
+        
         self._filters = []
         self._limit_value = None
         self._offset_value = None
+        self._distinct = False
     
     def filter_by(self, **kwargs):
         """添加等值过滤条件"""
@@ -92,13 +110,38 @@ class D1Query:
         sql, params = self._build_count_sql()
         try:
             result = self.d1_client.execute(sql, params)
-            rows = result.get('results', [])
+            # 处理不同的返回格式
+            # D1 API 的 result 字段直接是结果列表
+            if isinstance(result, list):
+                rows = result
+            elif isinstance(result, dict):
+                rows = result.get('results', [])
+            else:
+                rows = []
+            
             if rows:
-                return rows[0].get('count', 0)
+                # COUNT(*) 查询返回的第一行第一列就是计数
+                if isinstance(rows[0], dict):
+                    # 如果是字典，查找 count 字段或第一个值
+                    if 'count' in rows[0]:
+                        return int(rows[0]['count'])
+                    elif len(rows[0]) > 0:
+                        # 取第一个值
+                        return int(list(rows[0].values())[0])
+                elif isinstance(rows[0], (list, tuple)) and len(rows[0]) > 0:
+                    # 如果是列表/元组，取第一个元素
+                    return int(rows[0][0])
             return 0
         except Exception as e:
             logger.error(f"D1 统计失败: {e}, SQL: {sql}")
             raise
+    
+    def distinct(self):
+        """去重（简化实现，D1 支持 DISTINCT）"""
+        # 这是一个占位方法，实际去重应该在 SQL 中使用 DISTINCT
+        # 这里只是返回 self 以支持链式调用
+        self._distinct = True
+        return self
     
     def _build_sql(self, limit=None):
         """构建 SQL 查询语句"""
@@ -106,7 +149,22 @@ class D1Query:
             raise Exception("查询对象没有指定模型")
         
         table_name = self.model.__tablename__
-        sql = f"SELECT * FROM {table_name}"
+        
+        # 确定要查询的列
+        if self._selected_columns:
+            # 查询特定列
+            columns = ", ".join(self._selected_columns)
+            if self._distinct:
+                sql = f"SELECT DISTINCT {columns} FROM {table_name}"
+            else:
+                sql = f"SELECT {columns} FROM {table_name}"
+        else:
+            # 查询所有列
+            if self._distinct:
+                sql = f"SELECT DISTINCT * FROM {table_name}"
+            else:
+                sql = f"SELECT * FROM {table_name}"
+        
         params = []
         
         # 添加 WHERE 条件
@@ -161,8 +219,22 @@ class D1Query:
         
         return sql, params
     
-    def _row_to_model(self, row_data: Dict[str, Any]):
-        """将数据库行转换为模型实例"""
+    def _row_to_model(self, row_data):
+        """将数据库行转换为模型实例或元组"""
+        # 如果查询的是特定列，返回元组（模拟 SQLAlchemy 的行为）
+        if self._selected_columns:
+            # 返回元组，第一个元素是列的值
+            if isinstance(row_data, dict):
+                # 如果是字典，取第一个列的值
+                col_name = self._selected_columns[0]
+                return (row_data.get(col_name),)
+            elif isinstance(row_data, (list, tuple)):
+                # 如果是列表/元组，直接返回
+                return tuple(row_data) if not isinstance(row_data, tuple) else row_data
+            else:
+                return (row_data,)
+        
+        # 查询整个模型，返回模型实例
         if not self.model:
             return row_data
         
@@ -170,9 +242,15 @@ class D1Query:
         instance = self.model()
         
         # 设置属性
-        for key, value in row_data.items():
-            if hasattr(instance, key):
-                setattr(instance, key, value)
+        if isinstance(row_data, dict):
+            for key, value in row_data.items():
+                if hasattr(instance, key):
+                    setattr(instance, key, value)
+        elif isinstance(row_data, (list, tuple)):
+            # 如果是列表/元组，尝试按列顺序设置
+            # 这是一个简化处理，实际应该根据表结构映射
+            logger.warning("D1 查询返回列表格式，可能无法正确映射到模型")
+            return row_data
         
         return instance
 
