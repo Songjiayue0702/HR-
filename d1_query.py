@@ -43,7 +43,15 @@ class D1Query:
         sql, params = self._build_sql(limit=1)
         try:
             result = self.d1_client.execute(sql, params)
-            rows = result.get('results', [])
+            # 处理不同的返回格式
+            # D1 API 可能直接返回列表，也可能返回包含 results 字段的字典
+            if isinstance(result, list):
+                rows = result
+            elif isinstance(result, dict):
+                rows = result.get('results', [])
+            else:
+                rows = []
+            
             if rows:
                 return self._row_to_model(rows[0])
             return None
@@ -56,7 +64,14 @@ class D1Query:
         sql, params = self._build_sql()
         try:
             result = self.d1_client.execute(sql, params)
-            rows = result.get('results', [])
+            # 处理不同的返回格式
+            if isinstance(result, list):
+                rows = result
+            elif isinstance(result, dict):
+                rows = result.get('results', [])
+            else:
+                rows = []
+            
             return [self._row_to_model(row) for row in rows]
         except Exception as e:
             logger.error(f"D1 查询失败: {e}, SQL: {sql}")

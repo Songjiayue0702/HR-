@@ -80,9 +80,15 @@ class D1Session:
 class D1ResultProxy:
     """D1 结果代理类，模拟 SQLAlchemy 的 Result 对象"""
     
-    def __init__(self, d1_result: Dict[str, Any]):
+    def __init__(self, d1_result):
         self.d1_result = d1_result
-        self._rows = d1_result.get('results', [])
+        # D1 API 的 result 字段直接是结果列表，不是包含 results 的字典
+        if isinstance(d1_result, list):
+            self._rows = d1_result
+        elif isinstance(d1_result, dict):
+            self._rows = d1_result.get('results', [])
+        else:
+            self._rows = []
         self._index = 0
     
     def fetchall(self):
