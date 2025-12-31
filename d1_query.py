@@ -3,7 +3,7 @@ D1 查询对象，模拟 SQLAlchemy 的 Query 对象
 将 ORM 查询转换为 SQL 并通过 D1 HTTP API 执行
 """
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class D1Query:
         self._limit_value = None
         self._offset_value = None
         self._distinct = False
+        self._order_by = []
     
     def filter_by(self, **kwargs):
         """添加等值过滤条件"""
@@ -105,6 +106,11 @@ class D1Query:
         self._offset_value = offset
         return self
     
+    def order_by(self, *criterion):
+        """添加排序条件"""
+        self._order_by.extend(criterion)
+        return self
+    
     def count(self):
         """统计数量"""
         sql, params = self._build_count_sql()
@@ -119,18 +125,51 @@ class D1Query:
             else:
                 rows = []
             
-            if rows:
+            if rows and len(rows) > 0:
+                first_row = rows[0]
                 # COUNT(*) 查询返回的第一行第一列就是计数
-                if isinstance(rows[0], dict):
+                if isinstance(first_row, dict):
                     # 如果是字典，查找 count 字段或第一个值
-                    if 'count' in rows[0]:
-                        return int(rows[0]['count'])
-                    elif len(rows[0]) > 0:
+                    if 'count' in first_row:
+                        count_value = first_row['count']
+                        # 确保是数值类型
+                        if isinstance(count_value, (int, float)):
+                            return int(count_value)
+                        elif isinstance(count_value, str):
+                            return int(count_value)
+                        else:
+                            logger.warning(f"COUNT 返回了意外的类型: {type(count_value)}, 值: {count_value}")
+                            return 0
+                    elif len(first_row) > 0:
                         # 取第一个值
-                        return int(list(rows[0].values())[0])
-                elif isinstance(rows[0], (list, tuple)) and len(rows[0]) > 0:
+                        first_value = list(first_row.values())[0]
+                        if isinstance(first_value, (int, float)):
+                            return int(first_value)
+                        elif isinstance(first_value, str):
+                            return int(first_value)
+                        else:
+                            logger.warning(f"COUNT 返回了意外的类型: {type(first_value)}, 值: {first_value}")
+                            return 0
+                elif isinstance(first_row, (list, tuple)) and len(first_row) > 0:
                     # 如果是列表/元组，取第一个元素
-                    return int(rows[0][0])
+                    first_value = first_row[0]
+                    if isinstance(first_value, (int, float)):
+                        return int(first_value)
+                    elif isinstance(first_value, str):
+                        return int(first_value)
+                    else:
+                        logger.warning(f"COUNT 返回了意外的类型: {type(first_value)}, 值: {first_value}")
+                        return 0
+                else:
+                    # 如果不是字典也不是列表，尝试直接转换
+                    try:
+                        if isinstance(first_row, (int, float)):
+                            return int(first_row)
+                        elif isinstance(first_row, str):
+                            return int(first_row)
+                    except (ValueError, TypeError):
+                        logger.warning(f"无法转换 COUNT 结果: {type(first_row)}, 值: {first_row}")
+                        return 0
             return 0
         except Exception as e:
             logger.error(f"D1 统计失败: {e}, SQL: {sql}")
@@ -142,6 +181,219 @@ class D1Query:
         # 这里只是返回 self 以支持链式调用
         self._distinct = True
         return self
+    
+    def _parse_expression(self, expr) -> Tuple[Optional[str], List]:
+        """
+        解析 SQLAlchemy 表达式为 SQL 条件和参数
+        
+        Returns:
+            (sql_condition, params_list) 元组
+        """
+        if expr is None:
+            return None, []
+        
+        # 优先尝试使用 SQLAlchemy 的编译功能（最可靠的方法）
+        try:
+            from sqlalchemy.dialects import sqlite
+            compiled = expr.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": False})
+            sql_str = str(compiled)
+            
+            # 提取参数
+            params_list = []
+            if hasattr(compiled, 'params'):
+                params_dict = compiled.params
+                # 替换命名参数为位置参数
+                for param_name, param_value in params_dict.items():
+                    # SQLite 使用 ? 作为占位符
+                    sql_str = sql_str.replace(f":{param_name}", "?", 1)
+                    params_list.append(param_value)
+            
+            return sql_str, params_list
+        except Exception as compile_error:
+            # 如果编译失败，尝试手动解析
+            logger.debug(f"SQLAlchemy 编译失败，尝试手动解析: {compile_error}")
+            pass
+        
+        # 手动解析：检查是否是 BinaryExpression (==, !=, <, >, <=, >=, LIKE 等)
+        if hasattr(expr, 'left') and hasattr(expr, 'right') and hasattr(expr, 'operator'):
+            left = expr.left
+            right = expr.right
+            op = expr.operator
+            
+            # 获取列名
+            column_name = None
+            if hasattr(left, 'key') and hasattr(left, 'table'):
+                column_name = left.key
+            elif hasattr(left, 'name'):
+                column_name = left.name
+            elif hasattr(left, '__name__'):
+                column_name = left.__name__
+            
+            if not column_name:
+                logger.warning(f"无法解析表达式左侧列名: {expr}")
+                return None, []
+            
+            # 处理不同类型的操作符
+            try:
+                # 尝试获取操作符名称
+                op_name = str(op.__name__ if hasattr(op, '__name__') else op)
+                
+                # 获取右侧的值
+                param_value = None
+                if isinstance(right, str):
+                    param_value = right
+                elif hasattr(right, 'value'):
+                    param_value = right.value
+                elif hasattr(right, '__str__'):
+                    param_value = str(right)
+                else:
+                    param_value = right
+                
+                # 处理 LIKE 操作
+                if 'like' in op_name.lower() or 'ilike' in op_name.lower():
+                    return f"{column_name} LIKE ?", [param_value]
+                
+                # 处理等号 ==
+                elif op_name == 'eq' or op == '==':
+                    return f"{column_name} = ?", [param_value]
+                
+                # 处理不等 !=
+                elif op_name == 'ne' or op == '!=':
+                    return f"{column_name} != ?", [param_value]
+                
+                # 处理大于 >
+                elif op_name == 'gt' or op == '>':
+                    return f"{column_name} > ?", [param_value]
+                
+                # 处理小于 <
+                elif op_name == 'lt' or op == '<':
+                    return f"{column_name} < ?", [param_value]
+                
+                # 处理大于等于 >=
+                elif op_name == 'ge' or op == '>=':
+                    return f"{column_name} >= ?", [param_value]
+                
+                # 处理小于等于 <=
+                elif op_name == 'le' or op == '<=':
+                    return f"{column_name} <= ?", [param_value]
+                
+                # 默认当作等号处理
+                else:
+                    return f"{column_name} = ?", [param_value]
+            except Exception as e:
+                logger.warning(f"解析表达式操作符失败: {e}, expr: {expr}")
+                return None, []
+        
+        # 处理 OR/AND 组合 (BooleanClauseList)
+        elif hasattr(expr, 'clauses'):
+            clauses = expr.clauses
+            if len(clauses) == 0:
+                return None, []
+            
+            # 判断是 OR 还是 AND
+            is_or = hasattr(expr, 'operator') and ('or' in str(expr.operator).lower() or '|' in str(expr))
+            connector = " OR " if is_or else " AND "
+            
+            sql_parts = []
+            all_params = []
+            for clause in clauses:
+                sql_part, params = self._parse_expression(clause)
+                if sql_part:
+                    sql_parts.append(f"({sql_part})")
+                    all_params.extend(params)
+            
+            if sql_parts:
+                return connector.join(sql_parts), all_params
+        
+        # 处理 IS NOT NULL (UnaryExpression)
+        elif hasattr(expr, 'element') and hasattr(expr, 'operator'):
+            try:
+                op_name = str(expr.operator.__name__ if hasattr(expr.operator, '__name__') else expr.operator)
+                if 'isnot' in op_name.lower() or 'is_not' in op_name.lower():
+                    element = expr.element
+                    if hasattr(element, 'key'):
+                        column_name = element.key
+                        return f"{column_name} IS NOT NULL", []
+                    elif hasattr(element, 'name'):
+                        column_name = element.name
+                        return f"{column_name} IS NOT NULL", []
+            except:
+                pass
+        
+        # 处理 IN 操作 (CollectionAggregate)
+        elif hasattr(expr, 'left') and hasattr(expr, 'right'):
+            left = expr.left
+            if hasattr(left, 'key'):
+                column_name = left.key
+            elif hasattr(left, 'name'):
+                column_name = left.name
+            else:
+                return None, []
+            
+            # 检查右侧是否是列表或 IN 操作
+            right = expr.right
+            if isinstance(right, (list, tuple)) or (hasattr(right, '__iter__') and not isinstance(right, str)):
+                try:
+                    values = list(right) if not isinstance(right, (list, tuple)) else right
+                    placeholders = ", ".join(["?"] * len(values))
+                    return f"{column_name} IN ({placeholders})", values
+                except:
+                    pass
+        
+        # 尝试直接编译表达式（如果 SQLAlchemy 支持）
+        try:
+            # 尝试使用 SQLAlchemy 的编译功能
+            from sqlalchemy.dialects import sqlite
+            compiled = expr.compile(dialect=sqlite.dialect(), compile_kwargs={"literal_binds": False})
+            sql_str = str(compiled)
+            # 提取参数占位符
+            if hasattr(compiled, 'params'):
+                params_dict = compiled.params
+                sql_str_with_placeholders = sql_str
+                params_list = []
+                for key, value in params_dict.items():
+                    sql_str_with_placeholders = sql_str_with_placeholders.replace(f":{key}", "?")
+                    params_list.append(value)
+                return sql_str_with_placeholders, params_list
+            return sql_str, []
+        except Exception as e:
+            logger.warning(f"无法解析表达式，使用编译也失败: {e}, expr: {expr}")
+            return None, []
+    
+    def _parse_order_by(self, expr) -> Optional[str]:
+        """解析排序表达式为 SQL ORDER BY 子句"""
+        if expr is None:
+            return None
+        
+        try:
+            # 处理 desc() 和 asc()
+            if hasattr(expr, 'element'):
+                # 这是 desc() 或 asc() 包装的表达式
+                element = expr.element
+                if hasattr(element, 'key'):
+                    column_name = element.key
+                elif hasattr(element, 'name'):
+                    column_name = element.name
+                else:
+                    return None
+                
+                # 检查是否是 desc
+                if hasattr(expr, 'modifier') or str(expr).upper().endswith('DESC'):
+                    return f"{column_name} DESC"
+                else:
+                    return f"{column_name} ASC"
+            else:
+                # 直接是列
+                if hasattr(expr, 'key'):
+                    column_name = expr.key
+                    return f"{column_name} ASC"
+                elif hasattr(expr, 'name'):
+                    column_name = expr.name
+                    return f"{column_name} ASC"
+        except Exception as e:
+            logger.warning(f"解析排序表达式失败: {e}, expr: {expr}")
+        
+        return None
     
     def _build_sql(self, limit=None):
         """构建 SQL 查询语句"""
@@ -177,12 +429,26 @@ class D1Query:
                     conditions.append(f"{key} = ?")
                     params.append(value)
                 else:
-                    # filter 的条件（需要更复杂的解析）
-                    # 简化处理：直接使用字符串表示
-                    logger.warning(f"复杂的过滤条件可能无法正确处理: {filter_item}")
+                    # 尝试解析 SQLAlchemy 表达式
+                    sql_part, sql_params = self._parse_expression(filter_item)
+                    if sql_part:
+                        conditions.append(f"({sql_part})")
+                        params.extend(sql_params)
+                    else:
+                        logger.warning(f"无法解析过滤条件: {filter_item}")
             
             if conditions:
                 sql += " WHERE " + " AND ".join(conditions)
+        
+        # 添加 ORDER BY
+        if self._order_by:
+            order_parts = []
+            for order_expr in self._order_by:
+                order_sql = self._parse_order_by(order_expr)
+                if order_sql:
+                    order_parts.append(order_sql)
+            if order_parts:
+                sql += " ORDER BY " + ", ".join(order_parts)
         
         # 添加 LIMIT
         if limit:
@@ -205,7 +471,7 @@ class D1Query:
         sql = f"SELECT COUNT(*) as count FROM {table_name}"
         params = []
         
-        # 添加 WHERE 条件
+        # 添加 WHERE 条件（使用与 _build_sql 相同的逻辑）
         if self._filters:
             conditions = []
             for filter_item in self._filters:
@@ -213,6 +479,14 @@ class D1Query:
                     key, value = filter_item
                     conditions.append(f"{key} = ?")
                     params.append(value)
+                else:
+                    # 尝试解析 SQLAlchemy 表达式
+                    sql_part, sql_params = self._parse_expression(filter_item)
+                    if sql_part:
+                        conditions.append(f"({sql_part})")
+                        params.extend(sql_params)
+                    else:
+                        logger.warning(f"无法解析过滤条件: {filter_item}")
             
             if conditions:
                 sql += " WHERE " + " AND ".join(conditions)
