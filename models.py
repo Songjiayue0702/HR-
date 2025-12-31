@@ -177,11 +177,19 @@ def init_database():
                     session.commit()
                     print("✓ 默认管理员账户已创建（用户名: admin, 密码: admin123）")
                 else:
-                    # 如果用户存在但密码哈希为空，重置密码
+                    # 如果用户存在但密码哈希为空，重置密码并确保账户激活
                     if not admin_user.password_hash:
                         admin_user.set_password('admin123')
+                        admin_user.is_active = 1  # 确保账户是激活状态
+                        admin_user.role = 'admin'  # 确保角色正确
                         session.commit()
                         print("✓ 默认管理员账户密码已重置（用户名: admin, 密码: admin123）")
+                    # 如果用户存在但 is_active 不是 1，也确保激活
+                    elif admin_user.is_active != 1:
+                        admin_user.is_active = 1
+                        admin_user.role = 'admin'  # 确保角色正确
+                        session.commit()
+                        print("✓ 默认管理员账户已激活（用户名: admin）")
             except Exception as e:
                 print(f"⚠️  创建默认管理员账户失败: {e}")
                 import traceback
