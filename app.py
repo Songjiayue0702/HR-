@@ -1561,24 +1561,24 @@ def login():
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
     
-        db = None
-        try:
-            db = get_db_session()
-            user = db.query(User).filter_by(username=username).first()
-            if not user:
-                return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
-            
-            # 如果密码哈希为空，且是 admin 用户且密码是 admin123，自动设置密码
-            if not user.password_hash:
-                if username == 'admin' and password == 'admin123':
-                    # 自动设置密码
-                    user.set_password('admin123')
-                    db.commit()
-                else:
-                    return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
-            
-            if not user.check_password(password):
-                return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+    db = None
+    try:
+        db = get_db_session()
+        user = db.query(User).filter_by(username=username).first()
+        if not user:
+            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+        
+        # 如果密码哈希为空，且是 admin 用户且密码是 admin123，自动设置密码
+        if not user.password_hash:
+            if username == 'admin' and password == 'admin123':
+                # 自动设置密码
+                user.set_password('admin123')
+                db.commit()
+            else:
+                return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
+        
+        if not user.check_password(password):
+            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
         
         if user.is_active != 1:
             return jsonify({'success': False, 'message': '账户已被禁用'}), 403
