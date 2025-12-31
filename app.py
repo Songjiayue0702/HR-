@@ -1571,8 +1571,10 @@ def login():
         # 如果密码哈希为空，且是 admin 用户且密码是 admin123，自动设置密码
         if not user.password_hash:
             if username == 'admin' and password == 'admin123':
-                # 自动设置密码
+                # 自动设置密码和激活账户
                 user.set_password('admin123')
+                user.is_active = 1  # 确保账户激活
+                user.role = 'admin'  # 确保角色正确
                 db.commit()
             else:
                 return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
@@ -1580,8 +1582,14 @@ def login():
         if not user.check_password(password):
             return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
         
+        # 如果账户被禁用，但密码正确且是 admin/admin123，自动激活
         if user.is_active != 1:
-            return jsonify({'success': False, 'message': '账户已被禁用'}), 403
+            if username == 'admin' and password == 'admin123':
+                user.is_active = 1
+                user.role = 'admin'
+                db.commit()
+            else:
+                return jsonify({'success': False, 'message': '账户已被禁用'}), 403
         
         # 登录成功，设置session
         session['user_id'] = user.id
