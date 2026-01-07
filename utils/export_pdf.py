@@ -16,18 +16,19 @@ from typing import Dict, Any, List
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
 
 from config import Config
 
 # 全局中文字体名称
-CH_FONT_NAME = "SimSun"
+CH_FONT_NAME = "STSong-Light"
 
 
 def _register_chinese_font() -> str:
     """
     注册中文字体，返回可用的字体名称。
-    优先使用常见的 Windows 中文字体（宋体 / 黑体 / 微软雅黑）。
+    优先使用reportlab内置的CID字体（跨平台支持），如果失败则尝试系统字体。
     """
     global CH_FONT_NAME
 
@@ -38,12 +39,32 @@ def _register_chinese_font() -> str:
     except KeyError:
         pass
 
+    # 优先使用reportlab内置的CID字体（跨平台，支持中文）
+    cid_fonts = [
+        "STSong-Light",      # 华文宋体（简体中文）
+        "STSongStd-Light",   # 华文宋体标准版
+        "STHeiti-Light",     # 华文黑体（简体中文）
+        "STHeitiStd-Light",  # 华文黑体标准版
+    ]
+    
+    for font_name in cid_fonts:
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+            CH_FONT_NAME = font_name
+            return CH_FONT_NAME
+        except Exception:
+            continue
+
+    # 如果CID字体都不可用，尝试使用系统字体（仅Windows/Linux本地开发环境）
     font_candidates = [
         ("SimSun", r"C:\Windows\Fonts\simsun.ttc"),
         ("SimSun", r"C:\Windows\Fonts\simsun.ttf"),
         ("SimHei", r"C:\Windows\Fonts\simhei.ttf"),
         ("MSYH", r"C:\Windows\Fonts\msyh.ttc"),
         ("MSYH", r"C:\Windows\Fonts\msyh.ttf"),
+        # Linux常见字体路径
+        ("SimSun", "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
+        ("SimSun", "/usr/share/fonts/truetype/arphic/uming.ttc"),
     ]
 
     for name, path in font_candidates:
@@ -55,8 +76,13 @@ def _register_chinese_font() -> str:
             except Exception:
                 continue
 
-    # 如果找不到中文字体，只能退回默认 Helvetica（中文会显示为方块）
-    CH_FONT_NAME = "Helvetica"
+    # 如果所有字体都不可用，使用CID字体（即使注册失败，reportlab也会尝试使用）
+    # 这比Helvetica好，至少会尝试渲染中文
+    CH_FONT_NAME = "STSong-Light"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont(CH_FONT_NAME))
+    except Exception:
+        pass
     return CH_FONT_NAME
 
 
@@ -98,8 +124,9 @@ def _draw_wrapped_text(
                 c.showPage()
                 c.setFont(CH_FONT_NAME, 11)
                 y = page_height - 60
-            c.drawString(x, y, current_line)
-            y -= leading
+            if current_line:  # 只有在有内容时才绘制
+                c.drawString(x, y, current_line)
+                y -= leading
             current_line = ""
             continue
 
@@ -167,6 +194,9 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
             c.showPage()
             c.setFont(CH_FONT_NAME, 11)
             y = height - 60
+            # 确保字体正确设置
+            if hasattr(c, '_fontname'):
+                c.setFont(CH_FONT_NAME, 11)
     
     def draw_section(title: str):
         nonlocal y
@@ -244,52 +274,73 @@ def export_resume_analysis_to_pdf(resume, analysis: Dict[str, Any] | None) -> st
         weaknesses = analysis.get("weaknesses") or []
         suggestions = analysis.get("suggestions") or []
 
+        # 显示匹配度分数和等级
         if match_score is not None:
+            check_page_break()
             y = _draw_wrapped_text(c, f"匹配度分数：{match_score}", margin_left, y, max_text_width)
         if match_level:
+            check_page_break()
             y = _draw_wrapped_text(c, f"匹配等级：{match_level}", margin_left, y, max_text_width)
-        y -= 5
+        y -= 10
 
+        # 详细分析（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "详细分析：", margin_left, y, max_text_width)
         if detailed:
             check_page_break()
-            y = _draw_wrapped_text(c, "详细分析：", margin_left, y, max_text_width)
-            check_page_break()
             y = _draw_wrapped_text(c, detailed, margin_left + 20, y, max_text_width - 20)
-            y -= 5
-
-        if strengths:
+        else:
             check_page_break()
-            y = _draw_wrapped_text(c, "优势：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, "暂无详细分析内容。", margin_left + 20, y, max_text_width - 20)
+        y -= 10
+
+        # 优势匹配点（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "优势匹配点：", margin_left, y, max_text_width)
+        if strengths:
             for s in strengths:
                 check_page_break()
                 y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
-            y -= 5
-
-        if weaknesses:
+        else:
             check_page_break()
-            y = _draw_wrapped_text(c, "不足：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, "暂无优势匹配点。", margin_left + 20, y, max_text_width - 20)
+        y -= 10
+
+        # 不足匹配点（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "不足匹配点：", margin_left, y, max_text_width)
+        if weaknesses:
             for w in weaknesses:
                 check_page_break()
                 y = _draw_wrapped_text(c, f"• {w}", margin_left + 20, y, max_text_width - 20)
-            y -= 5
-
-        if suggestions:
+        else:
             check_page_break()
-            y = _draw_wrapped_text(c, "面试重点考核项及对应面试问题：", margin_left, y, max_text_width)
+            y = _draw_wrapped_text(c, "暂无不足匹配点。", margin_left + 20, y, max_text_width - 20)
+        y -= 10
+
+        # 面试重点考核项及对应面试问题（必须显示，即使为空也显示标题）
+        check_page_break()
+        y = _draw_wrapped_text(c, "面试重点考核项及对应面试问题：", margin_left, y, max_text_width)
+        if suggestions:
             import re
             for s in suggestions:
                 check_page_break()
                 # 解析格式化的字符串：【考核重点】xxx - 【面试问题】xxx
-                match = re.match(r'【考核重点】(.*?)\s*-\s*【面试问题】(.*)', s)
+                match = re.match(r'【考核重点】(.*?)\s*[-—–]\s*【面试问题】(.*)', s)
                 if match:
                     focus = match.group(1).strip()
                     question = match.group(2).strip()
+                    check_page_break()
                     y = _draw_wrapped_text(c, f"• 【考核重点】{focus}", margin_left + 20, y, max_text_width - 20)
                     check_page_break()
                     y = _draw_wrapped_text(c, f"  【面试问题】{question}", margin_left + 40, y, max_text_width - 40)
                 else:
                     # 如果没有匹配到格式，直接显示原内容
+                    check_page_break()
                     y = _draw_wrapped_text(c, f"• {s}", margin_left + 20, y, max_text_width - 20)
+        else:
+            check_page_break()
+            y = _draw_wrapped_text(c, "暂无面试重点考核项及对应面试问题。", margin_left + 20, y, max_text_width - 20)
     else:
         y = _draw_wrapped_text(c, "暂无匹配度分析结果。请在系统中先执行一次匹配分析。", margin_left, y, max_text_width)
 

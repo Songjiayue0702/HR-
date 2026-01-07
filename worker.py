@@ -28,16 +28,17 @@ def with_cors(resp):
 async def handle_options():
     """处理预检请求"""
     from js import Response
-    return Response(None, status=204, headers=CORS_HEADERS)
+    return Response.new(None, {"status": 204, "headers": CORS_HEADERS})
 
 
 async def forward(request):
     """将 /api/* 请求转发到后端"""
     from js import Response, fetch
-
+    
     parsed = urlparse(request.url)
     if not parsed.path.startswith("/api/"):
-        return with_cors(Response("Not Found", status=404))
+        from js import Response
+        return with_cors(Response.new("Not Found", {"status": 404}))
 
     # 构造目标 URL，保留查询参数
     target = f"{BACKEND_BASE_URL}{parsed.path}"
@@ -67,20 +68,43 @@ async def forward(request):
 
     # 回传上游响应（状态码、头、体）
     resp_body = await upstream.arrayBuffer()
-    resp = Response(resp_body, status=upstream.status, headers=upstream.headers)
+    resp = Response.new(resp_body, {
+        "status": upstream.status,
+        "headers": upstream.headers,
+    })
     return with_cors(resp)
 
 
-# 这是 Cloudflare Python Workers 的入口点
-# 函数名必须是 fetch
-async def fetch(request, env, context):
-    """Worker 入口 - Python Workers 必须使用这个函数名"""
+# Cloudflare Workers Python 事件处理器
+# Python Workers 会自动识别名为 'fetch' 的异步函数作为事件处理器
+# 函数签名必须是: async def fetch(request, env)
+# 注意：Python 不支持 export 变量，直接定义 fetch 函数即可
+async def fetch(request, env):
+    """
+    Worker 入口函数 - 处理所有 HTTP 请求
+    
+    Cloudflare Workers Python 会自动将此函数注册为 fetch 事件处理器
+    
+    Args:
+        request: Request 对象，包含请求信息
+        env: 环境变量和绑定对象，包含：
+            - DB: D1 数据库绑定
+            - UPLOADS_BUCKET: R2 存储桶绑定（上传文件）
+            - EXPORTS_BUCKET: R2 存储桶绑定（导出文件）
+    
+    Returns:
+        Response 对象
+    """
     try:
+        # 处理 CORS 预检请求
         if request.method == "OPTIONS":
             return await handle_options()
+        
+        # 转发其他请求到后端
         return await forward(request)
     except Exception as e:
         print(f"Proxy error: {e}")
+        import traceback
+        traceback.print_exc()
         from js import Response
-        return with_cors(Response("Internal Server Error", status=500))
-
+        return with_cors(Response.new("Internal Server Error", {"status": 500}))

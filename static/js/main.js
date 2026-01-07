@@ -874,7 +874,7 @@ function uploadFiles(files) {
     // 添加AI配置（从本地存储或表单获取）
     const aiConfig = {
         ai_enabled: document.getElementById('aiEnabled') ? document.getElementById('aiEnabled').checked : false,
-        ai_model: document.getElementById('aiModel') ? document.getElementById('aiModel').value : 'gpt-3.5-turbo',
+        ai_model: document.getElementById('aiModel') ? document.getElementById('aiModel').value : 'deepseek-chat',
         ai_api_key: document.getElementById('aiApiKey') ? document.getElementById('aiApiKey').value : (localStorage.getItem('ai_api_key') || ''),
         ai_api_base: document.getElementById('aiApiBase') ? document.getElementById('aiApiBase').value : ''
     };
@@ -3324,26 +3324,49 @@ function loadAIConfig() {
         .then(data => {
             if (data.success) {
                 const config = data.data;
-                document.getElementById('aiEnabled').checked = config.ai_enabled;
-                document.getElementById('aiModel').value = config.ai_model;
-                if (config.ai_api_base) {
-                    document.getElementById('aiApiBase').value = config.ai_api_base;
+                
+                // 显示AI状态
+                const statusText = document.getElementById('aiStatusText');
+                if (statusText) {
+                    if (config.ai_available) {
+                        statusText.innerHTML = '<span style="color: green;">✓ AI功能已启用并可用</span>';
+                    } else {
+                        statusText.innerHTML = '<span style="color: red;">✗ AI功能未启用或API密钥未配置</span>';
+                    }
                 }
                 
-                // 从本地存储加载API密钥（如果存在）
-                const savedKey = localStorage.getItem('ai_api_key');
-                if (savedKey) {
-                    document.getElementById('aiApiKey').value = savedKey;
+                // 显示AI模型（只读）
+                const aiModelInput = document.getElementById('aiModel');
+                if (aiModelInput) {
+                    aiModelInput.value = config.ai_model || 'deepseek-chat';
                 }
                 
-                // 更新模型选项
-                if (config.ai_models && config.ai_models.length > 0) {
-                    updateModelOptions(config.ai_models);
+                // 显示API密钥状态（只读）
+                const aiApiKeyInput = document.getElementById('aiApiKey');
+                if (aiApiKeyInput) {
+                    if (config.ai_available) {
+                        aiApiKeyInput.value = '已配置（来自环境变量）';
+                        aiApiKeyInput.placeholder = '已配置（来自环境变量）';
+                    } else {
+                        aiApiKeyInput.value = '';
+                        aiApiKeyInput.placeholder = '未配置';
+                    }
+                }
+                
+                // 显示API基础URL（只读）
+                const aiApiBaseInput = document.getElementById('aiApiBase');
+                if (aiApiBaseInput) {
+                    aiApiBaseInput.value = config.ai_api_base || '使用默认URL';
+                    aiApiBaseInput.placeholder = config.ai_api_base || '使用默认URL';
                 }
             }
         })
         .catch(error => {
             console.error('加载AI配置失败:', error);
+            const statusText = document.getElementById('aiStatusText');
+            if (statusText) {
+                statusText.innerHTML = '<span style="color: red;">✗ 加载配置失败</span>';
+            }
         });
 }
 
@@ -3361,119 +3384,78 @@ function updateModelOptions(models) {
 }
 
 function updateAIConfig() {
-    // 实时更新配置到本地存储
-    const config = {
-        ai_enabled: document.getElementById('aiEnabled').checked,
-        ai_model: document.getElementById('aiModel').value,
-        ai_api_key: document.getElementById('aiApiKey').value,
-        ai_api_base: document.getElementById('aiApiBase').value
-    };
-    
-    // 保存API密钥到本地存储
-    if (config.ai_api_key) {
-        localStorage.setItem('ai_api_key', config.ai_api_key);
-    }
-    
-    // 保存其他配置到本地存储
-    localStorage.setItem('ai_config', JSON.stringify({
-        ai_enabled: config.ai_enabled,
-        ai_model: config.ai_model,
-        ai_api_base: config.ai_api_base
-    }));
+    // 配置来自环境变量，不需要更新
+    // 保留此函数以避免页面报错，但不执行任何操作
 }
 
 function saveAIConfig() {
-    const config = {
-        ai_enabled: document.getElementById('aiEnabled').checked,
-        ai_model: document.getElementById('aiModel').value,
-        ai_api_key: document.getElementById('aiApiKey').value,
-        ai_api_base: document.getElementById('aiApiBase').value
-    };
-    
-    fetch('/api/ai/config', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        const statusDiv = document.getElementById('aiConfigStatus');
-        if (data.success) {
-            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '，配置已自动生效</span>';
-            // 保存到本地存储
-            if (config.ai_api_key) {
-                localStorage.setItem('ai_api_key', config.ai_api_key);
-            }
-            localStorage.setItem('ai_config', JSON.stringify({
-                ai_enabled: config.ai_enabled,
-                ai_model: config.ai_model,
-                ai_api_base: config.ai_api_base
-            }));
-            // 保存后自动使用，不需要重新连接
-            updateAIConfig();
-            // 更新简历列表中的AI状态显示
-            checkAIStatus().then(() => {
-                updateAIStatusDisplay();
-            });
-        } else {
-            statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
-        }
+    // 配置来自环境变量，不能保存
+    const statusDiv = document.getElementById('aiConfigStatus');
+    if (statusDiv) {
+        statusDiv.innerHTML = '<span style="color: orange;">⚠ AI配置来自Railway平台环境变量，不可在界面修改。请在Railway平台的环境变量中配置。</span>';
         setTimeout(() => {
             statusDiv.innerHTML = '';
-        }, 3000);
-    })
-    .catch(error => {
-        console.error('保存AI配置失败:', error);
-        const statusDiv = document.getElementById('aiConfigStatus');
-        statusDiv.innerHTML = '<span style="color: red;">✗ 保存失败，请重试</span>';
-        setTimeout(() => {
-            statusDiv.innerHTML = '';
-        }, 3000);
-    });
+        }, 5000);
+    }
 }
 
 function testAIConnection() {
-    const config = {
-        api_key: document.getElementById('aiApiKey').value,
-        api_base: document.getElementById('aiApiBase').value,
-        model: document.getElementById('aiModel').value
-    };
-    
-    if (!config.api_key) {
-        alert('请先输入API密钥');
-        return;
-    }
-    
+    // 使用后端环境变量配置进行测试
     const statusDiv = document.getElementById('aiConfigStatus');
-    statusDiv.innerHTML = '<span style="color: blue;">测试连接中...</span>';
+    if (!statusDiv) return;
     
-    fetch('/api/ai/test', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
-        } else {
-            statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
-        }
-        setTimeout(() => {
-            statusDiv.innerHTML = '';
-        }, 5000);
-    })
-    .catch(error => {
-        console.error('测试AI连接失败:', error);
-        statusDiv.innerHTML = '<span style="color: red;">✗ 测试失败，请检查网络连接</span>';
-        setTimeout(() => {
-            statusDiv.innerHTML = '';
-        }, 5000);
-    });
+    statusDiv.innerHTML = '<span style="color: blue;">测试连接中（使用环境变量配置）...</span>';
+    
+    // 先获取当前配置
+    fetch('/api/ai/config')
+        .then(response => response.json())
+        .then(configData => {
+            if (!configData.success || !configData.data.ai_available) {
+                statusDiv.innerHTML = '<span style="color: red;">✗ AI未启用或API密钥未配置，请检查Railway环境变量</span>';
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+                return;
+            }
+            
+            // 使用后端配置进行测试（不传递密钥，后端会使用环境变量）
+            fetch('/api/ai/test', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    // 不传递api_key，后端会使用环境变量中的配置
+                    api_base: configData.data.ai_api_base || '',
+                    model: configData.data.ai_model || 'deepseek-chat'
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    statusDiv.innerHTML = '<span style="color: green;">✓ ' + data.message + '</span>';
+                } else {
+                    statusDiv.innerHTML = '<span style="color: red;">✗ ' + data.message + '</span>';
+                }
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            })
+            .catch(error => {
+                console.error('测试AI连接失败:', error);
+                statusDiv.innerHTML = '<span style="color: red;">✗ 测试失败，请检查网络连接</span>';
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            });
+        })
+        .catch(error => {
+            console.error('获取AI配置失败:', error);
+            statusDiv.innerHTML = '<span style="color: red;">✗ 获取配置失败</span>';
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 5000);
+        });
 }
 
 // 模块切换功能
@@ -3869,16 +3851,9 @@ function displayAnalysisDetail(resume) {
         </div>
     `;
         
-        // 如果有应聘岗位，检查是否有缓存的分析结果
+        // 如果有应聘岗位，调用分析API（后端会自动检查是否有已保存的结果）
         if (resume.applied_position) {
-            const cacheKey = `${resume.id}_${resume.applied_position}`;
-            if (matchAnalysisCache[cacheKey]) {
-                // 使用缓存的分析结果
-                displayMatchAnalysis(matchAnalysisCache[cacheKey]);
-            } else {
-                // 没有缓存，进行新的分析
-                analyzeResumeMatch(resume.id, resume.applied_position);
-            }
+            analyzeResumeMatch(resume.id, resume.applied_position);
         } else {
             document.getElementById('matchAnalysisResult').innerHTML = '<div class="empty-state"><p>请先选择应聘岗位，然后系统将自动进行匹配度分析</p></div>';
         }
@@ -3924,15 +3899,9 @@ function onAppliedPositionChange(resumeId) {
     const appliedPosition = select.value;
     
     if (appliedPosition) {
-        // 检查是否有缓存的分析结果
-        const cacheKey = `${resumeId}_${appliedPosition}`;
-        if (matchAnalysisCache[cacheKey]) {
-            // 使用缓存的分析结果
-            displayMatchAnalysis(matchAnalysisCache[cacheKey]);
-        } else {
-            // 没有缓存，进行新的分析
-            analyzeResumeMatch(resumeId, appliedPosition);
-        }
+        // 直接调用分析API，后端会检查是否有已保存的结果
+        // 如果岗位未变化且有已保存的结果，后端会直接返回，不重复分析
+        analyzeResumeMatch(resumeId, appliedPosition);
     } else {
         document.getElementById('matchAnalysisResult').innerHTML = '<div class="empty-state"><p>请选择应聘岗位后，系统将自动进行匹配度分析</p></div>';
     }
@@ -3956,16 +3925,9 @@ function saveAppliedPosition(resumeId) {
     .then(result => {
         if (result.success) {
             alert('应聘岗位保存成功');
-            // 如果有岗位，检查是否有缓存的分析结果
+            // 如果有岗位，调用分析API（后端会检查是否有已保存的结果）
             if (appliedPosition) {
-                const cacheKey = `${resumeId}_${appliedPosition}`;
-                if (matchAnalysisCache[cacheKey]) {
-                    // 使用缓存的分析结果
-                    displayMatchAnalysis(matchAnalysisCache[cacheKey]);
-                } else {
-                    // 没有缓存，进行新的分析
-                    analyzeResumeMatch(resumeId, appliedPosition);
-                }
+                analyzeResumeMatch(resumeId, appliedPosition);
             }
         } else {
             alert('保存失败: ' + (result.message || '未知错误'));
@@ -4014,7 +3976,7 @@ function analyzeResumeMatch(resumeId, appliedPosition) {
     })
     .catch(error => {
         console.error('分析简历匹配度失败:', error);
-        resultDiv.innerHTML = '<div class="error">分析失败，请检查AI配置是否正确</div>';
+        resultDiv.innerHTML = '<div class="error">分析失败，请检查Railway平台环境变量中的OPENAI_API_KEY配置</div>';
     });
 }
 
@@ -4580,7 +4542,6 @@ function openRegistrationFormModal(interviewId) {
                                     <label>导出</label>
                                     <div style="display: flex; gap: 8px;">
                                         <button type="button" class="btn btn-primary btn-small" onclick="downloadRegistrationForm(${data.id}, 'excel')">下载 Excel</button>
-                                        <button type="button" class="btn btn-primary btn-small" onclick="downloadRegistrationForm(${data.id}, 'pdf')">下载 PDF</button>
                                     </div>
                                 </div>
                                 
@@ -4607,6 +4568,15 @@ function openRegistrationFormModal(interviewId) {
                                 <div class="form-group">
                                     <label>出生日期 <span class="required">*</span></label>
                                     <input type="date" id="reg_birth_date" class="form-input" value="${escapeHtml(data.registration_form_birth_date || (resume && resume.birth_year ? resume.birth_year + '-01-01' : ''))}" required>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label>性别 <span class="required">*</span></label>
+                                    <select id="reg_gender" class="form-select" required>
+                                        <option value="">请选择</option>
+                                        <option value="男" ${data.registration_form_gender === '男' ? 'selected' : ''}>男</option>
+                                        <option value="女" ${data.registration_form_gender === '女' ? 'selected' : ''}>女</option>
+                                    </select>
                                 </div>
                                 
                                 <div class="form-group">
@@ -4655,6 +4625,7 @@ function openRegistrationFormModal(interviewId) {
                                         <span style="flex: 1;">岗位</span>
                                         <span style="flex: 1;">开始时间</span>
                                         <span style="flex: 1;">结束时间</span>
+                                        <span style="flex: 1;">离职原因</span>
                                     </div>
                                     <div id="reg_work_experience_container">
                                         ${renderWorkExperienceInputs(parseWorkExperiences(data.registration_form_recent_work_experience || (resume && resume.work_experience ? resume.work_experience.slice(0, 2) : [])))}
@@ -4794,15 +4765,20 @@ function parseWorkExperiences(value) {
 
 function renderWorkExperienceInputs(workExperiences) {
     if (!workExperiences || workExperiences.length === 0) {
-        return '<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" style="flex: 1;"></div>';
+        return '<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" style="flex: 1;"><input type="text" placeholder="离职原因" class="form-input" style="flex: 1;"></div>'.repeat(2);
     }
-    return workExperiences.map(exp => {
+    // 确保至少有2个工作经历项
+    const items = [];
+    for (let i = 0; i < 2; i++) {
+        const exp = workExperiences[i] || {};
         const company = escapeHtml(exp.company || '');
         const position = escapeHtml(exp.position || '');
         const startYear = exp.start_year ? (exp.start_year + '-01-01') : '';
         const endYear = exp.end_year ? (exp.end_year + '-01-01') : '';
-        return `<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" value="${company}" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" value="${position}" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" value="${startYear}" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" value="${endYear}" style="flex: 1;"></div>`;
-    }).join('');
+        const resignationReason = escapeHtml(exp.resignation_reason || '');
+        items.push(`<div class="work-exp-item" style="display: flex; gap: 8px; margin-bottom: 8px;"><input type="text" placeholder="公司名称" class="form-input" value="${company}" style="flex: 1;"><input type="text" placeholder="岗位" class="form-input" value="${position}" style="flex: 1;"><input type="date" placeholder="开始时间" class="form-input" value="${startYear}" style="flex: 1;"><input type="date" placeholder="结束时间" class="form-input" value="${endYear}" style="flex: 1;"><input type="text" placeholder="离职原因" class="form-input" value="${resignationReason}" style="flex: 1;"></div>`);
+    }
+    return items.join('');
 }
 
 function renderConsiderationFactors(factorsJson) {
@@ -4852,7 +4828,8 @@ function saveRegistrationForm(interviewId) {
             company: inputs[0]?.value || '',
             position: inputs[1]?.value || '',
             start_year: inputs[2]?.value ? parseInt(inputs[2].value.split('-')[0]) : null,
-            end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null
+            end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null,
+            resignation_reason: inputs[4]?.value || ''
         };
     }).filter(exp => exp.company || exp.position);
     
@@ -4865,6 +4842,7 @@ function saveRegistrationForm(interviewId) {
         registration_form_contact: document.getElementById('reg_contact')?.value || '',
         registration_form_email: document.getElementById('reg_email')?.value || '',
         registration_form_birth_date: document.getElementById('reg_birth_date')?.value || '',
+        registration_form_gender: document.getElementById('reg_gender')?.value || '',
         registration_form_ethnicity: document.getElementById('reg_ethnicity')?.value || '',
         registration_form_marital_status: document.getElementById('reg_marital_status')?.value || '',
         registration_form_has_children: document.getElementById('reg_has_children')?.value || '',

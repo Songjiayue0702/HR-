@@ -94,15 +94,65 @@
             .form-grid {
                 grid-template-columns: 1fr;
             }
+            .work-exp-header {
+                display: none; /* 移动端隐藏表头 */
+            }
+            .work-exp-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+                padding: 12px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background: #f8f9fa;
+            }
+            .work-exp-item input {
+                width: 100%;
+            }
+            .work-exp-item .input-label {
+                display: block !important;
+                font-size: 12px;
+                color: #666;
+                margin-bottom: 4px;
+                font-weight: normal;
+            }
+            .education-row {
+                flex-direction: column;
+            }
+            .education-field {
+                min-width: 100%;
+            }
+            .address-row {
+                flex-direction: column;
+            }
+            .address-row select {
+                width: 100%;
+            }
         }
         .work-exp-item {
             display: flex;
             gap: 10px;
             margin-bottom: 10px;
-            align-items: center;
+            align-items: flex-start;
+        }
+        .work-exp-item > div {
+            flex: 1;
+            min-width: 0; /* 允许flex项目缩小 */
+        }
+        .work-exp-item .input-label {
+            display: none; /* 桌面端隐藏标签，使用表头 */
         }
         .work-exp-item input {
+            width: 100%;
+        }
+        .education-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .education-field {
             flex: 1;
+            min-width: 140px;
         }
         .sortable-list {
             list-style: none;
@@ -206,8 +256,22 @@
                     <input type="date" id="birth_date" class="form-input" value="{{ interview.registration_form_birth_date or '' }}" required>
                 </div>
                 <div class="form-group">
+                    <label>性别 <span class="required">*</span></label>
+                    <select id="gender" class="form-select" required>
+                        <option value="">请选择</option>
+                        <option value="男" {% if interview.registration_form_gender == '男' %}selected{% endif %}>男</option>
+                        <option value="女" {% if interview.registration_form_gender == '女' %}selected{% endif %}>女</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-grid">
+                <div class="form-group">
                     <label>民族 <span class="required">*</span></label>
                     <input type="text" id="ethnicity" class="form-input" value="{{ interview.registration_form_ethnicity or '' }}" required>
+                </div>
+                <div class="form-group">
+                    <!-- 占位，保持布局平衡 -->
                 </div>
             </div>
             
@@ -253,34 +317,64 @@
                     <span>岗位</span>
                     <span>开始时间</span>
                     <span>结束时间</span>
+                    <span>离职原因</span>
                 </div>
                 <div id="work_experience_container">
+                    {% set work_experiences = [] %}
                     {% if interview.registration_form_recent_work_experience %}
-                        {% for exp in interview.registration_form_recent_work_experience %}
-                        <div class="work-exp-item">
-                            <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
-                            <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
-                            <input type="date" placeholder="开始时间" class="form-input" value="{{ exp.start_year|string + '-01-01' if exp.start_year else '' }}">
-                            <input type="date" placeholder="结束时间" class="form-input" value="{{ exp.end_year|string + '-01-01' if exp.end_year else '' }}">
-                        </div>
-                        {% endfor %}
+                        {% set work_experiences = interview.registration_form_recent_work_experience[:2] %}
                     {% elif resume and resume.work_experience %}
-                        {% for exp in resume.work_experience[:2] %}
-                        <div class="work-exp-item">
-                            <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
-                            <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
-                            <input type="date" placeholder="开始时间" class="form-input" value="{{ exp.start_year|string + '-01-01' if exp.start_year else '' }}">
-                            <input type="date" placeholder="结束时间" class="form-input" value="{{ exp.end_year|string + '-01-01' if exp.end_year else '' }}">
-                        </div>
-                        {% endfor %}
-                    {% else %}
-                        <div class="work-exp-item">
-                            <input type="text" placeholder="公司名称" class="form-input">
-                            <input type="text" placeholder="岗位" class="form-input">
-                            <input type="date" placeholder="开始时间" class="form-input">
-                            <input type="date" placeholder="结束时间" class="form-input">
-                        </div>
+                        {% set work_experiences = resume.work_experience[:2] %}
                     {% endif %}
+                    
+                    {% for i in [0, 1] %}
+                    <div class="work-exp-item">
+                        {% if i < work_experiences|length %}
+                            {% set exp = work_experiences[i] %}
+                            <div>
+                                <label class="input-label">公司名称</label>
+                                <input type="text" placeholder="公司名称" class="form-input" value="{{ exp.company or '' }}">
+                            </div>
+                            <div>
+                                <label class="input-label">岗位</label>
+                                <input type="text" placeholder="岗位" class="form-input" value="{{ exp.position or '' }}">
+                            </div>
+                            <div>
+                                <label class="input-label">开始时间</label>
+                                <input type="date" placeholder="开始时间" class="form-input" value="{{ (exp.start_year|string + '-01-01') if exp.start_year else '' }}">
+                            </div>
+                            <div>
+                                <label class="input-label">结束时间</label>
+                                <input type="date" placeholder="结束时间" class="form-input" value="{{ (exp.end_year|string + '-01-01') if exp.end_year else '' }}">
+                            </div>
+                            <div>
+                                <label class="input-label">离职原因</label>
+                                <input type="text" placeholder="离职原因" class="form-input" value="{{ exp.resignation_reason or '' }}">
+                            </div>
+                        {% else %}
+                            <div>
+                                <label class="input-label">公司名称</label>
+                                <input type="text" placeholder="公司名称" class="form-input">
+                            </div>
+                            <div>
+                                <label class="input-label">岗位</label>
+                                <input type="text" placeholder="岗位" class="form-input">
+                            </div>
+                            <div>
+                                <label class="input-label">开始时间</label>
+                                <input type="date" placeholder="开始时间" class="form-input">
+                            </div>
+                            <div>
+                                <label class="input-label">结束时间</label>
+                                <input type="date" placeholder="结束时间" class="form-input">
+                            </div>
+                            <div>
+                                <label class="input-label">离职原因</label>
+                                <input type="text" placeholder="离职原因" class="form-input">
+                            </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
                 </div>
             </div>
             
@@ -486,7 +580,12 @@
                 { id: 'has_children', name: '有无子女' },
                 { id: 'origin', name: '籍贯' },
                 { id: 'first_work_date', name: '首次工作时间' },
-                { id: 'education', name: '最高学历院校及专业及起始时间' },
+                { id: 'education_start_date', name: '教育起始时间' },
+                { id: 'education_end_date', name: '教育结束时间' },
+                { id: 'institution', name: '毕业院校' },
+                { id: 'major', name: '专业' },
+                { id: 'degree', name: '学历' },
+                { id: 'full_time', name: '是否为全日制统招' },
                 { id: 'hobbies', name: '个人爱好及特长' },
                 { id: 'current_salary', name: '原月薪' },
                 { id: 'expected_salary', name: '期望月薪' },
@@ -507,13 +606,8 @@
                 }
             }
             
-            // 验证工作经历
+            // 验证工作经历（至少填写一份）
             const workExpItems = document.querySelectorAll('#work_experience_container .work-exp-item');
-            if (workExpItems.length === 0) {
-                alert('请填写至少一份工作经历');
-                return;
-            }
-            
             let hasValidWorkExp = false;
             workExpItems.forEach(item => {
                 const inputs = item.querySelectorAll('input');
@@ -523,7 +617,7 @@
             });
             
             if (!hasValidWorkExp) {
-                alert('请填写工作经历信息');
+                alert('请至少填写一份工作经历信息');
                 return;
             }
             
@@ -534,7 +628,8 @@
                     company: inputs[0]?.value || '',
                     position: inputs[1]?.value || '',
                     start_year: inputs[2]?.value ? parseInt(inputs[2].value.split('-')[0]) : null,
-                    end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null
+                    end_year: inputs[3]?.value ? parseInt(inputs[3].value.split('-')[0]) : null,
+                    resignation_reason: inputs[4]?.value || ''
                 };
             }).filter(exp => exp.company || exp.position);
             
@@ -555,6 +650,7 @@
                     registration_form_contact: contact,
                     registration_form_email: email,
                     registration_form_birth_date: document.getElementById('birth_date').value || '',
+                    registration_form_gender: document.getElementById('gender').value || '',
                     registration_form_ethnicity: document.getElementById('ethnicity').value || '',
                     registration_form_marital_status: document.getElementById('marital_status').value || '',
                     registration_form_has_children: document.getElementById('has_children').value || '',

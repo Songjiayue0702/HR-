@@ -50,6 +50,7 @@ class Resume(Base):
     match_score = Column(Integer)  # 匹配度分数（0-100）
     match_level = Column(String(50))  # 匹配等级（高度匹配/中等匹配/低度匹配）
     match_position = Column(String(200))  # 匹配度分析对应的岗位名称
+    match_analysis_detail = Column(JSON)  # 详细分析结果（JSON格式：包含detailed_analysis, strengths, weaknesses, suggestions等）
     
     # 工作经历（JSON格式存储）
     work_experience = Column(JSON)
@@ -96,6 +97,7 @@ class Resume(Base):
             'match_score': self.match_score,
             'match_level': self.match_level,
             'match_position': self.match_position,
+            'match_analysis_detail': self.match_analysis_detail,
             'work_experience': self.work_experience,
             'parse_status': self.parse_status,
             'parse_time': self.parse_time.isoformat() if self.parse_time else None,
@@ -110,74 +112,276 @@ class Resume(Base):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 
-# 数据库初始化
-engine = create_engine(f'sqlite:///{Config.DATABASE_PATH}', echo=False)
-Base.metadata.create_all(engine)
+# 数据库初始化 - 使用 database_manager
+def _get_engine():
+    """获取数据库引擎（从 database_manager）"""
+    from database_manager import get_database_manager
+    manager = get_database_manager()
+    manager.initialize()
+    # 支持 SQLite 和 D1
+    if manager.engine:
+        return manager.engine
+    # 如果无法获取引擎，返回 None
+    return None
 
-# 简单的列更新，确保新增字段存在
-with engine.connect() as conn:
-    result = conn.execute(text("PRAGMA table_info(resumes)"))
-    columns = {row[1] for row in result}
-    if 'phone' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
-    if 'email' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
-    if 'applied_position' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
-    if 'earliest_work_year' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
-    if 'age_from_resume' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
-    if 'duplicate_status' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
-    if 'duplicate_similarity' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
-    if 'duplicate_resume_id' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
-    if 'match_score' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
-    if 'match_level' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
-    if 'match_position' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
-    if 'created_by' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
-    if 'updated_by' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
-    if 'created_at' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
-    if 'updated_at' not in columns:
-        conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
-    conn.commit()
+def _get_table_columns(engine, table_name, db_type, inspector=None):
+    """获取表的列名列表（支持 SQLite）"""
+    if db_type == 'sqlite':
+        with engine.connect() as conn:
+            result = conn.execute(text(f"PRAGMA table_info({table_name})"))
+            return {row[1] for row in result}
+    else:
+        return set()
+
+def init_database():
+    """初始化数据库，创建所有表，并创建默认管理员用户"""
+    try:
+        from database_manager import get_database_manager
+        manager = get_database_manager()
+        manager.initialize()
+        
+        engine = _get_engine()
+        if not engine:
+            print("⚠️  无法获取数据库引擎，跳过表创建")
+            return
+        
+        db_type = manager.db_type
+        
+        # 对于 D1 数据库，需要特殊处理
+        if db_type == 'd1':
+            print(f"正在为 D1 数据库创建表...")
+            _init_d1_tables(manager.d1_client)
+            print("✓ D1 数据库表创建完成")
+        else:
+            # SQLite 或其他数据库，使用标准的 create_all
+            print(f"正在使用 SQLAlchemy create_all 创建表...")
+            Base.metadata.create_all(engine)
+            print("✓ 数据库表已创建（SQLAlchemy）")
+        
+        # 确保默认管理员用户存在
+        from database_manager import get_db_session
+        session = get_db_session()
+        if session:
+            try:
+                admin_user = session.query(User).filter_by(username='admin').first()
+                if not admin_user:
+                    # 如果没有admin用户，创建默认管理员账户
+                    admin = User(
+                        username='admin',
+                        role='admin',
+                        real_name='系统管理员',
+                        is_active=1
+                    )
+                    admin.set_password('admin123')  # 默认密码，建议首次登录后修改
+                    session.add(admin)
+                    session.commit()
+                    print("✓ 默认管理员账户已创建（用户名: admin, 密码: admin123）")
+                else:
+                    # 如果用户存在但密码哈希为空，重置密码并确保账户激活
+                    if not admin_user.password_hash:
+                        admin_user.set_password('admin123')
+                        admin_user.is_active = 1  # 确保账户是激活状态
+                        admin_user.role = 'admin'  # 确保角色正确
+                        session.commit()
+                        print("✓ 默认管理员账户密码已重置（用户名: admin, 密码: admin123）")
+                    # 如果用户存在但 is_active 不是 1，也确保激活
+                    elif admin_user.is_active != 1:
+                        admin_user.is_active = 1
+                        admin_user.role = 'admin'  # 确保角色正确
+                        session.commit()
+                        print("✓ 默认管理员账户已激活（用户名: admin）")
+            except Exception as e:
+                print(f"⚠️  创建默认管理员账户失败: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                if session:
+                    try:
+                        session.close()
+                    except:
+                        pass
+    except Exception as e:
+        print(f"✗ 创建数据库表失败: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+def _init_d1_tables(d1_client):
+    """为 D1 数据库创建表（通过 HTTP API）"""
+    from sqlalchemy.schema import CreateTable
+    from sqlalchemy.dialects import sqlite
     
-    # 为 positions 表添加字段
-    result = conn.execute(text("PRAGMA table_info(positions)"))
-    columns = {row[1] for row in result}
-    if 'created_by' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN created_by VARCHAR(100)"))
-    if 'updated_by' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN updated_by VARCHAR(100)"))
-    if 'created_at' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN created_at DATETIME"))
-    if 'updated_at' not in columns:
-        conn.execute(text("ALTER TABLE positions ADD COLUMN updated_at DATETIME"))
-    conn.commit()
+    # 获取所有表定义
+    tables = [
+        Resume.__table__,
+        Position.__table__,
+        Interview.__table__,
+        User.__table__,
+        GlobalAIConfig.__table__
+    ]
     
-    # 为 interviews 表添加字段
-    result = conn.execute(text("PRAGMA table_info(interviews)"))
-    columns = {row[1] for row in result}
-    if 'created_by' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN created_by VARCHAR(100)"))
-    if 'updated_by' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_by VARCHAR(100)"))
-    if 'created_at' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN created_at DATETIME"))
-    if 'updated_at' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_at DATETIME"))
-    if 'analyzed_by' not in columns:
-        conn.execute(text("ALTER TABLE interviews ADD COLUMN analyzed_by VARCHAR(100)"))
-    conn.commit()
-Session = sessionmaker(bind=engine)
+    for table in tables:
+        try:
+            # 检查表是否已存在
+            table_exists = False
+            try:
+                d1_client.execute(f"SELECT 1 FROM {table.name} LIMIT 1")
+                table_exists = True
+                print(f"  ✓ 表 {table.name} 已存在，跳过创建")
+            except Exception as check_err:
+                # 表不存在，需要创建
+                table_exists = False
+                error_msg = str(check_err).lower()
+                # 如果错误信息中包含"no such table"，说明表确实不存在
+                if "no such table" not in error_msg and "does not exist" not in error_msg:
+                    # 其他错误，打印出来但不影响创建流程
+                    print(f"  ℹ️  检查表 {table.name} 时出现错误（将尝试创建）: {check_err}")
+            
+            if table_exists:
+                continue
+            
+            # 生成 CREATE TABLE SQL
+            # 使用 SQLAlchemy 的 CreateTable 来生成 SQL
+            # D1 使用 SQLite 兼容语法，JSON 类型需要转换为 TEXT
+            create_sql = str(CreateTable(table).compile(dialect=sqlite.dialect()))
+            
+            # D1/SQLite 不支持 JSON 类型，需要将 JSON 替换为 TEXT
+            # 但 SQLAlchemy 的 SQLite dialect 应该已经处理了，为了保险起见，我们显式替换
+            create_sql = create_sql.replace(' JSON', ' TEXT').replace(' JSON,', ' TEXT,')
+            
+            print(f"  🔧 创建表 {table.name}...")
+            print(f"      SQL: {create_sql[:200]}...")  # 打印前200个字符用于调试
+            
+            # 执行 CREATE TABLE
+            d1_client.execute(create_sql)
+            print(f"  ✓ 表 {table.name} 创建成功")
+            
+            # 验证表是否创建成功
+            try:
+                d1_client.execute(f"SELECT 1 FROM {table.name} LIMIT 1")
+                print(f"  ✓ 表 {table.name} 验证成功")
+            except Exception as verify_err:
+                print(f"  ⚠️  表 {table.name} 创建后验证失败: {verify_err}")
+                
+        except Exception as e:
+            # 如果表已存在或其他错误，继续处理下一个表
+            error_str = str(e).lower()
+            if "already exists" in error_str or "duplicate" in error_str or "table.*already exists" in error_str:
+                print(f"  ✓ 表 {table.name} 已存在，跳过创建")
+            else:
+                print(f"  ✗ 创建表 {table.name} 时出错: {e}")
+                import traceback
+                traceback.print_exc()
+                # 不抛出异常，继续处理下一个表
+
+def migrate_database():
+    """迁移数据库，添加新字段（仅在表存在时）- 支持 SQLite"""
+    try:
+        from database_manager import get_database_manager
+        manager = get_database_manager()
+        manager.initialize()
+        
+        engine = _get_engine()
+        if not engine:
+            print("⚠️  数据库迁移仅支持 SQLite，跳过迁移")
+            return
+        
+        db_type = manager.db_type
+        
+        if db_type != 'sqlite':
+            print(f"⚠️  数据库类型 {db_type} 不支持迁移，跳过")
+            return
+        
+        inspector = None
+        
+        with engine.connect() as conn:
+            # 迁移 resumes 表
+            try:
+                conn.execute(text("SELECT 1 FROM resumes LIMIT 1"))
+                columns = _get_table_columns(engine, 'resumes', db_type, inspector)
+                
+                if 'phone' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN phone VARCHAR(50)"))
+                if 'email' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN email VARCHAR(100)"))
+                if 'applied_position' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN applied_position VARCHAR(200)"))
+                if 'earliest_work_year' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN earliest_work_year INTEGER"))
+                if 'age_from_resume' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN age_from_resume INTEGER"))
+                if 'duplicate_status' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_status VARCHAR(50)"))
+                if 'duplicate_similarity' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_similarity FLOAT"))
+                if 'duplicate_resume_id' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN duplicate_resume_id INTEGER"))
+                if 'match_score' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_score INTEGER"))
+                if 'match_level' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_level VARCHAR(50)"))
+                if 'match_position' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_position VARCHAR(200)"))
+                if 'match_analysis_detail' not in columns:
+                    # 对于 SQLite，JSON 类型实际上存储为 TEXT
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN match_analysis_detail TEXT"))
+                if 'created_by' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN created_by VARCHAR(100)"))
+                if 'updated_by' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_by VARCHAR(100)"))
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN created_at DATETIME"))
+                if 'updated_at' not in columns:
+                    conn.execute(text("ALTER TABLE resumes ADD COLUMN updated_at DATETIME"))
+                conn.commit()
+            except Exception:
+                # 表不存在，稍后会在初始化时创建
+                pass
+            
+            # 为 positions 表添加字段（先检查表是否存在）
+            try:
+                # 检查表是否存在
+                conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
+                # 表存在，检查并添加字段
+                columns = _get_table_columns(engine, 'positions', db_type, inspector)
+                if 'created_by' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN created_by VARCHAR(100)"))
+                if 'updated_by' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN updated_by VARCHAR(100)"))
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN created_at DATETIME"))
+                if 'updated_at' not in columns:
+                    conn.execute(text("ALTER TABLE positions ADD COLUMN updated_at DATETIME"))
+                conn.commit()
+            except Exception:
+                # 表不存在，稍后会在初始化时创建
+                pass
+            
+            # 为 interviews 表添加字段（先检查表是否存在）
+            try:
+                # 检查表是否存在
+                conn.execute(text("SELECT 1 FROM interviews LIMIT 1"))
+                # 表存在，检查并添加字段
+                columns = _get_table_columns(engine, 'interviews', db_type, inspector)
+                if 'created_by' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN created_by VARCHAR(100)"))
+                if 'updated_by' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_by VARCHAR(100)"))
+                if 'created_at' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN created_at DATETIME"))
+                if 'updated_at' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN updated_at DATETIME"))
+                if 'analyzed_by' not in columns:
+                    conn.execute(text("ALTER TABLE interviews ADD COLUMN analyzed_by VARCHAR(100)"))
+                conn.commit()
+            except Exception:
+                # 表不存在，稍后会在初始化时创建
+                pass
+    except Exception as e:
+        print(f"警告: 数据库迁移时出错（可能表不存在）: {e}")
+        # 不抛出异常，让应用继续启动
+
+# Session 不再直接创建，而是从 database_manager 获取
 
 class Position(Base):
     """岗位目录数据模型"""
@@ -291,6 +495,7 @@ class Interview(Base):
     registration_form_contact = Column(String(50))  # 联系方式（可修改）
     registration_form_email = Column(String(100))  # 邮箱（可修改）
     registration_form_birth_date = Column(String(50))  # 出生日期（可修改）
+    registration_form_gender = Column(String(10))  # 性别（男/女）
     registration_form_ethnicity = Column(String(50))  # 民族
     registration_form_marital_status = Column(String(50))  # 婚姻状况（未婚、已婚、离异）
     registration_form_has_children = Column(String(10))  # 有无子女（有、无）
@@ -376,6 +581,7 @@ class Interview(Base):
             'registration_form_contact': self.registration_form_contact,
             'registration_form_email': self.registration_form_email,
             'registration_form_birth_date': self.registration_form_birth_date,
+            'registration_form_gender': self.registration_form_gender,
             'registration_form_ethnicity': self.registration_form_ethnicity,
             'registration_form_marital_status': self.registration_form_marital_status,
             'registration_form_has_children': self.registration_form_has_children,
@@ -403,6 +609,51 @@ class Interview(Base):
             'registration_form_token': self.registration_form_token,
         }
 
+class GlobalAIConfig(Base):
+    """全局AI配置数据模型（管理员设置）"""
+    __tablename__ = 'global_ai_config'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 配置项（单例模式，只保留一条记录）
+    ai_enabled = Column(Integer, default=1)  # 是否启用AI：1 启用，0 禁用
+    ai_api_key = Column(Text)  # API密钥（加密存储）
+    ai_api_base = Column(String(500))  # API基础URL
+    ai_model = Column(String(100), default='gpt-3.5-turbo')  # AI模型
+    
+    # 操作记录
+    created_by = Column(String(100))  # 创建者（管理员用户名）
+    updated_by = Column(String(100))  # 最后更新者
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    def to_dict(self, include_key=False):
+        """
+        转换为字典
+        
+        Args:
+            include_key: 是否包含API密钥（解密后）
+        """
+        result = {
+            'id': self.id,
+            'ai_enabled': bool(self.ai_enabled),
+            'ai_api_base': self.ai_api_base,
+            'ai_model': self.ai_model,
+            'created_by': self.created_by,
+            'updated_by': self.updated_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+        }
+        
+        if include_key:
+            # 解密API密钥
+            from utils.encryption import decrypt_value
+            result['ai_api_key'] = decrypt_value(self.ai_api_key) if self.ai_api_key else ''
+        else:
+            # 不返回密钥，只返回是否已设置
+            result['ai_api_key_set'] = bool(self.ai_api_key)
+        
+        return result
+
 class User(Base):
     """用户数据模型"""
     __tablename__ = 'users'
@@ -424,6 +675,8 @@ class User(Base):
     
     def check_password(self, password):
         """验证密码"""
+        if not self.password_hash:
+            return False
         return check_password_hash(self.password_hash, password)
     
     def to_dict(self):
@@ -451,44 +704,13 @@ class User(Base):
             # 员工权限
             return permission == 'view_personal'
 
-# 确保表存在
-Base.metadata.create_all(engine)
-
-# 检查users表是否存在，如果不存在则创建；并确保默认管理员账户存在
-with engine.connect() as conn:
-    try:
-        conn.execute(text("SELECT 1 FROM users LIMIT 1"))
-        # 表已存在，检查是否有admin用户
-        session = Session()
-        admin_user = session.query(User).filter_by(username='admin').first()
-        if not admin_user:
-            # 如果没有admin用户，创建默认管理员账户
-            admin = User(
-                username='admin',
-                role='admin',
-                real_name='系统管理员',
-                is_active=1
-            )
-            admin.set_password('admin123')  # 默认密码，建议首次登录后修改
-            session.add(admin)
-            session.commit()
-        session.close()
-    except Exception:
-        # 表不存在，创建表并创建默认管理员账户
-        User.__table__.create(engine)
-        session = Session()
-        admin = User(
-            username='admin',
-            role='admin',
-            real_name='系统管理员',
-            is_active=1
-        )
-        admin.set_password('admin123')  # 默认密码，建议首次登录后修改
-        session.add(admin)
-        session.commit()
-        session.close()
+# 表创建和默认管理员用户创建已移至 init_database() 函数中，延迟执行
+# 以下代码在 app.py 启动时通过 ensure_database_initialized() 调用
 
 # 检查positions/interviews表是否存在，如果不存在则创建；并做简单列补全
+# 注意：这段代码已移至 init_database() 和 migrate_database() 函数中，延迟执行
+# 以下代码保留作为备用，但不会在导入时执行
+"""
 with engine.connect() as conn:
     try:
         conn.execute(text("SELECT 1 FROM positions LIMIT 1"))
@@ -578,6 +800,8 @@ with engine.connect() as conn:
         add_cols.append("ADD COLUMN registration_form_email VARCHAR(100)")
     if 'registration_form_birth_date' not in i_columns:
         add_cols.append("ADD COLUMN registration_form_birth_date VARCHAR(50)")
+    if 'registration_form_gender' not in i_columns:
+        add_cols.append("ADD COLUMN registration_form_gender VARCHAR(10)")
     if 'registration_form_ethnicity' not in i_columns:
         add_cols.append("ADD COLUMN registration_form_ethnicity VARCHAR(50)")
     if 'registration_form_marital_status' not in i_columns:
@@ -633,8 +857,13 @@ with engine.connect() as conn:
         conn.execute(text(f"ALTER TABLE interviews {clause}"))
 
     conn.commit()
+"""
+
+# 延迟初始化：不在导入时执行，而是在应用启动时调用
+# 这些函数会在 app.py 的 ensure_database_initialized() 中调用
 
 def get_db_session():
-    """获取数据库会话"""
-    return Session()
+    """获取数据库会话（从 database_manager）"""
+    from database_manager import get_db_session as get_session_from_manager
+    return get_session_from_manager()
 

@@ -3,6 +3,7 @@
 """
 from flask import Flask, render_template, request, jsonify, send_file, session, redirect, url_for
 import io
+from io import BytesIO
 import json
 from werkzeug.utils import secure_filename
 import os
@@ -10,13 +11,98 @@ import secrets
 from datetime import datetime
 from functools import wraps
 from config import Config
-from models import get_db_session, Resume, Position, Interview, User
+import ssl
+import certifi
+
+# ============================================================================
+# 启动时初始化
+# ============================================================================
+
+def initialize_app():
+    """应用启动时的初始化操作"""
+    print("=" * 60)
+    print("应用初始化中...")
+    print("=" * 60)
+    
+    # 1. SSL上下文设置（解决证书验证问题）
+    try:
+        # 设置默认SSL上下文
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        ssl._create_default_https_context = ssl._create_unverified_context
+        print("✓ SSL上下文已设置")
+    except Exception as e:
+        print(f"⚠ SSL上下文设置失败: {e}")
+    
+    # 2. NLTK数据下载（如果需要）
+    try:
+        import nltk
+        nltk_data_path = os.path.join(os.path.expanduser('~'), 'nltk_data')
+        os.makedirs(nltk_data_path, exist_ok=True)
+        
+        # 设置NLTK数据路径
+        nltk.data.path.append(nltk_data_path)
+        
+        # 检查必要的数据（如果不存在，不阻塞启动）
+        try:
+            nltk.data.find('tokenizers/punkt')
+            print("✓ NLTK punkt数据已存在")
+        except LookupError:
+            print("⚠ NLTK punkt数据不存在（将在需要时下载，不阻塞启动）")
+        
+        try:
+            nltk.data.find('tokenizers/punkt_tab')
+            print("✓ NLTK punkt_tab数据已存在")
+        except LookupError:
+            print("⚠ NLTK punkt_tab数据不存在（将在需要时下载，不阻塞启动）")
+    except ImportError:
+        print("⚠ NLTK未安装，跳过NLTK数据下载")
+    except Exception as e:
+        print(f"⚠ NLTK数据下载失败: {e}")
+    
+    # 3. 检查PDF解析库
+    try:
+        import fitz
+        print("✓ PyMuPDF (fitz) 可用")
+    except ImportError:
+        print("⚠ PyMuPDF (fitz) 未安装")
+    
+    try:
+        import pdfplumber
+        print("✓ pdfplumber 可用")
+    except ImportError:
+        print("⚠ pdfplumber 未安装")
+    
+    try:
+        import pytesseract
+        print("✓ pytesseract (OCR) 可用")
+    except ImportError:
+        print("⚠ pytesseract (OCR) 未安装")
+    
+        print("=" * 60)
+        print("应用初始化完成")
+        print("=" * 60)
+    except Exception as e:
+        # 初始化失败不应该阻止应用启动
+        print(f"⚠ 初始化过程中出现错误: {e}")
+        print("应用将继续启动...")
+
+# 初始化将在应用启动时执行（见文件末尾）
+from models import get_db_session, Resume, Position, Interview, User, GlobalAIConfig
+from database_manager import get_database_manager
 from utils.file_parser import extract_text
 from utils.info_extractor import InfoExtractor
 from utils.ai_extractor import AIExtractor
 from utils.duplicate_checker import check_duplicate
 from utils.export import export_resumes_to_excel, export_interviews_to_excel
 from utils.export_pdf import export_resume_analysis_to_pdf, export_interview_round_analysis_to_pdf
+
+# R2存储适配器（Railway环境）
+try:
+    from r2_s3_storage import R2StorageAdapter
+    R2_STORAGE_AVAILABLE = True
+except ImportError:
+    R2_STORAGE_AVAILABLE = False
+    print("⚠️  R2存储适配器未找到，将使用本地文件系统")
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from reportlab.lib.pagesizes import A4
@@ -25,16 +111,13 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Table, TableStyle
-from openpyxl import Workbook
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Table, TableStyle
 import threading
 from sqlalchemy import and_
 from sqlalchemy.orm import make_transient
 import traceback
 import sys
+import re
+import re
 
 
 center_wrap_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -68,6 +151,51 @@ app.config.from_object(Config)
 # 注册中文字体
 pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
 
+# 数据库初始化状态
+db_initialized = False
+
+def ensure_database_initialized():
+    """确保数据库已初始化（延迟初始化）"""
+    global db_initialized
+    if db_initialized:
+        return True
+    
+    try:
+        from models import init_database, migrate_database
+        init_database()
+        migrate_database()
+        db_initialized = True
+        return True
+    except Exception as e:
+        print(f"警告: 数据库初始化失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# 在应用启动时初始化数据库（立即执行，不等待第一个请求）
+try:
+    ensure_database_initialized()
+    print("✓ 数据库初始化完成")
+except Exception as e:
+    print(f"⚠️  数据库初始化警告: {e}")
+    print("应用将继续启动，数据库将在首次使用时初始化")
+
+# 初始化R2存储适配器（如果环境变量已设置）
+r2_storage = None
+if R2_STORAGE_AVAILABLE and os.environ.get('CF_R2_ACCOUNT_ID'):
+    try:
+        r2_storage = R2StorageAdapter()
+        print("✓ R2存储适配器初始化成功")
+    except Exception as e:
+        print(f"⚠️  R2存储适配器初始化失败: {e}")
+        print("将使用本地文件系统存储")
+        r2_storage = None
+else:
+    if not R2_STORAGE_AVAILABLE:
+        print("ℹ️  R2存储不可用（缺少依赖），使用本地文件系统")
+    elif not os.environ.get('CF_R2_ACCOUNT_ID'):
+        print("ℹ️  R2环境变量未设置，使用本地文件系统")
+
 # OCR功能已移除，所有文档通过AI API处理
 
 def allowed_file(filename):
@@ -75,6 +203,1150 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+
+# ============================================================================
+# AI配置管理辅助函数
+# ============================================================================
+
+def get_effective_ai_config():
+    """
+    获取当前有效的AI配置（仅从环境变量读取，Railway平台配置）
+    
+    Returns:
+        dict: AI配置字典，包含：
+            - ai_enabled: bool
+            - ai_api_key: str
+            - ai_api_base: str
+            - ai_model: str
+    """
+    # 直接使用环境变量配置（Railway平台配置）
+    config = {
+        'ai_enabled': Config.AI_ENABLED,
+        'ai_api_key': Config.AI_API_KEY,
+        'ai_api_base': Config.AI_API_BASE,
+        'ai_model': Config.AI_MODEL
+    }
+    
+    return config
+
+def create_ai_extractor(ai_config=None):
+    """
+    创建AI提取器实例
+    
+    Args:
+        ai_config: 可选的AI配置字典，如果为None则使用get_effective_ai_config()
+    
+    Returns:
+        AIExtractor实例或None（如果AI未启用）
+    """
+    if ai_config is None:
+        ai_config = get_effective_ai_config()
+    
+    # 检查AI是否启用
+    if not ai_config.get('ai_enabled', True):
+        return None
+    
+    # 检查API密钥
+    api_key = ai_config.get('ai_api_key', '')
+    if not api_key:
+        return None
+    
+    try:
+        return AIExtractor(
+            api_key=api_key,
+            api_base=ai_config.get('ai_api_base', ''),
+            model=ai_config.get('ai_model', 'deepseek-chat')
+        )
+    except Exception as e:
+        print(f"创建AI提取器失败: {e}")
+        return None
+
+
+# ============================================================================
+# 智能PDF解析功能
+# ============================================================================
+
+def extract_with_pymupdf(file_path):
+    """使用PyMuPDF提取PDF文本"""
+    try:
+        from utils.file_parser import FITZ_AVAILABLE
+        if not FITZ_AVAILABLE:
+            return ""
+        
+        import fitz
+        pdf_doc = fitz.open(file_path)
+        page_texts = []
+        
+        for page_num in range(len(pdf_doc)):
+            page = pdf_doc[page_num]
+            page_text = page.get_text()
+            if page_text:
+                page_texts.append(page_text.strip())
+        
+        pdf_doc.close()
+        return "\n\n".join(page_texts)
+    except Exception as e:
+        print(f"PyMuPDF提取失败: {e}")
+        return ""
+
+def extract_with_pdfplumber(file_path):
+    """使用pdfplumber提取PDF文本（保持布局）"""
+    try:
+        from utils.file_parser import PDFPLUMBER_AVAILABLE
+        if not PDFPLUMBER_AVAILABLE:
+            return ""
+        
+        import pdfplumber
+        page_texts = []
+        
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    page_texts.append(page_text.strip())
+        
+        return "\n\n".join(page_texts)
+    except Exception as e:
+        print(f"pdfplumber提取失败: {e}")
+        return ""
+
+def extract_with_pdfminer(file_path):
+    """使用pdfminer提取PDF文本（中文优化）"""
+    try:
+        from pdfminer.high_level import extract_text as pdfminer_extract
+        text = pdfminer_extract(file_path)
+        return text.strip() if text else ""
+    except ImportError:
+        print("pdfminer.six 未安装，跳过pdfminer提取")
+        return ""
+    except Exception as e:
+        print(f"pdfminer提取失败: {e}")
+        return ""
+
+def select_best_result(results):
+    """
+    从多个提取结果中选择最佳结果
+    
+    Args:
+        results: [(method_name, text), ...] 格式的列表
+    
+    Returns:
+        最佳文本内容
+    """
+    if not results:
+        return ""
+    
+    best_text = ""
+    best_score = 0
+    
+    for method_name, text in results:
+        if not text or not text.strip():
+            continue
+        
+        # 计算评分：文本长度 + 中文字符数 * 2
+        text_length = len(text)
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+        unique_chars = len(set(text))
+        
+        # 判断是否为有效文本
+        if text_length < 50:
+            continue
+        
+        chinese_ratio = chinese_chars / text_length if text_length > 0 else 0
+        
+        # 评分标准：中文字符数、文本长度、唯一字符数
+        score = text_length + chinese_chars * 2 + unique_chars
+        
+        # 如果中文字符占比太低，降低评分
+        if chinese_ratio < 0.05:
+            score *= 0.5
+        
+        if score > best_score:
+            best_score = score
+            best_text = text
+    
+    return best_text if best_text else (results[0][1] if results else "")
+
+def should_merge(prev_line, current_line):
+    """
+    判断两行是否应该合并
+    
+    Args:
+        prev_line: 前一行文本
+        current_line: 当前行文本
+    
+    Returns:
+        bool: 是否应该合并
+    """
+    if not prev_line or not current_line:
+        return False
+    
+    # 如果前一行以中文标点结束，不合并
+    if re.search(r'[。！？；：，、]$', prev_line):
+        return False
+    
+    # 如果前一行以英文标点结束，不合并
+    if re.search(r'[.!?;:,\-]$', prev_line):
+        return False
+    
+    # 如果当前行以标点符号开头，不合并
+    if re.match(r'^[。！？；：，、.!?;:]', current_line):
+        return False
+    
+    # 如果前一行以数字或字母结尾，当前行以数字或字母开头，可能需要合并
+    if re.search(r'[0-9a-zA-Z]$', prev_line) and re.match(r'^[0-9a-zA-Z]', current_line):
+        return True
+    
+    # 如果前一行以中文字符结尾，当前行以中文字符开头，可能需要合并
+    if re.search(r'[\u4e00-\u9fa5]$', prev_line) and re.match(r'^[\u4e00-\u9fa5]', current_line):
+        # 检查前一行长度，如果太短可能是被错误分割的
+        if len(prev_line) < 20:
+            return True
+    
+    # 如果前一行以空格或短横线结尾，可能是被错误分割的
+    if prev_line.endswith(' ') or prev_line.endswith('-'):
+        return True
+    
+    return False
+
+def is_complete_sentence(text):
+    """
+    判断文本是否是完整的句子
+    
+    Args:
+        text: 文本内容
+    
+    Returns:
+        bool: 是否是完整句子
+    """
+    if not text:
+        return False
+    
+    # 以中文标点结束
+    if re.search(r'[。！？；]$', text):
+        return True
+    
+    # 以英文标点结束
+    if re.search(r'[.!?;]$', text):
+        return True
+    
+    # 如果文本长度超过50且包含多个中文字符，可能是完整段落
+    if len(text) > 50 and len(re.findall(r'[\u4e00-\u9fa5]', text)) > 10:
+        return True
+    
+    return False
+
+def repair_line_breaks(text):
+    """
+    修复PDF提取的行混乱问题
+    合并被错误分割的中文行
+    
+    Args:
+        text: 原始文本
+    
+    Returns:
+        修复后的文本
+    """
+    if not text:
+        return text
+    
+    lines = text.split('\n')
+    repaired = []
+    buffer = ""
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            # 空行：如果buffer有内容，先保存buffer
+            if buffer:
+                repaired.append(buffer)
+                buffer = ""
+            continue
+        
+        if buffer:
+            # 判断是否需要合并
+            if should_merge(buffer, line):
+                buffer += line
+            else:
+                # 不合并，保存buffer，开始新行
+                repaired.append(buffer)
+                buffer = line
+        else:
+            buffer = line
+        
+        # 检查buffer是否完整（以标点结束）
+        if is_complete_sentence(buffer):
+            repaired.append(buffer)
+            buffer = ""
+    
+    # 处理剩余的buffer
+    if buffer:
+        repaired.append(buffer)
+    
+    return '\n'.join(repaired)
+
+def extract_pdf_intelligent(file_path):
+    """
+    智能PDF提取：尝试多种方法，选择最佳结果，并修复行混乱问题
+    
+    Args:
+        file_path: PDF文件路径
+    
+    Returns:
+        提取并修复后的文本
+    """
+    results = []
+    
+    # 方法1：PyMuPDF（快速）
+    text1 = extract_with_pymupdf(file_path)
+    if text1:
+        results.append(("pymupdf", text1))
+    
+    # 方法2：pdfplumber（布局保持）
+    text2 = extract_with_pdfplumber(file_path)
+    if text2:
+        results.append(("pdfplumber", text2))
+    
+    # 方法3：pdfminer（中文优化）
+    text3 = extract_with_pdfminer(file_path)
+    if text3:
+        results.append(("pdfminer", text3))
+    
+    # 选择字符最多且中文比例合理的结果
+    best_text = select_best_result(results)
+    
+    if not best_text:
+        return ""
+    
+    # 修复行混乱问题
+    repaired_text = repair_line_breaks(best_text)
+    
+    return repaired_text
+
+
+@app.route('/')
+def index():
+    """
+    首页 - 智能重定向
+    - 未登录用户：重定向到登录页面
+    - 已登录用户：重定向到应用主页面
+    """
+    # 检查是否已登录
+    if 'user_id' not in session:
+        return redirect(url_for('login_page'))
+    else:
+        return redirect(url_for('app_index'))
+
+@app.route('/system-status')
+def system_status():
+    """系统状态页面 - 展示架构和数据库状态"""
+    try:
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        test_result = db_manager.test_connection()
+        
+        # 检查环境变量
+        env_info = {
+            'PORT': os.environ.get('PORT', '未设置'),
+            'HOST': os.environ.get('HOST', '未设置'),
+            'CF_ACCOUNT_ID': '已设置' if os.environ.get('CF_ACCOUNT_ID') else '未设置',
+            'CF_D1_DATABASE_ID': '已设置' if os.environ.get('CF_D1_DATABASE_ID') else '未设置',
+            'CF_API_TOKEN': '已设置' if os.environ.get('CF_API_TOKEN') else '未设置',
+            'DATABASE_PATH': os.environ.get('DATABASE_PATH', '使用默认值'),
+        }
+        
+        return render_template('status.html', 
+                             db_status=db_status,
+                             test_result=test_result,
+                             env_info=env_info)
+    except Exception as e:
+        return f"""
+        <html>
+        <head><title>系统状态</title></head>
+        <body>
+            <h1>系统状态</h1>
+            <p>错误: {str(e)}</p>
+            <p><a href="/health">健康检查</a></p>
+            <p><a href="/api/status">API 状态</a></p>
+        </body>
+        </html>
+        """, 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """健康检查端点，供 Railway 等平台监控"""
+    try:
+        # 确保数据库已初始化
+        ensure_database_initialized()
+        
+        # 使用 DatabaseManager 测试连接
+        db_manager = get_database_manager()
+        test_result = db_manager.test_connection()
+        
+        if test_result['success']:
+            return jsonify({
+                'status': 'healthy',
+                'database': 'connected',
+                'db_type': test_result.get('db_type', 'unknown'),
+                'timestamp': datetime.now().isoformat()
+            }), 200
+        else:
+            return jsonify({
+                'status': 'unhealthy',
+                'database': 'disconnected',
+                'error': test_result.get('error', 'Unknown error'),
+                'timestamp': datetime.now().isoformat()
+            }), 503
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database': 'disconnected',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 503
+
+# 权限装饰器（需要在路由之前定义）
+def login_required(f):
+    """要求登录的装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    """要求管理员权限的装饰器"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
+        db = get_db_session()
+        try:
+            user = db.query(User).filter_by(id=session['user_id']).first()
+            if not user or user.role != 'admin':
+                return jsonify({'success': False, 'message': '需要管理员权限'}), 403
+        finally:
+            db.close()
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/api/database/init', methods=['POST'])
+@admin_required
+def init_database_api():
+    """手动初始化数据库（管理员权限）"""
+    try:
+        success = ensure_database_initialized()
+        if success:
+            return jsonify({
+                'success': True,
+                'message': '数据库初始化成功'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': '数据库初始化失败，请查看日志'
+            }), 500
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'数据库初始化失败: {str(e)}'
+        }), 500
+
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    """API 状态信息"""
+    try:
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        test_result = db_manager.test_connection()
+        
+        # 环境信息
+        env_info = {
+            'PORT': os.environ.get('PORT', '未设置'),
+            'HOST': os.environ.get('HOST', '未设置'),
+            'CF_ACCOUNT_ID': '已设置' if os.environ.get('CF_ACCOUNT_ID') else '未设置',
+            'CF_D1_DATABASE_ID': '已设置' if os.environ.get('CF_D1_DATABASE_ID') else '未设置',
+            'CF_API_TOKEN': '已设置' if os.environ.get('CF_API_TOKEN') else '未设置',
+            'CF_R2_ACCOUNT_ID': '已设置' if os.environ.get('CF_R2_ACCOUNT_ID') else '未设置',
+            'CF_R2_ACCESS_KEY_ID': '已设置' if os.environ.get('CF_R2_ACCESS_KEY_ID') else '未设置',
+            'CF_R2_SECRET_ACCESS_KEY': '已设置' if os.environ.get('CF_R2_SECRET_ACCESS_KEY') else '未设置',
+            'DATABASE_PATH': os.environ.get('DATABASE_PATH', '使用默认值'),
+        }
+        
+        return jsonify({
+            'success': True,
+            'app': {
+                'name': '智能简历数据库系统',
+                'version': '1.0.0',
+                'status': 'running'
+            },
+            'database': {
+                'status': db_status,
+                'test': test_result
+            },
+            'environment': env_info,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+# ============================================================================
+# AI配置管理API - 管理员全局配置
+# ============================================================================
+
+@app.route('/api/admin/ai-config', methods=['GET'])
+@admin_required
+def get_global_ai_config():
+    """获取全局AI配置（管理员权限）"""
+    try:
+        db = get_db_session()
+        try:
+            global_config = db.query(GlobalAIConfig).first()
+            if global_config:
+                return jsonify({
+                    'success': True,
+                    'data': global_config.to_dict(include_key=True)
+                })
+            else:
+                # 返回默认配置
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'id': None,
+                        'ai_enabled': Config.AI_ENABLED,
+                        'ai_api_key': '',
+                        'ai_api_key_set': False,
+                        'ai_api_base': Config.AI_API_BASE,
+                        'ai_model': Config.AI_MODEL,
+                        'created_by': None,
+                        'updated_by': None,
+                        'created_at': None,
+                        'updated_at': None
+                    }
+                })
+        finally:
+            db.close()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/admin/ai-config', methods=['POST'])
+@admin_required
+def set_global_ai_config():
+    """设置全局AI配置（管理员权限）"""
+    try:
+        data = request.json or {}
+        
+        # 验证必填字段
+        ai_enabled = data.get('ai_enabled', True)
+        ai_model = data.get('ai_model', 'deepseek-chat')
+        
+        # 获取当前用户
+        current_user = get_current_user()
+        username = current_user.username if current_user else 'admin'
+        
+        db = get_db_session()
+        try:
+            # 查找或创建全局配置（单例模式）
+            global_config = db.query(GlobalAIConfig).first()
+            
+            if not global_config:
+                global_config = GlobalAIConfig()
+                global_config.created_by = username
+                db.add(global_config)
+            
+            # 更新配置
+            global_config.ai_enabled = 1 if ai_enabled else 0
+            global_config.ai_model = ai_model
+            global_config.ai_api_base = data.get('ai_api_base', '')
+            global_config.updated_by = username
+            
+            # 处理API密钥（加密存储）
+            if 'ai_api_key' in data:
+                api_key = data.get('ai_api_key', '').strip()
+                if api_key:
+                    from utils.encryption import encrypt_value
+                    global_config.ai_api_key = encrypt_value(api_key)
+                elif api_key == '':
+                    # 如果传入空字符串，清除密钥
+                    global_config.ai_api_key = None
+            
+            db.commit()
+            
+            return jsonify({
+                'success': True,
+                'message': '全局AI配置已保存',
+                'data': global_config.to_dict(include_key=False)
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'保存配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/admin/ai-config/test', methods=['POST'])
+@admin_required
+def test_global_ai_config():
+    """测试全局AI配置连接（管理员权限）"""
+    try:
+        data = request.json or {}
+        
+        # 构建测试配置
+        test_config = {
+            'ai_enabled': data.get('ai_enabled', True),
+            'ai_api_key': data.get('ai_api_key', ''),
+            'ai_api_base': data.get('ai_api_base', ''),
+            'ai_model': data.get('ai_model', 'gpt-3.5-turbo')
+        }
+        
+        # 创建AI提取器并测试
+        ai_extractor = create_ai_extractor(test_config)
+        if not ai_extractor:
+            return jsonify({
+                'success': False,
+                'message': 'AI未启用或API密钥为空'
+            }), 400
+        
+        # 执行简单测试
+        try:
+            test_result = ai_extractor.extract_info("测试文本：姓名张三，年龄25岁")
+            if test_result:
+                return jsonify({
+                    'success': True,
+                    'message': 'AI配置测试成功',
+                    'test_result': test_result
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI配置测试失败：未返回结果'
+                }), 400
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'AI配置测试失败: {str(e)}'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 500
+
+# ============================================================================
+# AI配置管理API - 用户个人配置
+# ============================================================================
+
+@app.route('/api/user/ai-config', methods=['GET'])
+@login_required
+def get_user_ai_config():
+    """获取用户个人AI配置（登录用户）"""
+    try:
+        user_config = session.get('ai_config', {})
+        return jsonify({
+            'success': True,
+            'data': user_config if user_config else {
+                'ai_enabled': None,
+                'ai_api_key': '',
+                'ai_api_base': '',
+                'ai_model': ''
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'获取配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/user/ai-config', methods=['POST'])
+@login_required
+def set_user_ai_config():
+    """设置用户个人AI配置（登录用户，存储在session）"""
+    try:
+        data = request.json or {}
+        
+        # 更新session中的配置
+        user_config = {
+            'ai_enabled': data.get('ai_enabled'),
+            'ai_api_key': data.get('ai_api_key', '').strip(),
+            'ai_api_base': data.get('ai_api_base', '').strip(),
+            'ai_model': data.get('ai_model', 'gpt-3.5-turbo')
+        }
+        
+        # 只保存非空值
+        session['ai_config'] = {k: v for k, v in user_config.items() if v is not None and v != ''}
+        
+        return jsonify({
+            'success': True,
+            'message': '个人AI配置已保存',
+            'data': session.get('ai_config', {})
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'保存配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/user/ai-config', methods=['DELETE'])
+@login_required
+def clear_user_ai_config():
+    """清除用户个人AI配置（登录用户）"""
+    try:
+        if 'ai_config' in session:
+            del session['ai_config']
+        
+        return jsonify({
+            'success': True,
+            'message': '个人AI配置已清除，将使用全局配置或环境变量'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'清除配置失败: {str(e)}'
+        }), 500
+
+@app.route('/api/user/ai-config/test', methods=['POST'])
+@login_required
+def test_user_ai_config():
+    """测试用户个人AI配置连接（登录用户）"""
+    try:
+        data = request.json or {}
+        
+        # 构建测试配置（优先使用请求中的配置，否则使用session中的配置）
+        if data:
+            test_config = {
+                'ai_enabled': data.get('ai_enabled', True),
+                'ai_api_key': data.get('ai_api_key', ''),
+                'ai_api_base': data.get('ai_api_base', ''),
+                'ai_model': data.get('ai_model', 'gpt-3.5-turbo')
+            }
+        else:
+            # 使用当前有效的配置
+            test_config = get_effective_ai_config()
+        
+        # 创建AI提取器并测试
+        ai_extractor = create_ai_extractor(test_config)
+        if not ai_extractor:
+            return jsonify({
+                'success': False,
+                'message': 'AI未启用或API密钥为空'
+            }), 400
+        
+        # 执行简单测试
+        try:
+            test_result = ai_extractor.extract_info("测试文本：姓名张三，年龄25岁")
+            if test_result:
+                return jsonify({
+                    'success': True,
+                    'message': 'AI配置测试成功',
+                    'test_result': test_result
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI配置测试失败：未返回结果'
+                }), 400
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'AI配置测试失败: {str(e)}'
+            }), 400
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 500
+
+@app.route('/api/database/status', methods=['GET'])
+def database_status():
+    """获取数据库状态（兼容旧接口）"""
+    try:
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        
+        # 检查表是否存在
+        tables_status = {}
+        tables_to_check = ['resumes', 'positions', 'interviews', 'users']
+        
+        if db_status.get('tables'):
+            for table_name in tables_to_check:
+                tables_status[table_name] = 'exists' if table_name in db_status['tables'] else 'missing'
+        else:
+            # 如果无法获取表列表，尝试直接查询
+            db = get_db_session()
+            if db:
+                from sqlalchemy import text
+                for table_name in tables_to_check:
+                    try:
+                        db.execute(text(f'SELECT 1 FROM {table_name} LIMIT 1'))
+                        tables_status[table_name] = 'exists'
+                    except Exception:
+                        tables_status[table_name] = 'missing'
+                db.close()
+        
+        return jsonify({
+            'success': True,
+            'initialized': db_status.get('initialized', False),
+            'db_type': db_status.get('db_type', 'unknown'),
+            'tables': tables_status,
+            'all_tables_exist': all(status == 'exists' for status in tables_status.values())
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/init-db', methods=['GET', 'POST'])
+def init_database_route():
+    """初始化数据库表"""
+    try:
+        from models import init_database, migrate_database
+        
+        # 初始化数据库
+        init_database()
+        migrate_database()
+        
+        # 获取数据库状态
+        db_manager = get_database_manager()
+        db_status = db_manager.get_status()
+        
+        return jsonify({
+            'success': True,
+            'message': '数据库初始化成功',
+            'status': db_status,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'数据库初始化失败: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/api/create-admin', methods=['POST'])
+def create_admin_user():
+    """创建或重置 admin 用户（无需登录，用于初始化）"""
+    try:
+        db = get_db_session()
+        try:
+            # 检查是否已存在 admin 用户
+            admin_user = db.query(User).filter_by(username='admin').first()
+            
+            if admin_user:
+                # 重置密码
+                admin_user.set_password('admin123')
+                admin_user.role = 'admin'
+                admin_user.real_name = '系统管理员'
+                admin_user.is_active = 1
+                db.commit()
+                return jsonify({
+                    'success': True,
+                    'message': '管理员账户密码已重置（用户名: admin, 密码: admin123）'
+                })
+            else:
+                # 创建新用户
+                admin = User(
+                    username='admin',
+                    role='admin',
+                    real_name='系统管理员',
+                    is_active=1
+                )
+                admin.set_password('admin123')
+                db.add(admin)
+                db.commit()
+                return jsonify({
+                    'success': True,
+                    'message': '管理员账户已创建（用户名: admin, 密码: admin123）'
+                })
+        except Exception as e:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'创建管理员账户失败: {str(e)}'
+        }), 500
+
+@app.route('/test-d1', methods=['GET'])
+def test_d1_connection():
+    """测试 D1 数据库连接"""
+    try:
+        db_manager = get_database_manager()
+        test_result = db_manager.test_connection()
+        
+        return jsonify({
+            'success': test_result['success'],
+            'db_type': test_result.get('db_type', 'unknown'),
+            'message': test_result.get('message', ''),
+            'error': test_result.get('error'),
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+@app.route('/test-parser', methods=['POST'])
+@login_required
+def test_parser():
+    """
+    测试PDF解析功能 - 对比三种解析方法的效果
+    
+    请求体：
+    {
+        "file_path": "文件路径（相对于uploads目录）",
+        "test_methods": ["PyMuPDF", "pdfplumber", "OCR"]  # 可选，默认全部测试
+    }
+    """
+    try:
+        data = request.json or {}
+        file_path = data.get('file_path', '')
+        
+        if not file_path:
+            return jsonify({
+                'success': False,
+                'message': '请提供文件路径'
+            }), 400
+        
+        # 构建完整路径
+        full_path = os.path.join(app.config['UPLOAD_FOLDER'], file_path)
+        if not os.path.exists(full_path):
+            return jsonify({
+                'success': False,
+                'message': f'文件不存在: {file_path}'
+            }), 404
+        
+        # 检查文件类型
+        file_ext = os.path.splitext(full_path)[1].lower()
+        if file_ext != '.pdf':
+            return jsonify({
+                'success': False,
+                'message': '目前仅支持PDF文件测试'
+            }), 400
+        
+        test_methods = data.get('test_methods', ['PyMuPDF', 'pdfplumber', 'OCR'])
+        results = {
+            'file_path': file_path,
+            'file_size': os.path.getsize(full_path),
+            'methods': {}
+        }
+        
+        # 测试 PyMuPDF
+        if 'PyMuPDF' in test_methods:
+            try:
+                from utils.file_parser import FITZ_AVAILABLE
+                if FITZ_AVAILABLE:
+                    import fitz
+                    pdf_doc = fitz.open(full_path)
+                    page_count = len(pdf_doc)
+                    
+                    page_texts = []
+                    for page_num in range(page_count):
+                        page = pdf_doc[page_num]
+                        page_text = page.get_text()
+                        if page_text:
+                            page_texts.append(page_text.strip())
+                    pdf_doc.close()
+                    
+                    text = "\n\n".join(page_texts)
+                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                    
+                    results['methods']['PyMuPDF'] = {
+                        'success': True,
+                        'text_length': len(text),
+                        'chinese_chars': chinese_chars,
+                        'page_count': page_count,
+                        'preview': text[:500] + '...' if len(text) > 500 else text
+                    }
+                else:
+                    results['methods']['PyMuPDF'] = {
+                        'success': False,
+                        'error': 'PyMuPDF 未安装'
+                    }
+            except Exception as e:
+                results['methods']['PyMuPDF'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # 测试 pdfplumber
+        if 'pdfplumber' in test_methods:
+            try:
+                from utils.file_parser import PDFPLUMBER_AVAILABLE
+                if PDFPLUMBER_AVAILABLE:
+                    import pdfplumber
+                    with pdfplumber.open(full_path) as pdf:
+                        page_count = len(pdf.pages)
+                        page_texts = []
+                        for page in pdf.pages:
+                            page_text = page.extract_text()
+                            if page_text:
+                                page_texts.append(page_text.strip())
+                        
+                        text = "\n\n".join(page_texts)
+                        chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                        
+                        results['methods']['pdfplumber'] = {
+                            'success': True,
+                            'text_length': len(text),
+                            'chinese_chars': chinese_chars,
+                            'page_count': page_count,
+                            'preview': text[:500] + '...' if len(text) > 500 else text
+                        }
+                else:
+                    results['methods']['pdfplumber'] = {
+                        'success': False,
+                        'error': 'pdfplumber 未安装'
+                    }
+            except Exception as e:
+                results['methods']['pdfplumber'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # 测试 OCR
+        if 'OCR' in test_methods:
+            try:
+                from utils.file_parser import OCR_AVAILABLE
+                if OCR_AVAILABLE:
+                    import fitz
+                    import pytesseract
+                    from PIL import Image
+                    from io import BytesIO
+                    
+                    pdf_doc = fitz.open(full_path)
+                    page_count = len(pdf_doc)
+                    ocr_texts = []
+                    
+                    for page_num in range(min(page_count, 3)):  # 最多测试3页
+                        page = pdf_doc[page_num]
+                        mat = fitz.Matrix(2.0, 2.0)
+                        pix = page.get_pixmap(matrix=mat)
+                        img_data = pix.tobytes("png")
+                        img = Image.open(BytesIO(img_data))
+                        ocr_text = pytesseract.image_to_string(img, lang='chi_sim+eng')
+                        if ocr_text:
+                            ocr_texts.append(ocr_text.strip())
+                    
+                    pdf_doc.close()
+                    
+                    text = "\n\n".join(ocr_texts)
+                    chinese_chars = len(re.findall(r'[\u4e00-\u9fa5]', text))
+                    
+                    results['methods']['OCR'] = {
+                        'success': True,
+                        'text_length': len(text),
+                        'chinese_chars': chinese_chars,
+                        'pages_tested': min(page_count, 3),
+                        'preview': text[:500] + '...' if len(text) > 500 else text
+                    }
+                else:
+                    results['methods']['OCR'] = {
+                        'success': False,
+                        'error': 'OCR (pytesseract) 未安装'
+                    }
+            except Exception as e:
+                results['methods']['OCR'] = {
+                    'success': False,
+                    'error': str(e)
+                }
+        
+        # 推荐最佳方法
+        best_method = None
+        best_score = 0
+        for method, result in results['methods'].items():
+            if result.get('success'):
+                score = result.get('text_length', 0) + result.get('chinese_chars', 0) * 2
+                if score > best_score:
+                    best_score = score
+                    best_method = method
+        
+        results['recommended_method'] = best_method
+        results['timestamp'] = datetime.now().isoformat()
+        
+        return jsonify({
+            'success': True,
+            'data': results
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 500
+
+@app.route('/env-check', methods=['GET'])
+def env_check():
+    """检查环境变量配置"""
+    env_vars = {
+        'PORT': os.environ.get('PORT'),
+        'HOST': os.environ.get('HOST'),
+        'SECRET_KEY': '已设置' if os.environ.get('SECRET_KEY') else '未设置',
+        'DEBUG': os.environ.get('DEBUG', 'False'),
+        # Cloudflare D1
+        'CF_ACCOUNT_ID': os.environ.get('CF_ACCOUNT_ID'),
+        'CF_D1_DATABASE_ID': os.environ.get('CF_D1_DATABASE_ID'),
+        'CF_API_TOKEN': '已设置' if os.environ.get('CF_API_TOKEN') else '未设置',
+        # Cloudflare R2
+        'CF_R2_ACCOUNT_ID': os.environ.get('CF_R2_ACCOUNT_ID'),
+        'CF_R2_ACCESS_KEY_ID': os.environ.get('CF_R2_ACCESS_KEY_ID'),
+        'CF_R2_SECRET_ACCESS_KEY': '已设置' if os.environ.get('CF_R2_SECRET_ACCESS_KEY') else '未设置',
+        'CF_R2_BUCKET_NAME': os.environ.get('CF_R2_BUCKET_NAME'),
+        # 数据库
+        'DATABASE_PATH': os.environ.get('DATABASE_PATH'),
+        # AI 配置
+        'AI_ENABLED': os.environ.get('AI_ENABLED', 'true'),
+        'AI_API_KEY': '已设置' if os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') else '未设置',
+        'AI_MODEL': os.environ.get('AI_MODEL', 'deepseek-chat'),
+    }
+    
+    # 检查关键配置
+    checks = {
+        'railway_configured': bool(os.environ.get('PORT')),
+        'd1_configured': bool(os.environ.get('CF_D1_DATABASE_ID') and os.environ.get('CF_ACCOUNT_ID')),
+        'r2_configured': bool(os.environ.get('CF_R2_ACCOUNT_ID') and os.environ.get('CF_R2_ACCESS_KEY_ID')),
+        'database_path_set': bool(os.environ.get('DATABASE_PATH')),
+    }
+    
+    return jsonify({
+        'success': True,
+        'environment_variables': env_vars,
+        'configuration_checks': checks,
+        'recommendations': _get_env_recommendations(checks),
+        'timestamp': datetime.now().isoformat()
+    })
+
+def _get_env_recommendations(checks: dict) -> list:
+    """获取环境配置建议"""
+    recommendations = []
+    
+    if not checks['railway_configured']:
+        recommendations.append('建议设置 PORT 环境变量（Railway 会自动设置）')
+    
+    if not checks['d1_configured']:
+        recommendations.append('如需使用 Cloudflare D1，请设置 CF_ACCOUNT_ID 和 CF_D1_DATABASE_ID')
+    
+    if not checks['r2_configured']:
+        recommendations.append('如需使用 Cloudflare R2，请设置 CF_R2_ACCOUNT_ID 和 CF_R2_ACCESS_KEY_ID')
+    
+    if not os.environ.get('SECRET_KEY'):
+        recommendations.append('建议设置 SECRET_KEY 环境变量以提高安全性')
+    
+    return recommendations
 
 @app.route('/api/education-levels', methods=['GET'])
 def get_education_levels():
@@ -86,6 +1358,7 @@ def get_education_levels():
 def process_resume_async(resume_id, file_path):
     """异步处理简历解析"""
     db = get_db_session()
+    temp_file_path = None
     try:
         resume = db.query(Resume).filter_by(id=resume_id).first()
         if not resume:
@@ -94,35 +1367,55 @@ def process_resume_async(resume_id, file_path):
         resume.parse_status = 'processing'
         db.commit()
         
-        # 提取文本
-        raw_text = extract_text(file_path)
-        if not raw_text:
-            raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
+        # 如果是R2存储的文件，需要先下载到临时文件
+        if r2_storage and _is_r2_key(file_path):
+            file_data = r2_storage.get_upload(file_path)
+            if not file_data:
+                raise Exception(f"无法从R2读取文件: {file_path}")
+            
+            # 创建临时文件
+            import tempfile
+            file_ext = os.path.splitext(file_path)[1].lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
+                tmp.write(file_data)
+                temp_file_path = tmp.name
+            actual_file_path = temp_file_path
+        else:
+            # 本地文件
+            actual_file_path = file_path
         
         # 检测文件类型
         file_ext = os.path.splitext(file_path)[1].lower()
         is_word_file = file_ext in ['.doc', '.docx']
         
-        # 检查是否启用AI（从配置或请求参数）
-        ai_enabled = app.config.get('AI_ENABLED', True)
-        ai_api_key = app.config.get('AI_API_KEY', '')
-        ai_api_base = app.config.get('AI_API_BASE', '')
-        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+        # 提取文本（PDF使用智能提取，Word使用原有方法）
+        if file_ext == '.pdf':
+            # PDF文件使用智能提取（多方法融合+行修复）
+            raw_text = extract_pdf_intelligent(actual_file_path)
+        else:
+            # Word文件使用原有方法
+            raw_text = extract_text(actual_file_path)
         
-        # 如果配置中没有API密钥，尝试从环境变量获取
-        if not ai_api_key:
-            ai_api_key = os.environ.get('OPENAI_API_KEY') or os.environ.get('AI_API_KEY') or os.environ.get('DEEPSEEK_API_KEY') or ''
+        if not raw_text:
+            raise Exception("无法从文件中提取文本，文件可能已损坏或格式不支持")
+        
+        # 异步任务直接使用环境变量配置（Railway平台配置）
+        ai_enabled = Config.AI_ENABLED
+        ai_api_key = Config.AI_API_KEY
+        ai_api_base = Config.AI_API_BASE
+        ai_model = Config.AI_MODEL
         
         # 如果链接了AI API，优先使用AI优化文本提取
         text = raw_text
         ai_extractor = None
         if ai_enabled and ai_api_key:
             try:
-                ai_extractor = AIExtractor(
-                    api_key=ai_api_key,
-                    api_base=ai_api_base if ai_api_base else None,
-                    model=ai_model
-                )
+                ai_extractor = create_ai_extractor({
+                    'ai_enabled': ai_enabled,
+                    'ai_api_key': ai_api_key,
+                    'ai_api_base': ai_api_base,
+                    'ai_model': ai_model
+                })
                 # 使用AI优化文本提取
                 optimized_text = ai_extractor.optimize_text_extraction(raw_text)
                 if optimized_text:
@@ -224,33 +1517,13 @@ def process_resume_async(resume_id, file_path):
         db.commit()
         print(f"处理简历失败: {e}")
     finally:
+        # 清理临时文件
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
         db.close()
-
-# 权限装饰器
-def login_required(f):
-    """要求登录的装饰器"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
-        return f(*args, **kwargs)
-    return decorated_function
-
-def admin_required(f):
-    """要求管理员权限的装饰器"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if 'user_id' not in session:
-            return jsonify({'success': False, 'message': '请先登录', 'require_login': True}), 401
-        db = get_db_session()
-        try:
-            user = db.query(User).filter_by(id=session['user_id']).first()
-            if not user or user.role != 'admin':
-                return jsonify({'success': False, 'message': '需要管理员权限'}), 403
-        finally:
-            db.close()
-        return f(*args, **kwargs)
-    return decorated_function
 
 def get_current_user():
     """获取当前登录用户"""
@@ -262,9 +1535,9 @@ def get_current_user():
     finally:
         db.close()
 
-@app.route('/')
-def index():
-    """首页"""
+@app.route('/app')
+def app_index():
+    """应用首页（需要登录）"""
     # 检查是否已登录
     if 'user_id' not in session:
         return redirect(url_for('login_page'))
@@ -273,8 +1546,9 @@ def index():
 @app.route('/login', methods=['GET'])
 def login_page():
     """登录页面"""
+    # 如果已登录，重定向到应用主页面
     if 'user_id' in session:
-        return redirect(url_for('index'))
+        return redirect(url_for('app_index'))
     return render_template('login.html')
 
 @app.route('/api/login', methods=['POST'])
@@ -287,14 +1561,35 @@ def login():
     if not username or not password:
         return jsonify({'success': False, 'message': '用户名和密码不能为空'}), 400
     
-    db = get_db_session()
+    db = None
     try:
+        db = get_db_session()
         user = db.query(User).filter_by(username=username).first()
-        if not user or not user.check_password(password):
+        if not user:
             return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
         
+        # 如果密码哈希为空，且是 admin 用户且密码是 admin123，自动设置密码
+        if not user.password_hash:
+            if username == 'admin' and password == 'admin123':
+                # 自动设置密码和激活账户
+                user.set_password('admin123')
+                user.is_active = 1  # 确保账户激活
+                user.role = 'admin'  # 确保角色正确
+                db.commit()
+            else:
+                return jsonify({'success': False, 'message': '用户密码未设置，请联系管理员'}), 401
+        
+        if not user.check_password(password):
+            return jsonify({'success': False, 'message': '用户名或密码错误'}), 401
+        
+        # 如果账户被禁用，但密码正确且是 admin/admin123，自动激活
         if user.is_active != 1:
-            return jsonify({'success': False, 'message': '账户已被禁用'}), 403
+            if username == 'admin' and password == 'admin123':
+                user.is_active = 1
+                user.role = 'admin'
+                db.commit()
+            else:
+                return jsonify({'success': False, 'message': '账户已被禁用'}), 403
         
         # 登录成功，设置session
         session['user_id'] = user.id
@@ -307,8 +1602,19 @@ def login():
             'message': '登录成功',
             'user': user.to_dict()
         })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'登录失败: {str(e)}'
+        }), 500
     finally:
-        db.close()
+        if db:
+            try:
+                db.close()
+            except:
+                pass
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
@@ -866,8 +2172,18 @@ def upload_file():
                 safe_name = 'resume'
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')  # 添加微秒确保唯一性
             filename = f"{timestamp}{safe_name}{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            file.save(file_path)
+            
+            # 使用R2存储或本地存储
+            if r2_storage:
+                # 读取文件数据并上传到R2
+                file_data = file.read()
+                content_type = file.content_type or 'application/octet-stream'
+                file_path = r2_storage.save_upload(file_data, filename, content_type)
+                # file_path 现在是 R2 key (例如: "uploads/20241223_123456_789_filename.pdf")
+            else:
+                # 使用本地文件系统
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(file_path)
             
             # 创建数据库记录
             db = get_db_session()
@@ -1003,11 +2319,11 @@ def download_resume_file(resume_id):
             return jsonify({'success': False, 'message': '简历不存在'}), 404
         
         file_path = resume.file_path
-        if not file_path or not os.path.exists(file_path):
-            return jsonify({'success': False, 'message': '文件不存在'}), 404
+        if not file_path:
+            return jsonify({'success': False, 'message': '文件路径不存在'}), 404
         
         # 获取原始文件名
-        file_name = resume.file_name or os.path.basename(file_path)
+        original_file_name = resume.file_name or os.path.basename(file_path)
         
         # 检查是否为预览模式（通过查询参数）
         as_attachment = request.args.get('download', 'false').lower() == 'true'
@@ -1020,12 +2336,32 @@ def download_resume_file(resume_id):
         elif file_ext in ['.doc', '.docx']:
             mimetype = 'application/msword' if file_ext == '.doc' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         
-        return send_file(
-            file_path,
-            as_attachment=as_attachment,
-            download_name=file_name if as_attachment else None,
-            mimetype=mimetype
-        )
+        # 文件名称格式：姓名_原文件名
+        candidate_name = resume.name or f"简历{resume_id}"
+        download_name = f"{candidate_name}_{original_file_name}" if as_attachment else None
+        
+        # 从R2或本地文件系统读取文件
+        if r2_storage and _is_r2_key(file_path):
+            # 从R2下载
+            file_data = r2_storage.get_upload(file_path)
+            if not file_data:
+                return jsonify({'success': False, 'message': '文件不存在'}), 404
+            return send_file(
+                BytesIO(file_data),
+                as_attachment=as_attachment,
+                download_name=download_name,
+                mimetype=mimetype
+            )
+        else:
+            # 本地文件
+            if not os.path.exists(file_path):
+                return jsonify({'success': False, 'message': '文件不存在'}), 404
+            return send_file(
+                file_path,
+                as_attachment=as_attachment,
+                download_name=download_name,
+                mimetype=mimetype
+            )
     except Exception as e:
         return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
     finally:
@@ -1094,8 +2430,27 @@ def update_resume(resume_id):
     return jsonify({'success': True, 'message': '更新成功'})
 
 
+def _is_r2_key(file_path: str) -> bool:
+    """判断文件路径是否是R2 key（而不是本地路径）"""
+    if not file_path:
+        return False
+    # R2 key 格式: "uploads/..." 或 "exports/..."
+    # 本地路径通常是绝对路径或相对于项目目录的路径
+    return file_path.startswith('uploads/') or file_path.startswith('exports/')
+
 def _remove_file_if_exists(path: str) -> None:
-    if path and os.path.exists(path):
+    """删除文件（支持本地文件和R2文件）"""
+    if not path:
+        return
+    
+    if r2_storage and _is_r2_key(path):
+        # 删除R2文件
+        if path.startswith('uploads/'):
+            r2_storage.delete_upload(path)
+        elif path.startswith('exports/'):
+            r2_storage.delete_export(path)
+    elif os.path.exists(path):
+        # 删除本地文件
         try:
             os.remove(path)
         except OSError:
@@ -1173,7 +2528,8 @@ def export_single(resume_id):
         return jsonify({'success': False, 'message': '简历不存在'}), 404
     
     file_path = export_resume_to_excel(resume)
-    return send_file(file_path, as_attachment=True, download_name=f'简历_{resume.name or resume.id}.xlsx')
+    candidate_name = resume.name or f"简历{resume_id}"
+    return send_file(file_path, as_attachment=True, download_name=f'{candidate_name}_简历.xlsx')
 
 @app.route('/api/export/batch', methods=['POST'])
 def export_batch():
@@ -1205,6 +2561,7 @@ def export_resume_analysis_pdf(resume_id):
         analysis = None
 
         # 如果有应聘岗位且AI可用，则在导出前实时执行一次匹配分析，保证PDF中的匹配度内容是最新的
+        # 这样可以确保PDF中包含完整的分析结果（详细分析、优势、不足、建议等）
         try:
             if applied_position:
                 # 获取岗位信息
@@ -1212,7 +2569,7 @@ def export_resume_analysis_pdf(resume_id):
                 if position:
                     ai_enabled = app.config.get('AI_ENABLED', True)
                     ai_api_key = app.config.get('AI_API_KEY', '')
-                    ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
+                    ai_model = app.config.get('AI_MODEL', 'deepseek-chat')
                     ai_api_base = app.config.get('AI_API_BASE', '')
 
                     if ai_enabled and ai_api_key:
@@ -1297,6 +2654,10 @@ def export_resume_analysis_pdf(resume_id):
 
                         response_text = ai_extractor._call_ai_api(prompt)
 
+                        # 检查响应是否为空
+                        if not response_text:
+                            raise Exception('AI API调用失败，未返回结果')
+
                         # 解析JSON
                         import re
                         try:
@@ -1351,13 +2712,28 @@ def export_resume_analysis_pdf(resume_id):
                         except Exception:
                             pass
         except Exception as _:
-            # 匹配度分析失败时，不影响PDF导出，只是不带匹配信息
-            analysis = None
+            # 匹配度分析失败时，不影响PDF导出
+            # 如果之前已经有保存的匹配度结果，保持使用；否则analysis仍为None
+            if analysis is None and resume.match_score is not None and resume.match_level:
+                # 如果AI分析失败，但简历有已保存的匹配度结果，使用已保存的结果
+                position_matched = True
+                if hasattr(resume, 'match_position') and resume.match_position:
+                    position_matched = (resume.match_position == applied_position)
+                
+                if position_matched:
+                    analysis = {
+                        'match_score': resume.match_score,
+                        'match_level': resume.match_level,
+                        'detailed_analysis': '',
+                        'strengths': [],
+                        'weaknesses': [],
+                        'suggestions': []
+                    }
 
         file_path = export_resume_analysis_to_pdf(resume, analysis)
-        # 文件名称格式：候选人姓名-简历分析报告
+        # 文件名称格式：姓名_简历分析报告
         candidate_name = resume.name or f"简历{resume_id}"
-        download_name = f"{candidate_name}-简历分析报告.pdf"
+        download_name = f"{candidate_name}_简历分析报告.pdf"
         return send_file(file_path, as_attachment=True, download_name=download_name)
     except Exception as e:
         return jsonify({'success': False, 'message': f'导出分析报告失败: {str(e)}'}), 500
@@ -1451,9 +2827,10 @@ def create_interview():
             # 如果请求中没有传递匹配度，尝试从简历记录中获取（如果岗位匹配）
             final_match_score = match_score
             final_match_level = match_level
+            applied_position_for_interview = resume.applied_position or ''
             if not final_match_score and resume.match_score and resume.match_position:
                 # 如果简历有匹配度分析结果，且岗位匹配，则使用简历中的匹配度
-                if resume.match_position == (resume.applied_position or ''):
+                if resume.match_position == applied_position_for_interview:
                     final_match_score = resume.match_score
                     final_match_level = resume.match_level
             
@@ -2050,9 +3427,16 @@ def analyze_interview_doc(interview_id):
             session.close()
             return jsonify({'success': False, 'message': '文档文件不存在，请重新上传'}), 400
 
-        # 提取文档文本
+        # 获取AI配置（使用环境变量配置）
+        ai_config = get_effective_ai_config()
+        
+        # 提取文档文本（PDF使用智能提取）
         try:
-            doc_text = extract_text(file_path)
+            file_ext = os.path.splitext(file_path)[1].lower()
+            if file_ext == '.pdf':
+                doc_text = extract_pdf_intelligent(file_path)
+            else:
+                doc_text = extract_text(file_path)
         except Exception as e:
             session.close()
             return jsonify({'success': False, 'message': f'文档内容提取失败: {str(e)}'}), 500
@@ -2061,23 +3445,12 @@ def analyze_interview_doc(interview_id):
             session.close()
             return jsonify({'success': False, 'message': '文档内容为空，无法分析'}), 400
 
-        # 检查AI配置
-        ai_enabled = app.config.get('AI_ENABLED', True)
-        ai_api_key = app.config.get('AI_API_KEY', '')
-        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
-        ai_api_base = app.config.get('AI_API_BASE', '')
-
-        if not ai_enabled or not ai_api_key:
+        # 使用有效的AI配置创建提取器（使用环境变量配置）
+        ai_extractor = create_ai_extractor(ai_config)
+        
+        if not ai_extractor:
             session.close()
-            return jsonify({'success': False, 'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'}), 400
-
-        # 使用AI进行面试文档分析
-        from utils.ai_extractor import AIExtractor
-        ai_extractor = AIExtractor(
-            api_key=ai_api_key,
-            api_base=ai_api_base if ai_api_base else None,
-            model=ai_model
-        )
+            return jsonify({'success': False, 'message': 'AI功能未启用或未配置API密钥，请在Railway平台环境变量中配置OPENAI_API_KEY'}), 400
 
         # 读取岗位信息（用于结合岗位要求分析）
         position_info_text = ""
@@ -2123,6 +3496,11 @@ def analyze_interview_doc(interview_id):
 
         try:
             response_text = ai_extractor._call_ai_api(prompt)
+
+            # 检查响应是否为空
+            if not response_text:
+                session.close()
+                return jsonify({'success': False, 'message': 'AI API调用失败，未返回结果。请检查API密钥和网络连接。'}), 500
 
             # 解析JSON
             import re
@@ -2173,6 +3551,9 @@ def update_registration_form(interview_id):
         if 'registration_form_birth_date' in data:
             interview.registration_form_birth_date = _normalize_field(
                 data.get('registration_form_birth_date'))
+        if 'registration_form_gender' in data:
+            interview.registration_form_gender = _normalize_field(
+                data.get('registration_form_gender'))
         if 'registration_form_ethnicity' in data:
             interview.registration_form_ethnicity = _normalize_field(
                 data.get('registration_form_ethnicity'))
@@ -2253,9 +3634,19 @@ def update_registration_form(interview_id):
             interview.registration_form_can_travel = data.get('registration_form_can_travel')
         if 'registration_form_consideration_factors' in data:
             factors = data.get('registration_form_consideration_factors')
-            # 确保将列表转换为JSON字符串，即使是空列表也要转换为'[]'
+            # 处理可能已经序列化的字符串或列表
             if factors is not None:
-                interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                if isinstance(factors, str):
+                    # 如果是字符串，先解析再保存
+                    try:
+                        factors_list = json.loads(factors)
+                        interview.registration_form_consideration_factors = json.dumps(factors_list, ensure_ascii=False)
+                    except (ValueError, TypeError):
+                        interview.registration_form_consideration_factors = ''
+                elif isinstance(factors, list):
+                    interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                else:
+                    interview.registration_form_consideration_factors = ''
             else:
                 interview.registration_form_consideration_factors = ''
         
@@ -2371,6 +3762,9 @@ def submit_registration_form():
         if 'registration_form_birth_date' in data:
             interview.registration_form_birth_date = _normalize_field(
                 data.get('registration_form_birth_date'))
+        if 'registration_form_gender' in data:
+            interview.registration_form_gender = _normalize_field(
+                data.get('registration_form_gender'))
         if 'registration_form_ethnicity' in data:
             interview.registration_form_ethnicity = _normalize_field(
                 data.get('registration_form_ethnicity'))
@@ -2386,10 +3780,31 @@ def submit_registration_form():
         if 'registration_form_id_card' in data:
             interview.registration_form_id_card = _normalize_field(
                 data.get('registration_form_id_card'))
+        if 'registration_form_first_work_date' in data:
+            interview.registration_form_first_work_date = _normalize_field(
+                data.get('registration_form_first_work_date'))
         if 'registration_form_recent_work_experience' in data:
             work_exps = data.get('registration_form_recent_work_experience')
             if work_exps is not None:
                 interview.registration_form_recent_work_experience = json.dumps(work_exps, ensure_ascii=False)
+        if 'registration_form_education_start_date' in data:
+            interview.registration_form_education_start_date = _normalize_field(
+                data.get('registration_form_education_start_date'))
+        if 'registration_form_education_end_date' in data:
+            interview.registration_form_education_end_date = _normalize_field(
+                data.get('registration_form_education_end_date'))
+        if 'registration_form_institution' in data:
+            interview.registration_form_institution = _normalize_field(
+                data.get('registration_form_institution'))
+        if 'registration_form_major' in data:
+            interview.registration_form_major = _normalize_field(
+                data.get('registration_form_major'))
+        if 'registration_form_degree' in data:
+            interview.registration_form_degree = _normalize_field(
+                data.get('registration_form_degree'))
+        if 'registration_form_full_time' in data:
+            interview.registration_form_full_time = _normalize_field(
+                data.get('registration_form_full_time'))
         if 'registration_form_education' in data:
             interview.registration_form_education = data.get('registration_form_education')
         if 'registration_form_hobbies' in data:
@@ -2412,9 +3827,19 @@ def submit_registration_form():
             interview.registration_form_can_travel = data.get('registration_form_can_travel')
         if 'registration_form_consideration_factors' in data:
             factors = data.get('registration_form_consideration_factors')
-            # 确保将列表转换为JSON字符串，即使是空列表也要转换为'[]'
+            # 处理可能已经序列化的字符串或列表
             if factors is not None:
-                interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                if isinstance(factors, str):
+                    # 如果是字符串，先解析再保存
+                    try:
+                        factors_list = json.loads(factors)
+                        interview.registration_form_consideration_factors = json.dumps(factors_list, ensure_ascii=False)
+                    except (ValueError, TypeError):
+                        interview.registration_form_consideration_factors = ''
+                elif isinstance(factors, list):
+                    interview.registration_form_consideration_factors = json.dumps(factors, ensure_ascii=False)
+                else:
+                    interview.registration_form_consideration_factors = ''
             else:
                 interview.registration_form_consideration_factors = ''
         
@@ -2464,80 +3889,70 @@ def export_interview_round_analysis_pdf(interview_id):
             return jsonify({'success': False, 'message': '当前轮次暂无AI分析结果，请先执行AI分析'}), 400
 
         file_path = export_interview_round_analysis_to_pdf(interview, round_name, analysis_text)
-        download_name = f'{round_name}面试反馈报告_{interview.name or interview_id}.pdf'
+        candidate_name = interview.name or f"面试{interview_id}"
+        download_name = f'{candidate_name}_{round_name}面试反馈报告.pdf'
         return send_file(file_path, as_attachment=True, download_name=download_name)
     except Exception as e:
         return jsonify({'success': False, 'message': f'导出AI分析报告失败: {str(e)}'}), 500
 
 @app.route('/api/ai/config', methods=['GET'])
 def get_ai_config():
-    """获取AI配置（不返回密钥）"""
-    ai_enabled = app.config.get('AI_ENABLED', True)
-    ai_api_key = app.config.get('AI_API_KEY', '')
+    """获取AI配置（仅从环境变量读取，只读）"""
+    # 直接使用环境变量配置（Railway平台配置）
+    ai_config = get_effective_ai_config()
+    
     # 检查AI是否真正可用（启用且有API密钥）
-    ai_available = ai_enabled and bool(ai_api_key)
+    ai_available = ai_config.get('ai_enabled', True) and bool(ai_config.get('ai_api_key', ''))
     
     return jsonify({
         'success': True,
         'data': {
-            'ai_enabled': ai_enabled,
-            'ai_available': ai_available,  # 新增：AI是否真正可用
-            'ai_model': app.config.get('AI_MODEL', 'gpt-3.5-turbo'),
-            'ai_api_base': app.config.get('AI_API_BASE', ''),
-            'ai_models': app.config.get('AI_MODELS', [])
+            'ai_enabled': ai_config.get('ai_enabled', True),
+            'ai_available': ai_available,  # AI是否真正可用
+            'ai_model': ai_config.get('ai_model', 'deepseek-chat'),
+            'ai_api_base': ai_config.get('ai_api_base', ''),
+            'ai_models': Config.AI_MODELS,
+            'readonly': True,  # 标记为只读，配置来自环境变量
+            'message': 'AI配置来自Railway平台环境变量，不可在界面修改'
         }
     })
 
 @app.route('/api/ai/config', methods=['POST'])
 def save_ai_config():
-    """保存AI配置"""
-    try:
-        data = request.json
-        ai_enabled = data.get('ai_enabled', True)
-        ai_model = data.get('ai_model', 'gpt-3.5-turbo')
-        ai_api_key = data.get('ai_api_key', '')
-        ai_api_base = data.get('ai_api_base', '')
-        
-        # 更新配置（注意：这里只是临时更新，重启后会恢复）
-        # 实际生产环境应该保存到配置文件或数据库
-        app.config['AI_ENABLED'] = ai_enabled
-        app.config['AI_MODEL'] = ai_model
-        if ai_api_key:
-            app.config['AI_API_KEY'] = ai_api_key
-        if ai_api_base:
-            app.config['AI_API_BASE'] = ai_api_base
-        
-        return jsonify({
-            'success': True,
-            'message': 'AI配置已保存（当前会话有效）'
-        })
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': f'保存配置失败: {str(e)}'
-        }), 400
+    """保存AI配置（已禁用，配置来自环境变量）"""
+    return jsonify({
+        'success': False,
+        'message': 'AI配置来自Railway平台环境变量，不可在界面修改。请在Railway平台的环境变量中配置OPENAI_API_KEY等变量。'
+    }), 400
 
 @app.route('/api/ai/test', methods=['POST'])
 def test_ai_connection():
-    """测试AI连接"""
+    """测试AI连接（使用环境变量配置）"""
     try:
-        data = request.json
-        api_key = data.get('api_key', '')
-        api_base = data.get('api_base', '')
-        model = data.get('model', 'gpt-3.5-turbo')
+        data = request.json or {}
+        
+        # 使用环境变量配置（Railway平台配置）
+        ai_config = get_effective_ai_config()
+        
+        # 允许请求中覆盖api_base和model，但api_key必须来自环境变量
+        api_base = data.get('api_base') or ai_config.get('ai_api_base', '')
+        model = data.get('model') or ai_config.get('ai_model', 'deepseek-chat')
+        api_key = ai_config.get('ai_api_key', '')
         
         if not api_key:
             return jsonify({
                 'success': False,
-                'message': '请提供API密钥'
+                'message': 'API密钥未配置，请在Railway平台环境变量中设置OPENAI_API_KEY或AI_API_KEY'
             }), 400
         
-        # 创建临时AI提取器进行测试
-        ai_extractor = AIExtractor(
-            api_key=api_key,
-            api_base=api_base if api_base else None,
-            model=model
-        )
+        # 创建AI提取器进行测试（使用环境变量配置）
+        ai_extractor = create_ai_extractor(ai_config)
+        
+        if not ai_extractor:
+            return jsonify({
+                'success': False,
+                'message': 'AI功能未启用或配置无效，请检查环境变量配置'
+            }), 400
         
         # 使用简单的测试文本
         test_text = "姓名：张三\n性别：男\n手机：13800138000"
@@ -2546,7 +3961,7 @@ def test_ai_connection():
         if result:
             return jsonify({
                 'success': True,
-                'message': 'AI连接测试成功',
+                'message': 'AI连接测试成功（使用环境变量配置）',
                 'data': result
             })
         else:
@@ -2556,16 +3971,17 @@ def test_ai_connection():
             }), 400
             
     except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': f'测试失败: {str(e)}'
-            }), 400
+        return jsonify({
+            'success': False,
+            'message': f'测试失败: {str(e)}'
+        }), 400
 
 
 def _collect_registration_data(interview):
     return {
         'name': interview.name or '',
-        'gender': interview.registration_form_ethnicity or '',
+        'gender': interview.registration_form_gender or '',  # 性别
+        'ethnicity': interview.registration_form_ethnicity or '',  # 民族
         'birth_date': interview.registration_form_birth_date or '',
         'marital_status': interview.registration_form_marital_status or '',
         'has_children': interview.registration_form_has_children or '',
@@ -2632,7 +4048,7 @@ def export_registration_form_to_excel(interview):
         ws['A2'].value = f"应聘岗位：{data['applied_position']}"
         ws['C2'].value = f"填表日期：{data['fill_date']}"
         for cell in ['A2','C2']:
-            stylize_cell(ws[cell], font=bold, align=center)
+            stylize_cell(ws[cell], font=bold, align=left)
 
         def section_row(row, title):
             ws.row_dimensions[row].height = 25
@@ -2642,13 +4058,13 @@ def export_registration_form_to_excel(interview):
             stylize_cell(cell, font=bold, align=center, fill=section_fill)
 
         section_row(3, '个人基本信息')
-        _fill_row(ws, 4, ['姓名', data['name'], '性别', data['gender'], '出生年月', data['birth_date']], border, center)
-        _fill_row(ws, 5, ['民族', data['origin'], '婚姻状况', data['marital_status'], '有无子女', data['has_children']], border, center)
-        _fill_row(ws, 6, ['学历', data['degree'], '联系电话', data['contact'], '电子邮箱', data['email']], border, center)
-        _fill_row(ws, 7, ['籍贯', data['origin'], '身份证号', data['id_card'], '', ''], border, center)
+        _fill_row(ws, 4, ['姓名', data['name'], '性别', data['gender'], '出生年月', data['birth_date']], border, left)
+        _fill_row(ws, 5, ['民族', data['ethnicity'], '婚姻状况', data['marital_status'], '有无子女', data['has_children']], border, left)
+        _fill_row(ws, 6, ['学历', data['degree'], '联系电话', data['contact'], '电子邮箱', data['email']], border, left)
+        _fill_row(ws, 7, ['籍贯', data['origin'], '身份证号', data['id_card'], '', ''], border, left)
 
         section_row(8, '教育经历')
-        _fill_row(ws, 9, ['开始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'], border, center)
+        _fill_row(ws, 9, ['开始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'], border, left)
         _fill_row(ws, 10, [
             data['education_start_date'],
             data['education_end_date'],
@@ -2656,10 +4072,10 @@ def export_registration_form_to_excel(interview):
             data['major'],
             data['degree'],
             data['full_time']
-        ], border, center)
+        ], border, left)
 
         section_row(12, '工作经历（从最近开始）')
-        _fill_row(ws, 13, ['开始时间', '结束时间', '单位名称', '', '职务', '离职原因'], border, center)
+        _fill_row(ws, 13, ['开始时间', '结束时间', '单位名称', '', '职务', '离职原因'], border, left)
         ws.merge_cells('C13:D13')
         def job_list_row(row, entry):
             _fill_row(ws, row, [
@@ -2668,12 +4084,12 @@ def export_registration_form_to_excel(interview):
                 entry.get('company', ''),
                 '',
                 entry.get('position', ''),
-                entry.get('departure_reason', '')
-            ], border, center)
+                entry.get('resignation_reason', '')
+            ], border, left)
             ws.merge_cells(f'C{row}:D{row}')
         job_list_row(14, data['work_experience'][0] if data['work_experience'] else {})
         job_list_row(15, data['work_experience'][1] if len(data['work_experience']) > 1 else {})
-        _fill_row(ws, 16, ['', '', '', '', '', ''], border, center)
+        _fill_row(ws, 16, ['', '', '', '', '', ''], border, left)
 
         section_row(17, '考虑新公司主要原因')
         factor_texts = [
@@ -2686,12 +4102,18 @@ def export_registration_form_to_excel(interview):
             '领导风格'
         ]
         factors = data['factors'] or []
-        factor_row = []
-        for idx, defaultText in enumerate(factor_texts):
-            value = factors[idx] if idx < len(factors) and factors[idx] else defaultText
-            factor_row.append(f"{idx + 1}、{value}")
-        _fill_row(ws, 18, factor_row[:6], border, center)
-        _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, center)
+        # 如果用户没有排序，使用默认顺序
+        if not factors:
+            factors = factor_texts
+        # 构建带编号的因子列表
+        factor_row = [f"{idx + 1}、{value}" for idx, value in enumerate(factors)]
+        # 第一行：前6个因子（每个因子一个单元格）
+        _fill_row(ws, 18, factor_row[:6], border, left)
+        # 第二行：第7个因子（如果存在）
+        if len(factor_row) > 6:
+            _fill_row(ws, 19, [factor_row[6], '', '', '', '', ''], border, left)
+        else:
+            _fill_row(ws, 19, ['', '', '', '', '', ''], border, left)
 
         section_row(21, '个人爱好及专长')
         ws.row_dimensions[22].height = 25
@@ -2699,11 +4121,11 @@ def export_registration_form_to_excel(interview):
         ws['A22'].value = data['hobbies']
         stylize_cell(ws['A22'], align=left)
 
-        _fill_row(ws, 23, ['原月薪', data['current_salary'], '期望月薪', data['expected_salary'], '最快到岗时间', data['available_date']], border, center)
+        _fill_row(ws, 23, ['原月薪', data['current_salary'], '期望月薪', data['expected_salary'], '最快到岗时间', data['available_date']], border, left)
         ws['A24'].value = '现住址'
         ws.merge_cells('B24:F24')
         ws['B24'].value = f"{data['address']} {data['address_detail']}"
-        stylize_cell(ws['B24'], align=center)
+        stylize_cell(ws['B24'], align=left)
         ws.row_dimensions[24].height = 25
         for r in range(25, 30):
             ws.row_dimensions[r].height = 25
@@ -2715,10 +4137,9 @@ def export_registration_form_to_excel(interview):
             "\n"
             "声明人签字\n"
             "\n"
-            "\n"
             "日期"
         )
-        stylize_cell(ws['A25'], align=center)
+        stylize_cell(ws['A25'], align=left)
 
         buffer = io.BytesIO()
         wb.save(buffer)
@@ -2733,6 +4154,21 @@ def export_registration_form_to_excel(interview):
 
 def export_registration_form_to_pdf(interview):
     data = _collect_registration_data(interview)
+    
+    # 获取关联的简历信息以获取性别
+    session = get_db_session()
+    try:
+        resume = None
+        if hasattr(interview, 'resume_id') and interview.resume_id:
+            resume = session.query(Resume).filter(Resume.id == interview.resume_id).first()
+            # 如果简历中有性别信息，使用简历中的性别
+            if resume and resume.gender:
+                data['gender'] = resume.gender
+    except:
+        pass
+    finally:
+        session.close()
+    
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -2740,49 +4176,139 @@ def export_registration_form_to_pdf(interview):
     c.drawCentredString(width / 2, height - 40, '应聘人员面试登记表')
 
     y = height - 80
-    def draw_section(title, rows):
+    table_width = width - 80
+    
+    def draw_section_2rows(title, header_row, content_row):
+        """绘制2行表格：标题行灰色底纹，内容行白色底纹"""
         nonlocal y
         c.setFont('STSong-Light', 12)
         c.drawString(40, y, title)
         y -= 20
-        table = Table(rows, colWidths=[(width-80)/len(rows[0])] * len(rows[0]))
-        table.setStyle(TableStyle([
+        
+        # 确保只有2行
+        rows = [header_row, content_row]
+        num_cols = len(header_row)
+        col_width = table_width / num_cols
+        
+        # 设置行高：如果内容包含换行符，使用2行高度；否则使用1行高度（垂直居中）
+        header_height = 25
+        # 检查内容是否包含换行符
+        has_newline = any('\n' in str(cell) for cell in content_row if cell)
+        if has_newline:
+            content_height = 50  # 2行高度
+        else:
+            content_height = 25  # 1行高度，垂直居中
+        
+        table = Table(rows, colWidths=[col_width] * num_cols, rowHeights=[header_height, content_height])
+        # 创建样式
+        style = TableStyle([
             ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),  # 标题行灰色
+            ('BACKGROUND', (0, 1), (-1, 1), colors.white),  # 内容行白色
             ('FONTNAME', (0, 0), (-1, -1), 'STSong-Light'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-        ]))
-        table.wrapOn(c, width - 80, y)
-        table.drawOn(c, 40, y - 10 - (20 * len(rows)))
-        y -= 30 + 20 * len(rows)
-
-    draw_section('个人基本信息', [
-        ['姓名', data['name'], '性别', data['gender'], '联系方式', data['contact']],
-        ['出生日期', data['birth_date'], '民族', data['origin'], '婚姻状况', data['marital_status']],
-        ['籍贯', data['origin'], '身份证号', data['id_card'], '邮箱', data['email']],
-    ])
-    draw_section('教育/自我信息', [
-        ['最高学历', data['education'], '学位', data['degree'], '统招', data['full_time']],
-        ['毕业院校', data['institution'], '专业', data['major'], '起止时间', f"{data['education_start_date']} - {data['education_end_date']}"],
-        ['个人爱好及特长', data['hobbies'], '原月薪', data['current_salary'], '期望月薪', data['expected_salary']],
-        ['最快到岗时间', data['available_date'], '能否出差', data['can_travel'], '', '']
-    ])
-    draw_section('现住址', [
-        ['省/市/区', data['address'], '详细地址', data['address_detail'], '', '']
-    ])
-    exp_rows = [['公司名称', '岗位', '开始时间', '结束时间']]
-    for exp in data['work_experience']:
-        exp_rows.append([
-            exp.get('company', ''),
-            exp.get('position', ''),
-            exp.get('start_year') or '',
-            exp.get('end_year') or ''
+            ('FONTSIZE', (0, 0), (-1, 0), 11),  # 标题行字体
+            ('FONTSIZE', (0, 1), (-1, 1), 10),  # 内容行字体
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),  # 标题行居中
+            ('ALIGN', (0, 1), (-1, 1), 'LEFT'),  # 内容行左对齐
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ])
-    if len(exp_rows) == 1:
-        exp_rows.append(['暂无工作经历', '', '', ''])
-    draw_section('近两份工作经历', exp_rows)
-    factor_rows = [['排序结果']] + [[f'{idx + 1}. {factor}'] for idx, factor in enumerate(data['factors'] or ['未填写'])]
-    draw_section('考虑新公司的主要因素', factor_rows)
+        
+        # 如果内容需要换行，确保文本能够自动换行
+        if has_newline:
+            # 对于需要换行的单元格，使用LEFT对齐和TOP对齐以便多行显示
+            style.add('VALIGN', (0, 1), (-1, 1), 'TOP')
+        
+        table.setStyle(style)
+        table.wrapOn(c, table_width, y)
+        table.drawOn(c, 40, y - header_height - content_height)
+        y -= 30 + header_height + content_height
+
+    # 1. 个人基本信息
+    draw_section_2rows(
+        '个人基本信息',
+        ['姓名', '性别', '出生日期', '民族', '婚姻状况', '籍贯', '身份证号', '联系方式', '邮箱'],
+        [
+            data['name'] or '',
+            data['gender'] or '',
+            data['birth_date'] or '',
+            data['ethnicity'] or '',
+            data['marital_status'] or '',
+            data['origin'] or '',
+            data['id_card'] or '',
+            data['contact'] or '',
+            data['email'] or ''
+        ]
+    )
+    
+    # 2. 教育信息
+    draw_section_2rows(
+        '教育信息',
+        ['起始时间', '结束时间', '毕业院校', '专业', '学历', '是否为全日制统招'],
+        [
+            data['education_start_date'] or '',
+            data['education_end_date'] or '',
+            data['institution'] or '',
+            data['major'] or '',
+            data['degree'] or '',
+            data['full_time'] or ''
+        ]
+    )
+    
+    # 3. 工作经历
+    work_exp = data['work_experience'] or []
+    if len(work_exp) == 0:
+        work_companies = '暂无工作经历'
+        work_positions = ''
+        work_start_times = ''
+        work_end_times = ''
+        work_resignation_reasons = ''
+    elif len(work_exp) == 1:
+        exp = work_exp[0]
+        work_companies = exp.get('company', '')
+        work_positions = exp.get('position', '')
+        work_start_times = str(exp.get('start_year', '')) if exp.get('start_year') else ''
+        work_end_times = str(exp.get('end_year', '')) if exp.get('end_year') else ''
+        work_resignation_reasons = exp.get('resignation_reason', '')
+    else:
+        # 显示两个工作经历，用换行符分隔
+        exp1 = work_exp[0]
+        exp2 = work_exp[1]
+        work_companies = f"{exp1.get('company', '')}\n{exp2.get('company', '')}"
+        work_positions = f"{exp1.get('position', '')}\n{exp2.get('position', '')}"
+        work_start_times = f"{exp1.get('start_year', '') if exp1.get('start_year') else ''}\n{exp2.get('start_year', '') if exp2.get('start_year') else ''}"
+        work_end_times = f"{exp1.get('end_year', '') if exp1.get('end_year') else ''}\n{exp2.get('end_year', '') if exp2.get('end_year') else ''}"
+        work_resignation_reasons = f"{exp1.get('resignation_reason', '')}\n{exp2.get('resignation_reason', '')}"
+    
+    draw_section_2rows(
+        '工作经历',
+        ['公司名称', '岗位', '开始时间', '结束时间', '离职原因'],
+        [work_companies, work_positions, work_start_times, work_end_times, work_resignation_reasons]
+    )
+    
+    # 4. 个人信息（其他所有内容）
+    personal_info_content = f"个人爱好及特长：{data['hobbies'] or ''}；原月薪：{data['current_salary'] or ''}；期望月薪：{data['expected_salary'] or ''}；最快到岗时间：{data['available_date'] or ''}；能否出差：{data['can_travel'] or ''}；现住址：{data['address'] or ''} {data['address_detail'] or ''}"
+    draw_section_2rows(
+        '个人信息',
+        ['内容'],
+        [personal_info_content]
+    )
+    
+    # 5. 考虑新公司的主要因素
+    factors = data['factors'] or []
+    if not factors:
+        factors_content = '未填写'
+    else:
+        factors_content = '；'.join([f'{idx + 1}. {factor}' for idx, factor in enumerate(factors)])
+    
+    draw_section_2rows(
+        '考虑新公司的主要因素',
+        ['排序结果'],
+        [factors_content]
+    )
 
     c.showPage()
     c.save()
@@ -2798,19 +4324,20 @@ def export_registration_form(interview_id):
         interview = session.query(Interview).filter(Interview.id == interview_id).first()
         if not interview:
             return jsonify({'success': False, 'message': '面试记录不存在'}), 404
+        candidate_name = interview.name or f"面试{interview_id}"
         if fmt == 'pdf':
             pdf_file = export_registration_form_to_pdf(interview)
             return send_file(
                 pdf_file,
                 as_attachment=True,
-                download_name=f'面试登记表_{interview.name or interview_id}.pdf',
+                download_name=f'{candidate_name}_面试登记表.pdf',
                 mimetype='application/pdf'
             )
         excel_file = export_registration_form_to_excel(interview)
         return send_file(
             excel_file,
             as_attachment=True,
-            download_name=f'面试登记表_{interview.name or interview_id}.xlsx',
+            download_name=f'{candidate_name}+面试登记表.xlsx',
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
     except Exception as e:
@@ -3057,6 +4584,42 @@ def analyze_resume_match(resume_id):
                 'message': '简历不存在'
             }), 404
         
+        # 检查是否已有相同岗位的分析结果（包括详细分析信息）
+        if (resume.match_score is not None and 
+            resume.match_level and 
+            resume.match_position == applied_position and
+            resume.match_analysis_detail):
+            # 已有相同岗位的完整分析结果，直接返回
+            session.close()
+            # 从数据库读取详细分析结果
+            analysis_detail = resume.match_analysis_detail
+            if isinstance(analysis_detail, str):
+                import json
+                try:
+                    analysis_detail = json.loads(analysis_detail)
+                except:
+                    analysis_detail = {}
+            elif analysis_detail is None:
+                analysis_detail = {}
+            
+            # 构造返回结果
+            current_user = get_current_user()
+            username = current_user.username if current_user else 'system'
+            return jsonify({
+                'success': True,
+                'data': {
+                    'match_score': resume.match_score,
+                    'match_level': resume.match_level,
+                    'match_position': resume.match_position,
+                    'analyzed_by': analysis_detail.get('analyzed_by', username),
+                    'detailed_analysis': analysis_detail.get('detailed_analysis', f'匹配度：{resume.match_score}分（{resume.match_level}）'),
+                    'strengths': analysis_detail.get('strengths', []),
+                    'weaknesses': analysis_detail.get('weaknesses', []),
+                    'suggestions': analysis_detail.get('suggestions', []),
+                    'cached': True  # 标记为已缓存的结果
+                }
+            })
+        
         # 获取岗位信息
         position = session.query(Position).filter(Position.position_name == applied_position).first()
         if not position:
@@ -3068,25 +4631,17 @@ def analyze_resume_match(resume_id):
         
         session.close()
         
-        # 检查AI配置
-        ai_enabled = app.config.get('AI_ENABLED', True)
-        ai_api_key = app.config.get('AI_API_KEY', '')
-        ai_model = app.config.get('AI_MODEL', 'gpt-3.5-turbo')
-        ai_api_base = app.config.get('AI_API_BASE', '')
+        # 获取AI配置（使用环境变量配置）
+        ai_config = get_effective_ai_config()
         
-        if not ai_enabled or not ai_api_key:
+        # 创建AI提取器
+        ai_extractor = create_ai_extractor(ai_config)
+        
+        if not ai_extractor:
             return jsonify({
                 'success': False,
-                'message': 'AI功能未启用或未配置API密钥，请在设置中配置AI'
+                'message': 'AI功能未启用或未配置API密钥，请在Railway平台环境变量中配置OPENAI_API_KEY'
             }), 400
-        
-        # 使用AI进行匹配度分析
-        from utils.ai_extractor import AIExtractor
-        ai_extractor = AIExtractor(
-            api_key=ai_api_key,
-            api_base=ai_api_base if ai_api_base else None,
-            model=ai_model
-        )
         
         # 构建分析提示
         resume_info = f"""
@@ -3165,6 +4720,13 @@ def analyze_resume_match(resume_id):
         try:
             response_text = ai_extractor._call_ai_api(prompt)
             
+            # 检查响应是否为空
+            if not response_text:
+                return jsonify({
+                    'success': False,
+                    'message': 'AI API调用失败，未返回结果。请检查API密钥和网络连接。'
+                }), 500
+            
             # 尝试解析JSON响应
             try:
                 # 提取JSON部分
@@ -3237,6 +4799,15 @@ def analyze_resume_match(resume_id):
                     resume_save.match_score = analysis_result.get('match_score')
                     resume_save.match_level = analysis_result.get('match_level')
                     resume_save.match_position = applied_position
+                    # 保存详细分析结果（JSON格式）
+                    analysis_detail = {
+                        'detailed_analysis': analysis_result.get('detailed_analysis', ''),
+                        'strengths': analysis_result.get('strengths', []),
+                        'weaknesses': analysis_result.get('weaknesses', []),
+                        'suggestions': analysis_result.get('suggestions', []),
+                        'analyzed_by': username
+                    }
+                    resume_save.match_analysis_detail = analysis_detail
                     resume_save.updated_by = username
                     session_save.commit()
                 session_save.close()
@@ -3286,31 +4857,54 @@ def analyze_resume_match(resume_id):
         }), 500
 
 if __name__ == '__main__':
+    # 执行初始化（仅在直接运行时）
+    try:
+        initialize_app()
+    except Exception as e:
+        print(f"⚠ 初始化警告: {e}")
+        print("应用将继续启动...")
+    
     import socket
     import sys
     
     # 支持生产环境部署（Railway、Render 等）
     # 从环境变量读取端口和主机，如果没有则使用默认值
     port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '0.0.0.0')
-    debug = os.environ.get('DEBUG', 'True').lower() == 'true'
+    # 本地开发默认使用 127.0.0.1，生产环境（Railway）自动使用 0.0.0.0
+    # 如果设置了 PORT 环境变量，说明是生产环境，使用 0.0.0.0
+    is_production = 'PORT' in os.environ
+    host = os.environ.get('HOST', '0.0.0.0' if is_production else '127.0.0.1')
+    debug = os.environ.get('DEBUG', 'False' if is_production else 'True').lower() == 'true'
     
-    # 本地开发时检查端口是否被占用
-    if host == '0.0.0.0' or host == '127.0.0.1':
+    # 只在本地开发环境检查端口占用（生产环境由平台管理）
+    if not is_production:
         def is_port_in_use(port):
+            """检查端口是否被占用"""
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                return s.connect_ex(('localhost', port)) == 0
+                s.settimeout(1)
+                try:
+                    # 尝试绑定端口，如果失败说明端口被占用
+                    s.bind(('127.0.0.1', port))
+                    return False
+                except OSError:
+                    return True
         
         if is_port_in_use(port):
             print(f'错误: 端口 {port} 已被占用！')
             print('请关闭占用该端口的程序，或修改 app.py 中的端口号。')
+            print()
+            print('提示：可以通过以下命令查看占用端口的进程：')
+            print(f'  netstat -ano | findstr :{port}')
             sys.exit(1)
     
     print('=' * 50)
     print('智能简历数据库系统')
     print('=' * 50)
-    print(f'服务器地址: http://127.0.0.1:{port}')
-    print(f'局域网地址: http://{host}:{port}')
+    if host == '0.0.0.0':
+        print(f'服务器地址: http://127.0.0.1:{port}')
+        print(f'局域网地址: http://0.0.0.0:{port}')
+    else:
+        print(f'服务器地址: http://{host}:{port}')
     print(f'调试模式: {debug}')
     print('=' * 50)
     print('按 Ctrl+C 停止服务器')
